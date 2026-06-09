@@ -3,7 +3,7 @@ topic_analysis_id: TA-example_interview-001
 topic: placeholder-topic
 transcript_id: example_interview
 participant_id: P001
-source_file: "01 Transcripts/Processed/example_interview.md"
+source_file: "01 Transcripts/Processed/example_interview.processed.json"
 related_quote_ids: []
 related_evidence_cards: []
 status: draft

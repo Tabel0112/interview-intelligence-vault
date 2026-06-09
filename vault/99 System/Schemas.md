@@ -30,25 +30,35 @@ traceability fields must not be removed.
 | `participant_fit` | How well the participant fits the relevant research segment. |
 | `confidence` | Confidence in interpretation, such as `low`, `medium`, or `high`. |
 
-## Processed Speaker Turn Transcript
+## Processed Transcript JSON
 
 Processed transcripts are JSON files at
 `01 Transcripts/Processed/<transcript_id>.processed.json`.
 
 | Field | Description |
 | --- | --- |
+| `schema_version` | Processed schema version, currently `processed_transcript.v1`. |
+| `analysis_version` | Analysis contract version, currently `v1`. |
+| `generated` | Always `true` for pipeline-generated files. |
+| `generator` | Generator identifier, currently `transcript_pipeline`. |
 | `transcript_id` | Canonical snake_case ID shared with the raw loader and metadata. |
-| `source_file` | Original raw transcript filename. |
-| `source_hash` | SHA-256 hash of the raw source contents. |
-| `parser_version` | Deterministic parser version, such as `speaker-turn-parser-v1`. |
-| `preamble_text` | Source text before the first valid speaker label. |
-| `speakers` | Unique cleaned display names found in non-empty turns. |
-| `warnings` | Structured parser warning objects. |
+| `metadata` | Simple title, source filename, participants, language, and interview date. |
 | `turns` | Ordered speaker turn objects. |
+| `summaries` | Reserved array for future summaries; currently empty. |
+| `topics` | Reserved array for future topics; currently empty. |
+| `evidence_candidates` | Reserved array for future evidence candidates; currently empty. |
+| `source` | Raw path, filename, SHA-256 source hash, and modified timestamp. |
+| `processed_at` | ISO timestamp updated only when the file is written. |
+| `warnings` | Structured processing warning objects. |
 
 Each turn contains `turn_id`, `speaker`, `speaker_id`, `text`, `position`,
 `source_line_start`, and `source_line_end`. Turn IDs, positions, and source
 line numbers are deterministic and 1-indexed.
+
+Future direct quote references should use exact pointers containing `type`,
+`transcript_id`, `turn_id`, `char_start`, `char_end`, and `source_hash`.
+
+Processed warning objects contain `code`, `stage`, `line`, and `message`.
 
 ## Evidence Card Metadata
 

@@ -73,19 +73,35 @@ Run transcript processing with:
 node scripts/process-transcripts.mjs
 ```
 
+Unchanged transcripts are skipped when the source hash, schema version, and
+analysis version match the existing processed JSON. Force a validated rewrite
+with:
+
+```bash
+node scripts/process-transcripts.mjs --force
+```
+
 One JSON file per raw transcript is written to:
 
 ```text
 vault/01 Transcripts/Processed/<transcript_id>.processed.json
 ```
 
-Each file contains the canonical transcript ID, source filename and hash,
-parser version, preamble text, unique speaker names, structured warnings, and
-deterministic turns with speaker IDs and 1-indexed source line numbers. Raw
-transcript files are never modified.
+Each generated file contains version markers, transcript metadata, source
+identity, structured warnings, and deterministic turns with speaker IDs and
+1-indexed source line numbers. Writes are validated and atomic. Processed JSON
+is generated, should not be manually edited, and is committed to Git for now.
+Old processed versions are overwritten rather than archived. Raw transcript
+files are read-only to the pipeline and are never modified.
 
 Run the dependency-free speaker parser verification with:
 
 ```bash
 node scripts/verify-speaker-turn-parser.mjs
+```
+
+Run the processed writer verification with:
+
+```bash
+node scripts/verify-processed-transcript-writer.mjs
 ```

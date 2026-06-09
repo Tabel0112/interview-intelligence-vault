@@ -8,7 +8,7 @@ linked by stable IDs so every analysis object can be traced to its source.
 
 | Transcript ID | Participant ID | Processed File | Status | Last Updated |
 | --- | --- | --- | --- | --- |
-| example_interview | P001 | `../01 Transcripts/Processed/example_interview.md` | placeholder | YYYY-MM-DD |
+| example_interview | P001 | `../01 Transcripts/Processed/example_interview.processed.json` | placeholder | YYYY-MM-DD |
 
 ## Participants
 

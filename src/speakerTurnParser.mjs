@@ -1,12 +1,7 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import path from "node:path";
-import {
-  isCanonicalTranscriptId,
-  normalizeTranscriptId,
-} from "./transcriptId.mjs";
+import { normalizeTranscriptId } from "./transcriptId.mjs";
+export { writeProcessedTranscript } from "./processedTranscriptWriter.mjs";
 
 export const SPEAKER_TURN_PARSER_VERSION = "speaker-turn-parser-v1";
-const PROCESSED_TRANSCRIPTS_PATH = path.join("01 Transcripts", "Processed");
 
 function warning(code, line, message) {
   return { code, line, message };
@@ -249,31 +244,4 @@ export function parseSpeakerTurns(
     warnings,
     turns,
   };
-}
-
-export async function writeProcessedTranscript(
-  processedTranscript,
-  { vaultPath = path.resolve(process.cwd(), "vault") } = {},
-) {
-  if (!processedTranscript?.transcript_id) {
-    throw new Error("Processed transcript requires transcript_id");
-  }
-  if (!isCanonicalTranscriptId(processedTranscript.transcript_id)) {
-    throw new Error(
-      `Processed transcript requires canonical transcript_id: ${processedTranscript.transcript_id}`,
-    );
-  }
-
-  const outputDirectory = path.resolve(vaultPath, PROCESSED_TRANSCRIPTS_PATH);
-  const outputPath = path.join(
-    outputDirectory,
-    `${processedTranscript.transcript_id}.processed.json`,
-  );
-  await mkdir(outputDirectory, { recursive: true });
-  await writeFile(
-    outputPath,
-    `${JSON.stringify(processedTranscript, null, 2)}\n`,
-    "utf8",
-  );
-  return outputPath;
 }

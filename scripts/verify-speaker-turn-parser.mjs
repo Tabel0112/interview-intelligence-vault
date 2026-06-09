@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { buildProcessedTranscript } from "../src/processedTranscriptWriter.mjs";
 import { loadRawTranscripts } from "../src/rawTranscriptLoader.mjs";
 import {
   detectSpeakerLabel,
@@ -141,9 +142,12 @@ try {
   );
   assert(withMetadataWarning.warnings.includes(metadataWarning));
 
-  const outputPath = await writeProcessedTranscript(processed, {
+  const processedDocument = buildProcessedTranscript(rawTranscript, null, processed);
+  const writeResult = await writeProcessedTranscript(processedDocument, {
     vaultPath: tempRoot,
+    now: () => new Date("2026-06-09T01:30:00.000Z"),
   });
+  const outputPath = writeResult.outputPath;
   assert.equal(
     outputPath,
     path.join(
@@ -157,10 +161,16 @@ try {
     path.join(tempRoot, "01 Transcripts", "Processed"),
   );
   assert.deepEqual(processedFiles, ["speaker_test.processed.json"]);
-  assert.deepEqual(JSON.parse(await readFile(outputPath, "utf8")), processed);
+  assert.deepEqual(
+    JSON.parse(await readFile(outputPath, "utf8")),
+    writeResult.processedTranscript,
+  );
   await assert.rejects(
     writeProcessedTranscript(
-      { ...processed, transcript_id: "../outside-processed-directory" },
+      {
+        ...processedDocument,
+        transcript_id: "../outside-processed-directory",
+      },
       { vaultPath: tempRoot },
     ),
     /canonical transcript_id/,
