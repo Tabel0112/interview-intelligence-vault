@@ -212,14 +212,29 @@ to `high`, `medium`, `low`.
 
 ## Finding Metadata
 
+Part 13 generated findings are stored at
+`06 Findings/finding__<finding_slug>.md`. They use the exact generated marker
+`<!-- generated: finding-generator.v1 -->`.
+
 | Field | Description |
 | --- | --- |
-| `finding_id` | Stable finding ID, such as `FINDING-001`. |
-| `title` | Short finding title. |
-| `claim` | High-level conclusion supported by evidence. |
-| `supported_by` | Evidence card IDs supporting the claim. |
-| `confidence` | Confidence in the finding. |
-| `notes` | Limitations, caveats, or review notes. |
+| `type` | Always `finding`. |
+| `generated_by` | Currently `finding-generator.v1`. |
+| `finding_id` | Stable deterministic title-derived finding ID. |
+| `status` | `active`, `stale`, or internal-only `rejected_candidate`. |
+| `confidence` | `low`, `medium`, or `high`. |
+| `labels` | Controlled finding labels. |
+| `evidence` | Existing Evidence Card IDs supporting the claim. |
+| `themes` | Existing official Theme IDs related to the finding. |
+
+The visible body contains Claim, Evidence, Related Themes, Product Implication,
+Confidence, Finding Labels, Limitation, and an optional Stale Reason. Every
+active finding must cite at least one existing Evidence Card. Stale findings
+must not be treated as current conclusions.
+
+Controlled labels are `single-source insight`, `multi-source insight`,
+`expert insight`, `weak signal`, `medium confidence`, `strong finding`,
+`needs validation`, `product implication`, and `research question`.
 
 ## Tag Decision JSON
 

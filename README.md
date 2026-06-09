@@ -357,3 +357,37 @@ Run verification with:
 ```bash
 node scripts/verify-theme-note-writer.mjs
 ```
+
+## Finding Generator
+
+Part 13 generates cautious, higher-level research findings from approved
+Evidence Cards and official Theme notes. It never reads Raw transcripts,
+Processed transcripts, or Topic Analysis notes as finding evidence. Themes help
+organize evidence but cannot support a finding without cited Evidence Cards.
+
+Run the generator with:
+
+```bash
+OPENAI_API_KEY=... OPENAI_MODEL=... node scripts/generate-findings.mjs
+```
+
+Use `--force` to rewrite generated findings even when unchanged. The AI returns
+structured JSON only; deterministic code validates references, source
+independence, confidence, controlled labels, cautious language, limitations,
+duplicate findings, and product implications before writing Markdown to:
+
+```text
+vault/06 Findings/finding__<finding_slug>.md
+```
+
+Generated notes contain `<!-- generated: finding-generator.v1 -->`. Manual
+Finding notes without that marker are never overwritten. Generated findings
+that lose valid evidence support are marked `stale` with a Stale Reason rather
+than silently deleted. Ask AI should use `active` findings as current
+conclusions and exclude stale findings unless historical output is requested.
+
+Run mock-only verification with:
+
+```bash
+node scripts/verify-finding-generator.mjs
+```

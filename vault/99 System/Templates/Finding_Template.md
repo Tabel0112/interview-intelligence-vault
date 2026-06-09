@@ -1,34 +1,47 @@
 ---
-finding_id: FINDING-001
-title: Placeholder finding
-claim: Concise evidence-backed claim.
-supported_by: []
+type: finding
+generated_by: finding-generator.v1
+finding_id: finding_placeholder
+status: active
 confidence: medium
-notes: ""
-status: draft
-created_date: YYYY-MM-DD
-last_updated: YYYY-MM-DD
+labels:
+  - medium confidence
+  - needs validation
+evidence:
+  - evidence_id
+themes:
+  - canonical-theme-id
 ---
 
-# Finding: Placeholder Finding
+<!-- generated: finding-generator.v1 -->
+
+# Finding - Placeholder Finding
 
 ## Claim
 
-State the high-level conclusion without exceeding the evidence.
+State a cautious conclusion directly supported by the cited Evidence Cards.
 
-## Evidence Summary
+## Evidence
 
-Summarize the relevant evidence; do not duplicate full transcript text.
+* [[Evidence - Supporting Note]]
 
-## Supported By
+## Related Themes
 
-- `EC001`
+* [[canonical-theme.theme]]
+
+## Product Implication
+
+State a cautious practical implication that follows from the evidence.
 
 ## Confidence
 
-Explain the confidence rating.
+Medium
 
-## Limitations / Notes
+## Finding Labels
 
-Document caveats, gaps, and counter-evidence.
+* medium confidence
+* needs validation
 
+## Limitation
+
+Explain specifically what the current evidence does not prove.

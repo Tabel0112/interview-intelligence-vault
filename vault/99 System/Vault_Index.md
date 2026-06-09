@@ -86,9 +86,15 @@ connections remain non-official until human approval.
 
 ## Findings
 
+Part 13 writes cautious generated conclusions under `../06 Findings/` using
+approved Evidence Cards and official Themes only. Active findings are available
+to Ask AI. Stale findings retain history but are not current conclusions.
+Manual notes without the generated marker remain protected. Generator rules are
+documented in `Agents/Finding_Generator_Agent.md`.
+
 | Finding ID | Title | Supported By | File |
 | --- | --- | --- | --- |
-| FINDING-001 | Placeholder finding | EC001 | `../06 Findings/FINDING-001.md` |
+| finding_placeholder | Placeholder finding | evidence_id | `../06 Findings/finding__placeholder.md` |
 
 ## Processing Status
 
@@ -98,7 +104,8 @@ connections remain non-official until human approval.
 
 ## Search Guidance
 
-1. Check findings and themes for synthesized answers.
+1. Check active findings and themes for synthesized answers; ignore stale
+   findings unless historical output is requested.
 2. Check evidence cards for selected supporting quotes and source references.
 3. Check tag decisions for existing-tag matches and candidate suggestions.
 4. Check scored evidence candidates for Part 9 rankings and filter decisions.
