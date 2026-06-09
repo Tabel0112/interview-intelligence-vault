@@ -139,8 +139,9 @@ text slice. Evidence categories are:
 `strong`, `medium`, or `weak`.
 
 Part 9 scores and filters candidates. Part 10 creates final evidence cards from
-reviewed candidates. Part 11 decides official tags and themes;
-`suggested_tags` from Part 8 never establish official taxonomy.
+reviewed candidates. Part 11 matches existing taxonomy or suggests candidate
+tags and theme connections for later human approval; `suggested_tags` from
+Part 8 never establish official taxonomy.
 
 ## Scored Evidence Candidate JSON
 
@@ -219,3 +220,30 @@ to `high`, `medium`, `low`.
 | `supported_by` | Evidence card IDs supporting the claim. |
 | `confidence` | Confidence in the finding. |
 | `notes` | Limitations, caveats, or review notes. |
+
+## Tag Decision JSON
+
+Part 11 decisions are stored separately from Evidence Cards at
+`05 Candidate Tags/Decisions/<evidence_id>.tag_decision.json`.
+This compatibility path stores all three decision statuses: `matched`,
+`candidate`, and `needs_review`. Its parent folder name does not make every
+decision a candidate-tag suggestion.
+
+| Field | Description |
+| --- | --- |
+| `schema_version` | Currently `tag_decision.v1`. |
+| `evidence_id` | Stable Evidence Card ID. |
+| `evidence_card_path` | Vault-relative Evidence Card path. |
+| `evidence_card_sha256` | SHA-256 hash used to detect stale decisions. |
+| `status` | `matched`, `candidate`, or `needs_review`. |
+| `matched_tag` | Existing official tag or `null`. |
+| `matched_theme` | Existing official theme ID/title or `null`. |
+| `candidate_tag` | Existing or newly suggested candidate tag, or `null`. |
+| `suggested_theme` | Non-official theme connection suggestion or `null`. |
+| `confidence` | Numeric confidence from 0 to 1. |
+| `reason` | Compact classification rationale. |
+| `decided_at` | ISO timestamp for the decision. |
+
+Candidate tags are normalized lowercase kebab-case suggestions. Decision files
+never promote candidate tags, update the official Tag Dictionary, or create
+official Themes. They also never mutate Evidence Cards or Raw transcripts.

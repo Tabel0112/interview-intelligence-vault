@@ -12,7 +12,7 @@
 - Part 8 creates evidence candidates only.
 - Part 9 scores and filters evidence candidates.
 - Part 10 creates final evidence cards containing selected important quotes.
-- Part 11 decides official tags and themes across transcripts.
+- Part 11 matches existing taxonomy or suggests candidates for human approval.
 - Candidate tags are temporary suggestions and are never official tags.
 - Findings are high-level conclusions and must link back to evidence cards.
 
@@ -87,7 +87,7 @@
 - Candidate output is generated JSON, not a reviewed evidence card.
 - Part 9 scores and filters candidates before Part 10 creates final evidence
   cards.
-- Part 11, not Part 8, decides official tags and themes.
+- Part 11, not Part 8, proposes taxonomy decisions for later human approval.
 - Skip unchanged valid output unless forced.
 - Write candidate files atomically. Invalid AI JSON must never replace an
   existing valid file.
@@ -135,3 +135,23 @@
 - Generated cards contain `<!-- GENERATED_BY: evidence-card-writer.v1 -->`.
 - Update only generated cards. Never overwrite manual evidence notes.
 - Write cards atomically and never modify Raw transcripts.
+
+## Tag / Theme Decisions
+
+- Part 11 saves separate decision JSON files and does not mutate Evidence Cards.
+- `05 Candidate Tags/Decisions/` stores every tag decision status: `matched`,
+  `candidate`, and `needs_review`. The compatibility path does not imply that
+  every decision is a candidate tag.
+- Match official tags first, reuse existing candidate tags second, and suggest
+  a new candidate tag only when no existing label fits.
+- Use `needs_review` for weak, ambiguous, or multi-tag evidence. Never force a
+  weak match.
+- Candidate tags are lowercase kebab-case suggestions only and require later
+  human approval.
+- AI may suggest a theme connection but must never create or modify an official
+  theme.
+- Never modify `Tag_Dictionary.json`, `Candidate_Tags.json`, official Theme
+  notes, or Raw transcripts.
+- Skip only decisions whose Evidence Card path and SHA-256 hash remain current
+  and whose taxonomy references are still valid.
+- Write decisions atomically and isolate failures per Evidence Card.

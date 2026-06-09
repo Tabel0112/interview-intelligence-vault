@@ -23,7 +23,7 @@ map when one is created.
 
 Part 10 creates final evidence cards after Part 9 candidate scoring/filtering.
 Generated cards are stored in `../03 Evidence Cards/` and remain unclassified
-until Part 11 handles official tags and themes.
+until Part 11 matches existing taxonomy or suggests candidates for review.
 
 | Evidence Card ID | Transcript ID | Topic Tags | File |
 | --- | --- | --- | --- |
@@ -61,12 +61,24 @@ with a final `create_evidence_card` decision.
 
 ## Themes
 
-Part 11 decides official tags and themes. Part 8 suggested tags are not
-official.
+Part 11 may match existing official taxonomy or suggest candidates. It never
+creates official tags or themes, and Part 8 suggested tags are not official.
 
 | Theme ID | Title | Supporting Evidence | File |
 | --- | --- | --- | --- |
 | THEME-001 | Placeholder theme | EC001 | `../04 Themes/THEME-001.md` |
+
+## Tag Decisions
+
+Part 11 stores all tag decision statuses separately under the compatibility
+path `../05 Candidate Tags/Decisions/`. This includes matched official tags,
+candidate suggestions, and `needs_review`; the parent folder name does not mean
+every decision is a candidate tag. Candidate tags and suggested theme
+connections remain non-official until human approval.
+
+| Evidence ID | Decision File | Status |
+| --- | --- | --- |
+| example_interview__topic_001__evidence_001 | `../05 Candidate Tags/Decisions/example_interview__topic_001__evidence_001.tag_decision.json` | placeholder |
 
 ## Findings
 
@@ -84,8 +96,9 @@ official.
 
 1. Check findings and themes for synthesized answers.
 2. Check evidence cards for selected supporting quotes and source references.
-3. Check scored evidence candidates for Part 9 rankings and filter decisions.
-4. Check Part 8 evidence candidates when reviewing all possible quotes.
-5. Check topic analyses for concise transcript- or topic-level context.
-6. Check processed transcripts when more context is required.
-7. Open raw transcripts only to verify the source of truth.
+3. Check tag decisions for existing-tag matches and candidate suggestions.
+4. Check scored evidence candidates for Part 9 rankings and filter decisions.
+5. Check Part 8 evidence candidates when reviewing all possible quotes.
+6. Check topic analyses for concise transcript- or topic-level context.
+7. Check processed transcripts when more context is required.
+8. Open raw transcripts only to verify the source of truth.

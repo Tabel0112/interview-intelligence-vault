@@ -207,8 +207,9 @@ missing inputs are reported clearly, and invalid AI JSON never replaces an
 existing valid candidate file. Candidate files support later human review and
 evidence-card creation; they are not reviewed evidence cards themselves.
 Part 9 scores and filters these candidates, Part 10 creates final evidence
-cards, and Part 11 decides official tags and themes. Part 8 `suggested_tags`
-remain temporary suggestions only.
+cards, and Part 11 matches existing taxonomy or suggests candidate tags and
+theme connections for later human approval. Part 8 `suggested_tags` remain
+temporary suggestions only.
 
 Run mock-only verification with:
 
@@ -279,4 +280,45 @@ Run verification with:
 
 ```bash
 node scripts/verify-evidence-card-writer.mjs
+```
+
+## Tag / Theme Decision Agent
+
+Part 11 classifies Evidence Cards using existing official tags, existing
+candidate tags, or one new candidate-tag suggestion. It never creates official
+tags or official themes and does not modify Evidence Cards.
+
+Run classification with:
+
+```bash
+OPENAI_API_KEY=... OPENAI_MODEL=... node scripts/classify-evidence-tags.mjs
+```
+
+Use `--force` to regenerate all decisions. Because the vault already uses
+`04 Themes/` and `05 Candidate Tags/`, separate decision files are written
+atomically to:
+
+```text
+vault/05 Candidate Tags/Decisions/<evidence_id>.tag_decision.json
+```
+
+This compatibility path stores every Part 11 tag decision: matched official tag
+decisions, candidate tag suggestions, and `needs_review` decisions. The parent
+folder name does not mean every saved decision is a candidate tag. Candidate
+tags remain suggestions only.
+
+The optional official tag dictionary and candidate-tag index are read from
+`vault/05 Candidate Tags/Tag_Dictionary.json` and
+`vault/05 Candidate Tags/Candidate_Tags.json`. Missing files safely mean empty
+tag sets. Official themes are read from Markdown notes under
+`vault/04 Themes/`. Part 11 never creates or edits these taxonomy sources,
+Evidence Cards, or Raw transcripts.
+
+Unchanged decisions are skipped only when the decision remains valid against
+the current taxonomy and its Evidence Card path and SHA-256 hash still match.
+
+Run mock-only verification with:
+
+```bash
+node scripts/verify-tag-theme-decision-agent.mjs
 ```

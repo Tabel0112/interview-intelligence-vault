@@ -16,4 +16,4 @@ Candidates support later review; they are not final evidence cards.
 - `suggested_tags` are temporary suggestions only. They are not official tags.
 - Part 9 scores and filters candidates.
 - Part 10 creates final evidence cards from reviewed candidates.
-- Part 11 decides official tags and themes.
+- Part 11 matches existing taxonomy or suggests candidates for human approval.
