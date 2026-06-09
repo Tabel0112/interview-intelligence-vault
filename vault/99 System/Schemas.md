@@ -60,6 +60,30 @@ Future direct quote references should use exact pointers containing `type`,
 
 Processed warning objects contain `code`, `stage`, `line`, and `message`.
 
+## Topic Segmentation JSON
+
+Topic segmentation files are generated at
+`02 Topic Analyses/<transcript_id>.topics.json`.
+
+| Field | Description |
+| --- | --- |
+| `schema` | Topic schema version, currently `topic_segmentation.v1`. |
+| `transcript_id` | Canonical transcript ID. |
+| `source_processed_file` | Vault-relative processed transcript JSON path. |
+| `source_sha256` | SHA-256 hash of the processed transcript file. |
+| `generated_at` | ISO timestamp for the topic segmentation run. |
+| `agent_prompt` | Vault-relative topic agent prompt path. |
+| `model` | AI model identifier returned by the AI client. |
+| `segments` | Optional precise passages using turn-relative character offsets. |
+| `topics` | Continuous, ordered topic ranges covering every turn exactly once. |
+| `warnings` | Structured quality warnings. |
+
+Segments contain `segment_id`, `turn_id`, inclusive `start_char`, exclusive
+`end_char`, and a brief `summary`. Saved topic files never contain anchor text
+or full quote previews. Topics contain `topic_id`, `title`, `start_turn`,
+`end_turn`, `summary`, and `key_spans`. Multiple topics may reference the same
+segment through `key_spans`.
+
 ## Evidence Card Metadata
 
 | Field | Description |

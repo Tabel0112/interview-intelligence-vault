@@ -25,6 +25,12 @@ map when one is created.
 | --- | --- | --- | --- |
 | EC001 | example_interview | placeholder-topic | `../03 Evidence Cards/EC001.md` |
 
+## Topic Analyses
+
+| Transcript ID | Topic File | Source Hash Status |
+| --- | --- | --- |
+| example_interview | `../02 Topic Analyses/example_interview.topics.json` | placeholder |
+
 ## Themes
 
 | Theme ID | Title | Supporting Evidence | File |

@@ -11,7 +11,12 @@ created_date: YYYY-MM-DD
 last_updated: YYYY-MM-DD
 ---
 
-# Topic Analysis: Placeholder Topic
+# Topic Analysis Note: Placeholder Topic
+
+Generated broad topic segmentation is stored at
+`02 Topic Analyses/<transcript_id>.topics.json`. This Markdown template is for
+future human-authored or focused topic notes and should not replace generated
+topic segmentation JSON.
 
 ## Summary
 

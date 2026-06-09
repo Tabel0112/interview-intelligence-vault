@@ -1,2 +1,6 @@
 # Private participant identity mapping
 vault/99 System/ID_Map_Private.json
+
+# Local API configuration
+.env
+.env.*

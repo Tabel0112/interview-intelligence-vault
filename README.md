@@ -105,3 +105,41 @@ Run the processed writer verification with:
 ```bash
 node scripts/verify-processed-transcript-writer.mjs
 ```
+
+## Topic Segmentation Agent
+
+The AI-assisted topic segmentation layer reads validated processed transcript
+JSON, groups adjacent turns into broad topic ranges, and converts AI-provided
+exact text anchors into source-traceable character offsets. Core segmentation
+logic accepts an injectable AI client; the verification suite uses mock AI
+only.
+
+Run the real OpenAI adapter with:
+
+```bash
+OPENAI_API_KEY=... OPENAI_MODEL=... node scripts/segment-topics.mjs
+```
+
+`OPENAI_MODEL` is optional; the adapter has its own default. Force rewriting
+unchanged topic files with:
+
+```bash
+OPENAI_API_KEY=... OPENAI_MODEL=... node scripts/segment-topics.mjs --force
+```
+
+Topic files are written atomically to:
+
+```text
+vault/02 Topic Analyses/<transcript_id>.topics.json
+```
+
+Structural problems fail only the affected transcript and do not write output.
+Quality concerns produce valid topic files with structured warnings. Main
+topic ranges always cover every turn exactly once; optional segments store
+character offsets rather than anchor or quote text.
+
+Run mock-only verification with:
+
+```bash
+node scripts/verify-topic-segmentation.mjs
+```

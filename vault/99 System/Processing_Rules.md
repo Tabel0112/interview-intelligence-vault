@@ -43,3 +43,16 @@
   `char_start`, `char_end`, and `source_hash` pointers.
 - Future evidence, topic, theme, and finding objects should not duplicate source
   text unnecessarily.
+
+## Topic Segmentation
+
+- Main topic ranges are strict: continuous, non-overlapping, gap-free, and
+  cover every processed turn exactly once.
+- Optional segments identify important or multi-topic passages within turns.
+- The AI supplies exact text anchors; deterministic code converts them to
+  inclusive `start_char` and exclusive `end_char` offsets.
+- Saved topic files keep offsets and summaries, not anchor text or full quotes.
+- Segments within one turn must not overlap.
+- Multiple topics may reference one bridge segment through `key_spans`.
+- Structural failures prevent writing the affected topic file.
+- Quality concerns save valid output with structured warnings.
