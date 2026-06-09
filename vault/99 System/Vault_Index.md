@@ -22,6 +22,8 @@ map when one is created.
 ## Evidence Cards
 
 Part 10 creates final evidence cards after Part 9 candidate scoring/filtering.
+Generated cards are stored in `../03 Evidence Cards/` and remain unclassified
+until Part 11 handles official tags and themes.
 
 | Evidence Card ID | Transcript ID | Topic Tags | File |
 | --- | --- | --- | --- |
@@ -35,6 +37,15 @@ they are not final evidence cards.
 | Transcript ID | Candidate File | Review Status |
 | --- | --- | --- |
 | example_interview | `../03 Evidence/Candidates/example_interview.evidence_candidates.json` | placeholder |
+
+## Scored Evidence Candidates
+
+Part 9 preserves and scores every Part 8 candidate. Part 10 uses only candidates
+with a final `create_evidence_card` decision.
+
+| Transcript ID | Scored Evidence File | Selected Count |
+| --- | --- | --- |
+| example_interview | `../03 Analysis/Evidence_Candidates/example_interview.scored_evidence.json` | placeholder |
 
 ## Topic Segmentation
 
@@ -73,7 +84,8 @@ official.
 
 1. Check findings and themes for synthesized answers.
 2. Check evidence cards for selected supporting quotes and source references.
-3. Check evidence candidates when reviewing possible supporting quotes.
-4. Check topic analyses for concise transcript- or topic-level context.
-5. Check processed transcripts when more context is required.
-6. Open raw transcripts only to verify the source of truth.
+3. Check scored evidence candidates for Part 9 rankings and filter decisions.
+4. Check Part 8 evidence candidates when reviewing all possible quotes.
+5. Check topic analyses for concise transcript- or topic-level context.
+6. Check processed transcripts when more context is required.
+7. Open raw transcripts only to verify the source of truth.

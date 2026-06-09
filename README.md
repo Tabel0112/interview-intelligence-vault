@@ -215,3 +215,68 @@ Run mock-only verification with:
 ```bash
 node scripts/verify-evidence-candidate-extractor.mjs
 ```
+
+## Evidence Scoring / Filtering
+
+Part 9 reads every Part 8 candidate and asks the AI only for five boolean score
+reasons plus a short rationale. Deterministic code computes the final 0-5
+score, preserves every original candidate and quote, marks duplicates, ranks
+candidates, and applies final filter decisions and selection caps.
+
+Run scoring for all available Part 8 candidate files with:
+
+```bash
+OPENAI_API_KEY=... OPENAI_MODEL=... node scripts/score-evidence-candidates.mjs
+```
+
+Use `--transcript <transcript_id>` to score one transcript or `--force` to
+regenerate unchanged output. Scored files are written atomically to:
+
+```text
+vault/03 Analysis/Evidence_Candidates/<transcript_id>.scored_evidence.json
+```
+
+Scores 4-5 are eligible for evidence-card selection, scores 2-3 stay in topic
+analysis, and scores 0-1 remain raw-only. Eligibility does not guarantee
+selection: code enforces at most 3 selected candidates per topic and 20 per
+transcript. The 10-15 card range is a guideline, never a minimum. Part 9 does
+not create final evidence cards; Part 10 consumes selected scored candidates.
+
+Run mock-only verification with:
+
+```bash
+node scripts/verify-evidence-scoring-filtering.mjs
+```
+
+## Evidence Card Writer
+
+Part 10 deterministically writes compact Obsidian Markdown evidence cards only
+for valid Part 9 candidates with `filter_decision: create_evidence_card`.
+It does not call AI or decide evidence value from scratch.
+
+Run the writer with:
+
+```bash
+node scripts/write-evidence-cards.mjs
+```
+
+Use `--force` to regenerate existing generated cards. Cards are written
+atomically to:
+
+```text
+vault/03 Evidence Cards/
+```
+
+The writer verifies exact quotes and speakers against processed transcript
+turns, resolves transcript and topic titles from existing Parts 3/6 data,
+deduplicates exact approved evidence, and protects notes without the generated
+marker. It uses current pipeline fields directly: Part 9
+`filter_decision: create_evidence_card`, `score_rationale` as the card score
+reason, and Part 8 `strength` mapped to evidence confidence
+(`strong`/`medium`/`weak` to `high`/`medium`/`low`).
+
+Run verification with:
+
+```bash
+node scripts/verify-evidence-card-writer.mjs
+```

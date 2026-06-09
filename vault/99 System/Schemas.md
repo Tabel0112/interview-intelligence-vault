@@ -142,10 +142,49 @@ Part 9 scores and filters candidates. Part 10 creates final evidence cards from
 reviewed candidates. Part 11 decides official tags and themes;
 `suggested_tags` from Part 8 never establish official taxonomy.
 
+## Scored Evidence Candidate JSON
+
+Part 9 scored files are generated at
+`03 Analysis/Evidence_Candidates/<transcript_id>.scored_evidence.json`.
+
+| Field | Description |
+| --- | --- |
+| `schema_version` | Currently `scored_evidence_candidates.v1`. |
+| `transcript_id` | Canonical source transcript ID. |
+| `source_candidate_file` | Vault-relative Part 8 candidate JSON path. |
+| `source_hash` | SHA-256 hash of the complete Part 8 source candidate file. |
+| `generated_at` | ISO timestamp updated only when output is written. |
+| `selection_limits` | Deterministic per-topic, target, and hard transcript limits. |
+| `scored_evidence_candidates` | Every Part 8 candidate with scoring and filtering fields. |
+| `summary` | Counts for candidates, decisions, and duplicates. |
+| `warnings` | Structured scoring/filtering warnings. |
+
+Each scored candidate preserves all Part 8 fields and adds `source_turn_ids`,
+the five boolean `score_reasons`, computed integer `score`,
+`score_rationale`, `dedupe_status`, `dedupe_of`, deterministic `rank`, and
+`filter_decision`.
+
+Valid filter decisions are `create_evidence_card`,
+`keep_in_topic_analysis`, and `raw_only`. Score 4-5 is only eligible for
+selection. Deterministic code limits selections to 3 per topic and 20 per
+transcript. Duplicate and capped-out eligible candidates stay in topic
+analysis. All Part 8 candidates remain in this output.
+
 ## Evidence Card Metadata
 
 Final evidence cards are created in Part 10 after candidate scoring/filtering.
 Official tag and theme decisions are handled in Part 11.
+
+Generated evidence cards are Markdown files in `03 Evidence Cards/`. YAML
+frontmatter contains `type`, stable `evidence_id`, `source_candidate_id`,
+source transcript ID/title, speaker, topic ID/title, confidence, score,
+`status: unclassified`, `created_by: evidence-card-writer.v1`, and
+`input_sha256`. The exact quote is stored only in the Markdown Quote section.
+
+Part 10 consumes current Part 9 `filter_decision: create_evidence_card`.
+`score_rationale` becomes the displayed score reason. Existing Part 8
+`strength` is the confidence source and maps from `strong`, `medium`, `weak`
+to `high`, `medium`, `low`.
 
 | Field | Description |
 | --- | --- |

@@ -1,48 +1,43 @@
 ---
-evidence_card_id: EC001
+type: evidence
+evidence_id: example_interview__topic_001__evidence_001
 source_candidate_id: example_interview_topic_001_ev_001
-quote_id: Q-example_interview-001
-transcript_id: example_interview
-participant_id: P001
-timestamp: "00:00:00"
-source_file: "01 Transcripts/Raw/Example Interview.ext"
-topic_tags: []
-theme_links: []
-finding_links: []
-evidence_type: perception
-participant_fit: ""
-confidence: medium
+source_transcript_id: example_interview
+source_transcript_title: "Example Interview"
+speaker: "Participant"
+topic_id: topic_001
+topic_title: "Example Topic"
+confidence: high
+score: 5
+status: unclassified
+created_by: evidence-card-writer.v1
+input_sha256: "<sha256>"
 ---
 
-# Evidence Card: EC001
+<!-- GENERATED_BY: evidence-card-writer.v1 -->
 
-Part 10 creates final evidence cards from candidates scored and filtered in
-Part 9. Part 11 decides official tags and themes.
+# Evidence - Short evidence title
 
 ## Quote
 
-> Selected important quote only.
-
-Promote only after verifying the candidate quote and source pointer.
+> Exact approved quote.
 
 ## Context
 
 Brief context needed to interpret the quote.
 
-## Why This Matters
+## Meaning
 
-Explain the evidence's relevance without overstating what it proves.
+Explain why the evidence matters without overstating it.
 
-## Possible Tags
+## Score Reason
 
-Part 8 suggestions are temporary. Do not treat them as official tags.
+Part 9 score rationale.
 
-- candidate-tag
+## Source
 
-## Linked Themes
+* [[Example Interview]]
 
-- None yet
+## Related Topic
 
-## Linked Findings
-
-- None yet
+* [[Topic Analysis - Example Topic]]

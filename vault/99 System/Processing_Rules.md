@@ -92,3 +92,46 @@
 - Write candidate files atomically. Invalid AI JSON must never replace an
   existing valid file.
 - Never write to or modify the Raw transcript folder.
+
+## Evidence Scoring / Filtering
+
+- Part 9 scores only existing Part 8 candidates and never extracts, creates,
+  rewrites, or drops candidates.
+- The AI judges exactly five boolean score reasons and provides a short
+  rationale. Code computes the final numeric score from those booleans.
+- Preserve candidate IDs, topic IDs, quotes, source pointers, and all other
+  Part 8 fields.
+- Mark duplicates and near-duplicates with `dedupe_status` and `dedupe_of`;
+  never remove them from scored output.
+- Score 4-5 is eligible for selection, score 2-3 stays in topic analysis, and
+  score 0-1 remains raw-only.
+- Eligible does not mean selected. Select at most 3 per topic and 20 per
+  transcript.
+- The 10-15 evidence-card target is a guideline, not a minimum. Never promote
+  weak evidence to reach it.
+- Duplicate or capped-out score 4-5 candidates stay in topic analysis.
+- Ranking and filter decisions are deterministic code decisions, not AI
+  decisions.
+- Write scored output atomically and never replace valid output with invalid
+  AI results.
+- Part 10 creates final evidence cards from selected Part 9 output.
+
+## Evidence Card Writer
+
+- Part 10 writes cards only for Part 9
+  `filter_decision: create_evidence_card` candidates at or above score 4.
+- Part 10 is deterministic and does not call AI or reassess evidence value.
+- Verify every quote exactly against its processed transcript turn using
+  JavaScript-style inclusive start and exclusive end character offsets.
+- Verify the saved speaker matches the source turn.
+- Resolve transcript titles from processed transcript metadata and topic titles
+  from Part 6 topic segmentation. Never invent missing values.
+- Use Part 9 `score_rationale` as the score reason and map Part 8 evidence
+  `strength` to card confidence.
+- Reject missing, hallucinated, paraphrased, filler, greeting, scheduling, or
+  otherwise invalid approved candidates.
+- Deduplicate exact source transcript/topic/speaker/quote combinations before
+  assigning deterministic evidence IDs.
+- Generated cards contain `<!-- GENERATED_BY: evidence-card-writer.v1 -->`.
+- Update only generated cards. Never overwrite manual evidence notes.
+- Write cards atomically and never modify Raw transcripts.
