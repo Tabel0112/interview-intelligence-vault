@@ -5,6 +5,9 @@
 Classify one Evidence Card using existing official tags, existing candidate
 tags, or one new candidate-tag suggestion for later human review.
 
+Official tags come from the approved `99 System/Tag_Dictionary.json`. Candidate
+tags remain separate suggestions under `05 Candidate Tags/`.
+
 ## Output
 
 Save a separate tag decision file under

@@ -61,12 +61,16 @@ with a final `create_evidence_card` decision.
 
 ## Themes
 
-Part 11 may match existing official taxonomy or suggest candidates. It never
-creates official tags or themes, and Part 8 suggested tags are not official.
+Part 11 may match existing official taxonomy or suggest candidates. Part 12
+connects matched decisions to approved official theme notes under
+`../04 Themes/`. Neither part creates official taxonomy from candidate tags.
+The approved canonical taxonomy is stored in
+`Tag_Dictionary.json`, and the deterministic writer rules are documented in
+`Agents/Theme_Note_Writer_Agent.md`.
 
 | Theme ID | Title | Supporting Evidence | File |
 | --- | --- | --- | --- |
-| THEME-001 | Placeholder theme | EC001 | `../04 Themes/THEME-001.md` |
+| canonical-tag | Placeholder theme | EC001 | `../04 Themes/canonical-tag.theme.md` |
 
 ## Tag Decisions
 

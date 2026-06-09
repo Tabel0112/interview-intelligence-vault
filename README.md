@@ -307,10 +307,10 @@ decisions, candidate tag suggestions, and `needs_review` decisions. The parent
 folder name does not mean every saved decision is a candidate tag. Candidate
 tags remain suggestions only.
 
-The optional official tag dictionary and candidate-tag index are read from
-`vault/05 Candidate Tags/Tag_Dictionary.json` and
-`vault/05 Candidate Tags/Candidate_Tags.json`. Missing files safely mean empty
-tag sets. Official themes are read from Markdown notes under
+The approved official Tag Dictionary is read from
+`vault/99 System/Tag_Dictionary.json`; the optional candidate-tag index is read
+from `vault/05 Candidate Tags/Candidate_Tags.json`. Missing candidate-tag files
+safely mean an empty candidate set. Official themes are read from Markdown notes under
 `vault/04 Themes/`. Part 11 never creates or edits these taxonomy sources,
 Evidence Cards, or Raw transcripts.
 
@@ -321,4 +321,39 @@ Run mock-only verification with:
 
 ```bash
 node scripts/verify-tag-theme-decision-agent.mjs
+```
+
+## Theme Note Writer
+
+Part 12 deterministically creates or updates official theme notes by connecting
+Part 11 `matched` decisions to themes approved in
+`vault/99 System/Tag_Dictionary.json`. It does not call AI or decide themes.
+Candidate and review-needed decisions are skipped because they are not approved
+official taxonomy.
+
+Run the writer with:
+
+```bash
+node scripts/write-theme-notes.mjs
+```
+
+Use `--force` to atomically rewrite theme notes even when their generated
+content is unchanged. Part 12 reads decisions from
+`vault/05 Candidate Tags/Decisions/`, verifies referenced Evidence Cards, and
+writes canonical-tag filenames to:
+
+```text
+vault/04 Themes/<canonical_tag>.theme.md
+```
+
+Approved aliases resolve to one canonical tag, preventing duplicate official
+theme notes. Only content inside the exact `GENERATED:RELATED_EVIDENCE` and
+`GENERATED:RELATED_TOPICS` marker pairs is replaced; manual content outside
+those sections is preserved. Topic links are added only when a decision
+provides a valid `topic_note_path`.
+
+Run verification with:
+
+```bash
+node scripts/verify-theme-note-writer.mjs
 ```

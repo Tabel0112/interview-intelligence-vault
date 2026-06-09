@@ -155,3 +155,23 @@
 - Skip only decisions whose Evidence Card path and SHA-256 hash remain current
   and whose taxonomy references are still valid.
 - Write decisions atomically and isolate failures per Evidence Card.
+
+## Theme Note Writer
+
+- Part 12 is deterministic and never calls AI or decides official taxonomy.
+- Read Part 11 tag decisions from `05 Candidate Tags/Decisions/` and process
+  only `matched` decisions.
+- Official themes and aliases must resolve through the approved
+  `99 System/Tag_Dictionary.json` using the `tag_dictionary.v1` schema.
+- Candidate, review-needed, unknown, and non-official tags cannot create
+  official theme notes.
+- Store official theme notes at `04 Themes/<canonical_tag>.theme.md`; filenames
+  use canonical tags, not mutable titles or aliases.
+- Deduplicate and sort generated Evidence Card and topic-analysis wikilinks.
+- Replace only content inside the exact generated Related Evidence and Related
+  Topics marker pairs. Preserve all manual content outside those markers.
+- If an existing theme note has no generated marker pairs, append the generated
+  sections without rewriting its manual content.
+- Skip unchanged notes unless forced, write atomically, and never modify the
+  Tag Dictionary, Part 11 decisions, Evidence Cards, topic analyses, or Raw
+  transcripts.

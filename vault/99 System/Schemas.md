@@ -247,3 +247,50 @@ decision a candidate-tag suggestion.
 Candidate tags are normalized lowercase kebab-case suggestions. Decision files
 never promote candidate tags, update the official Tag Dictionary, or create
 official Themes. They also never mutate Evidence Cards or Raw transcripts.
+
+Part 12 accepts the saved Part 11 shape above. For migration compatibility, it
+also accepts `evidence_card_id`/`evidence_note_path` and an optional nested
+`theme_decision` object. An optional `topic_note_path` may provide a related
+topic link. Only `matched` decisions are eligible for official theme notes.
+
+## Approved Tag Dictionary JSON
+
+The required Part 12 taxonomy source is
+`99 System/Tag_Dictionary.json`.
+
+```json
+{
+  "schema": "tag_dictionary.v1",
+  "themes": [
+    {
+      "canonical_tag": "consumer-privacy-sensitivity",
+      "theme_title": "Consumer Privacy Sensitivity",
+      "aliases": ["privacy-awareness"],
+      "definition": "Approved theme definition.",
+      "status": "official"
+    }
+  ]
+}
+```
+
+Canonical tags are unique lowercase kebab-case identifiers. Aliases cannot map
+to multiple canonical tags. Part 12 writes theme notes only for dictionary
+entries whose status is `official`.
+
+## Theme Note Markdown
+
+Part 12 stores official theme notes at
+`04 Themes/<canonical_tag>.theme.md`.
+
+| Frontmatter field | Description |
+| --- | --- |
+| `type` | Always `theme`. |
+| `theme_id` | Stable canonical tag. |
+| `title` | Approved dictionary theme title. |
+| `canonical_tag` | Stable filename and taxonomy identifier. |
+| `aliases` | Approved aliases resolving to the canonical tag. |
+| `status` | `official`. |
+
+Related Evidence and Related Topics lists are generated between the exact
+`GENERATED:RELATED_EVIDENCE` and `GENERATED:RELATED_TOPICS` marker pairs.
+Manual content outside those sections is preserved.

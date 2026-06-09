@@ -1,29 +1,35 @@
 ---
-theme_id: THEME-001
-title: Placeholder theme
-description: Brief description of the repeated pattern.
-related_topics: []
-supporting_evidence_cards: []
-status: candidate
-created_date: YYYY-MM-DD
-last_updated: YYYY-MM-DD
+type: theme
+theme_id: canonical-tag
+title: "Approved Theme Title"
+canonical_tag: canonical-tag
+aliases:
+  - approved-alias
+status: official
 ---
 
-# Theme: Placeholder Theme
+# Approved Theme Title
 
-## Description
+## Definition
 
-Describe the repeated pattern across transcripts.
+Use the approved definition from `99 System/Tag_Dictionary.json`.
 
-## Supporting Evidence
+## Related Evidence
 
-- `EC001`
+<!-- GENERATED:RELATED_EVIDENCE:START -->
 
-## Variations and Contradictions
+* [[Evidence Card Note]]
 
-Record meaningful differences or counter-evidence.
+<!-- GENERATED:RELATED_EVIDENCE:END -->
 
-## Notes
+## Related Topics
 
-Scope, limitations, and review status.
+<!-- GENERATED:RELATED_TOPICS:START -->
 
+* [[Topic Analysis Note]]
+
+<!-- GENERATED:RELATED_TOPICS:END -->
+
+## Manual Notes
+
+Manual analysis outside generated markers is preserved by Part 12.

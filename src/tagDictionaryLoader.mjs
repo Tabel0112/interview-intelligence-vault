@@ -2,7 +2,7 @@ import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 
 export const TAG_DICTIONARY_PATH = path.join(
-  "05 Candidate Tags",
+  "99 System",
   "Tag_Dictionary.json",
 );
 export const CANDIDATE_TAGS_PATH = path.join(
@@ -39,7 +39,14 @@ function recordsFromJson(value, collectionKeys) {
 
 function tagName(record) {
   if (typeof record === "string") return record;
-  return record?.tag ?? record?.name ?? record?.id ?? record?.tag_id ?? null;
+  return (
+    record?.canonical_tag ??
+    record?.tag ??
+    record?.name ??
+    record?.id ??
+    record?.tag_id ??
+    null
+  );
 }
 
 async function optionalJson(filePath) {
@@ -99,7 +106,10 @@ export async function loadTagTaxonomy({
 } = {}) {
   const dictionary = await optionalJson(path.join(vaultPath, TAG_DICTIONARY_PATH));
   const candidateIndex = await optionalJson(path.join(vaultPath, CANDIDATE_TAGS_PATH));
-  const officialRecords = recordsFromJson(dictionary, ["tags", "official_tags"]);
+  const officialRecords =
+    dictionary?.schema === "tag_dictionary.v1" && Array.isArray(dictionary.themes)
+      ? dictionary.themes.filter((theme) => theme?.status === "official")
+      : recordsFromJson(dictionary, ["themes", "tags", "official_tags"]);
   const candidateRecords = recordsFromJson(candidateIndex, [
     "tags",
     "candidate_tags",

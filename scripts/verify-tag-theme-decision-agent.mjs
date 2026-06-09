@@ -12,7 +12,10 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { renderEvidenceCardMarkdown } from "../src/evidenceCardTemplate.mjs";
-import { loadTagTaxonomy } from "../src/tagDictionaryLoader.mjs";
+import {
+  TAG_DICTIONARY_PATH,
+  loadTagTaxonomy,
+} from "../src/tagDictionaryLoader.mjs";
 import {
   TAG_DECISIONS_PATH,
   classifyAllEvidenceTags,
@@ -30,7 +33,7 @@ const tagsDirectory = path.join(vaultPath, "05 Candidate Tags");
 const tagDecisionDirectory = path.join(vaultPath, TAG_DECISIONS_PATH);
 const agentsDirectory = path.join(vaultPath, "99 System", "Agents");
 const rawPath = path.join(rawDirectory, "Fixture Interview.md");
-const dictionaryPath = path.join(tagsDirectory, "Tag_Dictionary.json");
+const dictionaryPath = path.join(vaultPath, TAG_DICTIONARY_PATH);
 const candidatesPath = path.join(tagsDirectory, "Candidate_Tags.json");
 const themePath = path.join(themesDirectory, "privacy-theme.md");
 
@@ -112,14 +115,35 @@ try {
   await mkdir(evidenceDirectory, { recursive: true });
   await mkdir(themesDirectory, { recursive: true });
   await mkdir(tagsDirectory, { recursive: true });
+  await mkdir(path.dirname(dictionaryPath), { recursive: true });
   await mkdir(agentsDirectory, { recursive: true });
   await writeFile(rawPath, "# Immutable raw transcript\n", "utf8");
   await writeFile(
     dictionaryPath,
     JSON.stringify({
-      tags: [
-        { tag: "privacy-control", theme: "Privacy and User Control" },
-        { tag: "pricing-friction" },
+      schema: "tag_dictionary.v1",
+      themes: [
+        {
+          canonical_tag: "privacy-control",
+          theme_title: "Privacy and User Control",
+          aliases: [],
+          definition: "Privacy control.",
+          status: "official",
+        },
+        {
+          canonical_tag: "pricing-friction",
+          theme_title: "Pricing Friction",
+          aliases: [],
+          definition: "Pricing friction.",
+          status: "official",
+        },
+        {
+          canonical_tag: "draft-tag",
+          theme_title: "Draft Tag",
+          aliases: [],
+          definition: "Not official.",
+          status: "draft",
+        },
       ],
     }),
     "utf8",
@@ -141,6 +165,7 @@ try {
   );
   const taxonomy = await loadTagTaxonomy({ vaultPath });
   assert.deepEqual(taxonomy.officialTags, ["pricing-friction", "privacy-control"]);
+  assert(!taxonomy.officialTags.includes("draft-tag"));
   assert.deepEqual(taxonomy.candidateTags, ["existing-candidate"]);
   assert.equal(taxonomy.themes[0].title, "Privacy and User Control");
 
