@@ -1,15 +1,15 @@
 ---
-transcript_id: T001
+transcript_id: example_interview
 participant_id: P001
-source_file: "01 Transcripts/Raw/T001.ext"
-processed_file: "01 Transcripts/Processed/T001.md"
+source_file: "01 Transcripts/Raw/Example Interview.ext"
+processed_file: "01 Transcripts/Processed/example_interview.md"
 status: processed
 version: "1.0"
 created_date: YYYY-MM-DD
 last_updated: YYYY-MM-DD
 ---
 
-# Processed Transcript: T001
+# Processed Transcript: example_interview
 
 ## Interview Context
 

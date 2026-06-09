@@ -1,9 +1,9 @@
 ---
-topic_analysis_id: TA-T001-001
+topic_analysis_id: TA-example_interview-001
 topic: placeholder-topic
-transcript_id: T001
+transcript_id: example_interview
 participant_id: P001
-source_file: "01 Transcripts/Processed/T001.md"
+source_file: "01 Transcripts/Processed/example_interview.md"
 related_quote_ids: []
 related_evidence_cards: []
 status: draft
@@ -23,7 +23,7 @@ Short summary of what this transcript says about the topic.
 
 ## Evidence References
 
-- `Q-T001-001` at `00:00:00`
+- `Q-example_interview-001` at `00:00:00`
 
 ## Notes
 

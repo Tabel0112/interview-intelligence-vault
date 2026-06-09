@@ -1,10 +1,10 @@
 ---
 evidence_card_id: EC001
-quote_id: Q-T001-001
-transcript_id: T001
+quote_id: Q-example_interview-001
+transcript_id: example_interview
 participant_id: P001
 timestamp: "00:00:00"
-source_file: "01 Transcripts/Raw/T001.ext"
+source_file: "01 Transcripts/Raw/Example Interview.ext"
 topic_tags: []
 theme_links: []
 finding_links: []

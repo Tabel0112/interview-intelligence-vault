@@ -8,7 +8,7 @@ traceability fields must not be removed.
 
 | Field | Description |
 | --- | --- |
-| `transcript_id` | Stable transcript ID, such as `T001`. |
+| `transcript_id` | Stable canonical snake_case transcript ID, such as `example_interview`. |
 | `participant_id` | Anonymous participant ID, such as `P001`. |
 | `source_file` | Path to the raw source-of-truth transcript. |
 | `processed_file` | Path to the cleaned, machine-readable transcript. |
@@ -21,7 +21,7 @@ traceability fields must not be removed.
 
 | Field | Description |
 | --- | --- |
-| `quote_id` | Stable quote ID, such as `Q-T001-001`. |
+| `quote_id` | Stable quote ID, such as `Q-example_interview-001`. |
 | `transcript_id` | Source transcript ID. |
 | `participant_id` | Anonymous source participant ID. |
 | `timestamp` | Source timestamp or another precise source locator. |
@@ -29,6 +29,26 @@ traceability fields must not be removed.
 | `evidence_type` | Kind of support, such as `perception`, `behavior`, or `fact`. |
 | `participant_fit` | How well the participant fits the relevant research segment. |
 | `confidence` | Confidence in interpretation, such as `low`, `medium`, or `high`. |
+
+## Processed Speaker Turn Transcript
+
+Processed transcripts are JSON files at
+`01 Transcripts/Processed/<transcript_id>.processed.json`.
+
+| Field | Description |
+| --- | --- |
+| `transcript_id` | Canonical snake_case ID shared with the raw loader and metadata. |
+| `source_file` | Original raw transcript filename. |
+| `source_hash` | SHA-256 hash of the raw source contents. |
+| `parser_version` | Deterministic parser version, such as `speaker-turn-parser-v1`. |
+| `preamble_text` | Source text before the first valid speaker label. |
+| `speakers` | Unique cleaned display names found in non-empty turns. |
+| `warnings` | Structured parser warning objects. |
+| `turns` | Ordered speaker turn objects. |
+
+Each turn contains `turn_id`, `speaker`, `speaker_id`, `text`, `position`,
+`source_line_start`, and `source_line_end`. Turn IDs, positions, and source
+line numbers are deterministic and 1-indexed.
 
 ## Evidence Card Metadata
 
@@ -65,4 +85,3 @@ traceability fields must not be removed.
 | `supported_by` | Evidence card IDs supporting the claim. |
 | `confidence` | Confidence in the finding. |
 | `notes` | Limitations, caveats, or review notes. |
-

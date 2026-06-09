@@ -8,7 +8,7 @@ linked by stable IDs so every analysis object can be traced to its source.
 
 | Transcript ID | Participant ID | Processed File | Status | Last Updated |
 | --- | --- | --- | --- | --- |
-| T001 | P001 | `../01 Transcripts/Processed/T001.md` | placeholder | YYYY-MM-DD |
+| example_interview | P001 | `../01 Transcripts/Processed/example_interview.md` | placeholder | YYYY-MM-DD |
 
 ## Participants
 
@@ -17,13 +17,13 @@ map when one is created.
 
 | Participant ID | Transcript IDs | Relevant Topics |
 | --- | --- | --- |
-| P001 | T001 | placeholder-topic |
+| P001 | example_interview | placeholder-topic |
 
 ## Evidence Cards
 
 | Evidence Card ID | Transcript ID | Topic Tags | File |
 | --- | --- | --- | --- |
-| EC001 | T001 | placeholder-topic | `../03 Evidence Cards/EC001.md` |
+| EC001 | example_interview | placeholder-topic | `../03 Evidence Cards/EC001.md` |
 
 ## Themes
 
@@ -41,7 +41,7 @@ map when one is created.
 
 | Transcript ID | Raw Stored | Processed | Topic Analysis | Evidence Reviewed |
 | --- | --- | --- | --- | --- |
-| T001 | no | no | no | no |
+| example_interview | no | no | no | no |
 
 ## Search Guidance
 
@@ -50,4 +50,3 @@ map when one is created.
 3. Check topic analyses for concise transcript- or topic-level context.
 4. Check processed transcripts when more context is required.
 5. Open raw transcripts only to verify the source of truth.
-
