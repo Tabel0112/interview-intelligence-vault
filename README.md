@@ -179,3 +179,39 @@ Run mock-only verification with:
 ```bash
 node scripts/verify-topic-analysis-writer.mjs
 ```
+
+## Evidence Candidate Extractor
+
+The evidence candidate extractor reads each processed transcript and its
+matching topic segmentation file. It asks the AI for zero to five useful
+candidate quotes per topic, then deterministic code verifies that every saved
+quote exactly matches its turn-relative character pointer. Invalid candidates
+are rejected with warnings.
+
+Run the real OpenAI adapter for all available transcripts with:
+
+```bash
+OPENAI_API_KEY=... OPENAI_MODEL=... node scripts/extract-evidence-candidates.mjs
+```
+
+Use `--transcript <transcript_id>` to process one transcript or `--force` to
+rewrite unchanged output. One validated JSON file per transcript is written
+atomically to:
+
+```text
+vault/03 Evidence/Candidates/<transcript_id>.evidence_candidates.json
+```
+
+Candidate IDs are deterministic within each topic. Unchanged files are skipped,
+missing inputs are reported clearly, and invalid AI JSON never replaces an
+existing valid candidate file. Candidate files support later human review and
+evidence-card creation; they are not reviewed evidence cards themselves.
+Part 9 scores and filters these candidates, Part 10 creates final evidence
+cards, and Part 11 decides official tags and themes. Part 8 `suggested_tags`
+remain temporary suggestions only.
+
+Run mock-only verification with:
+
+```bash
+node scripts/verify-evidence-candidate-extractor.mjs
+```

@@ -21,9 +21,20 @@ map when one is created.
 
 ## Evidence Cards
 
+Part 10 creates final evidence cards after Part 9 candidate scoring/filtering.
+
 | Evidence Card ID | Transcript ID | Topic Tags | File |
 | --- | --- | --- | --- |
 | EC001 | example_interview | placeholder-topic | `../03 Evidence Cards/EC001.md` |
+
+## Evidence Candidates
+
+Part 8 creates these generated candidates. Part 9 scores and filters them;
+they are not final evidence cards.
+
+| Transcript ID | Candidate File | Review Status |
+| --- | --- | --- |
+| example_interview | `../03 Evidence/Candidates/example_interview.evidence_candidates.json` | placeholder |
 
 ## Topic Segmentation
 
@@ -38,6 +49,9 @@ map when one is created.
 | example_interview | topic_001 | `../02 Topic Analyses/example_interview__placeholder_topic.md` |
 
 ## Themes
+
+Part 11 decides official tags and themes. Part 8 suggested tags are not
+official.
 
 | Theme ID | Title | Supporting Evidence | File |
 | --- | --- | --- | --- |
@@ -59,6 +73,7 @@ map when one is created.
 
 1. Check findings and themes for synthesized answers.
 2. Check evidence cards for selected supporting quotes and source references.
-3. Check topic analyses for concise transcript- or topic-level context.
-4. Check processed transcripts when more context is required.
-5. Open raw transcripts only to verify the source of truth.
+3. Check evidence candidates when reviewing possible supporting quotes.
+4. Check topic analyses for concise transcript- or topic-level context.
+5. Check processed transcripts when more context is required.
+6. Open raw transcripts only to verify the source of truth.

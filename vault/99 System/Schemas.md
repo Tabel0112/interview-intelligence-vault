@@ -46,7 +46,7 @@ Processed transcripts are JSON files at
 | `turns` | Ordered speaker turn objects. |
 | `summaries` | Reserved array for future summaries; currently empty. |
 | `topics` | Reserved array for future topics; currently empty. |
-| `evidence_candidates` | Reserved array for future evidence candidates; currently empty. |
+| `evidence_candidates` | Reserved array; Part 8 candidate output is stored separately. |
 | `source` | Raw path, filename, SHA-256 source hash, and modified timestamp. |
 | `processed_at` | ISO timestamp updated only when the file is written. |
 | `warnings` | Structured processing warning objects. |
@@ -108,7 +108,44 @@ Generated notes contain Summary, synthesized Key Points, optional supported
 Design Implications, Source, and Turn Range sections. They contain no evidence
 quotes or pasted transcript sections.
 
+## Evidence Candidate JSON
+
+Evidence candidate files are generated at
+`03 Evidence/Candidates/<transcript_id>.evidence_candidates.json`.
+They are Part 8 generated candidates, not final evidence cards.
+
+| Field | Description |
+| --- | --- |
+| `schema_version` | Currently `evidence_candidates.v1`. |
+| `transcript_id` | Canonical source transcript ID. |
+| `source_hash` | SHA-256 hash of the processed and topic input files. |
+| `generated_at` | ISO timestamp updated only when output is written. |
+| `evidence_candidates` | Validated candidate quotes grouped from all transcript topics. |
+| `warnings` | Structured validation and quality warnings. |
+
+Each candidate contains deterministic `candidate_id`, `topic_id`, exact
+`quote`, source `speaker`, `source_refs`, brief `context`, `meaning`,
+controlled `evidence_category`, temporary `suggested_tags`, `strength`, and
+`status: candidate`. Candidate IDs use
+`<transcript_id>_<topic_id>_ev_<sequence>`.
+
+Each source reference contains `turn_id`, inclusive `start_char`, and exclusive
+`end_char`. The saved quote must exactly equal the referenced processed-turn
+text slice. Evidence categories are:
+`user_need`, `pain_point`, `behavior_or_workflow`, `barrier_or_concern`,
+`decision_factor`, `motivation`, `emotion_or_attitude`, `workaround`,
+`product_expectation`, `design_opportunity`, `business_or_market_insight`,
+`contradiction_or_tension`, `background_context`, or `other`. Strength is
+`strong`, `medium`, or `weak`.
+
+Part 9 scores and filters candidates. Part 10 creates final evidence cards from
+reviewed candidates. Part 11 decides official tags and themes;
+`suggested_tags` from Part 8 never establish official taxonomy.
+
 ## Evidence Card Metadata
+
+Final evidence cards are created in Part 10 after candidate scoring/filtering.
+Official tag and theme decisions are handled in Part 11.
 
 | Field | Description |
 | --- | --- |

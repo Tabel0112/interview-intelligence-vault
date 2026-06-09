@@ -21,7 +21,7 @@ export function createOpenAiJsonClient({
   fetchImpl = globalThis.fetch,
 } = {}) {
   if (!apiKey) {
-    throw new Error("OPENAI_API_KEY is required for real topic segmentation");
+    throw new Error("OPENAI_API_KEY is required for real AI processing");
   }
   if (!model) {
     throw new Error("OPENAI_MODEL must be a non-empty string");
@@ -37,33 +37,38 @@ export function createOpenAiJsonClient({
       input,
       schema,
       schemaName = "structured_output",
+      reasoningEffort,
     }) {
+      const requestBody = {
+        model,
+        instructions: prompt,
+        input: JSON.stringify(input),
+        text: {
+          format: {
+            type: "json_schema",
+            name: schemaName,
+            strict: true,
+            schema,
+          },
+        },
+      };
+      if (reasoningEffort) {
+        requestBody.reasoning = { effort: reasoningEffort };
+      }
       const response = await fetchImpl(endpoint, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${apiKey}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          model,
-          instructions: prompt,
-          input: JSON.stringify(input),
-          text: {
-            format: {
-              type: "json_schema",
-              name: schemaName,
-              strict: true,
-              schema,
-            },
-          },
-        }),
+        body: JSON.stringify(requestBody),
       });
 
       const body = await response.json().catch(() => null);
       if (!response.ok) {
         const detail =
           body?.error?.message ?? `${response.status} ${response.statusText}`;
-        throw new Error(`OpenAI topic segmentation request failed: ${detail}`);
+        throw new Error(`OpenAI structured JSON request failed: ${detail}`);
       }
 
       const text = extractOutputText(body);

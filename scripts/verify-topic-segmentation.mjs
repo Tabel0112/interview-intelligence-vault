@@ -192,8 +192,10 @@ try {
     prompt: "mock prompt",
     input: { turns: [] },
     schema: { type: "object" },
+    reasoningEffort: "medium",
   });
   assert.equal(openAiRequestBody.text.format.type, "json_schema");
+  assert.equal(openAiRequestBody.reasoning.effort, "medium");
   assert.equal(adapterResult.model, "mock-openai-model");
   assert(Array.isArray(adapterResult.json.topics));
   assert.equal(

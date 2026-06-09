@@ -9,9 +9,11 @@
   for now.
 - Old processed JSON versions are overwritten rather than archived.
 - Topic analyses are short summaries of what one transcript or one topic says.
-- Evidence cards store only selected important quotes, not every quote.
-- Themes group repeated patterns across transcripts.
-- Candidate tags are temporary and may later become stable tags.
+- Part 8 creates evidence candidates only.
+- Part 9 scores and filters evidence candidates.
+- Part 10 creates final evidence cards containing selected important quotes.
+- Part 11 decides official tags and themes across transcripts.
+- Candidate tags are temporary suggestions and are never official tags.
 - Findings are high-level conclusions and must link back to evidence cards.
 
 ## Traceability
@@ -71,3 +73,22 @@
 - Generated notes include `<!-- generated: topic-analysis-writer -->`.
 - Never overwrite a topic note that does not contain the generated marker.
 - Global cross-interview themes are not topic analysis notes.
+
+## Evidence Candidates
+
+- Extract zero to five candidates per topic, usually zero to three.
+- Send only the selected topic turns to the AI.
+- Save only exact quotes that deterministic code verifies against one
+  turn-relative character pointer.
+- Reject candidates with invalid pointers, unsupported categories or strength,
+  empty required text, or duplicate quotes within the same topic.
+- Candidate IDs are deterministic and assigned only after validation.
+- Candidate tags are temporary and do not establish project-wide taxonomy.
+- Candidate output is generated JSON, not a reviewed evidence card.
+- Part 9 scores and filters candidates before Part 10 creates final evidence
+  cards.
+- Part 11, not Part 8, decides official tags and themes.
+- Skip unchanged valid output unless forced.
+- Write candidate files atomically. Invalid AI JSON must never replace an
+  existing valid file.
+- Never write to or modify the Raw transcript folder.
