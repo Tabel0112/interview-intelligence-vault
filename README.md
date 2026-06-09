@@ -143,3 +143,39 @@ Run mock-only verification with:
 ```bash
 node scripts/verify-topic-segmentation.mjs
 ```
+
+## Topic Analysis Writer
+
+The topic analysis writer reads processed transcript JSON and matching topic
+segmentation JSON, sends only each topic's selected turns to the AI client, and
+renders compact Markdown summaries deterministically. It creates one note per
+transcript-topic, not global cross-interview themes.
+
+Run the real OpenAI adapter with:
+
+```bash
+OPENAI_API_KEY=... OPENAI_MODEL=... node scripts/write-topic-analyses.mjs
+```
+
+Force rewriting unchanged generated notes with:
+
+```bash
+OPENAI_API_KEY=... OPENAI_MODEL=... node scripts/write-topic-analyses.mjs --force
+```
+
+Notes are written atomically to:
+
+```text
+vault/02 Topic Analyses/<transcript_id>__<topic_slug>.md
+```
+
+Unchanged generated notes are skipped. Notes without the
+`<!-- generated: topic-analysis-writer -->` marker are treated as manual notes
+and are never overwritten, including during forced runs. Topic analyses contain
+compact synthesis without transcript quotes or pasted transcript sections.
+
+Run mock-only verification with:
+
+```bash
+node scripts/verify-topic-analysis-writer.mjs
+```

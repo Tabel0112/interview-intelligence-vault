@@ -56,3 +56,18 @@
 - Multiple topics may reference one bridge segment through `key_spans`.
 - Structural failures prevent writing the affected topic file.
 - Quality concerns save valid output with structured warnings.
+
+## Topic Analysis Notes
+
+- Create one compact Markdown note per transcript-topic.
+- Topic analysis notes summarize only the processed turns inside their topic
+  range.
+- Do not paste transcript sections or include evidence quotes.
+- Key points synthesize related ideas rather than listing disconnected
+  fragments.
+- Include design implications only when directly supported by the selected
+  turns.
+- Do not use outside knowledge or invent unsupported claims.
+- Generated notes include `<!-- generated: topic-analysis-writer -->`.
+- Never overwrite a topic note that does not contain the generated marker.
+- Global cross-interview themes are not topic analysis notes.

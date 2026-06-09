@@ -572,6 +572,7 @@ export async function segmentTranscriptTopics(
     prompt,
     input: buildTopicSegmentationInput(processedTranscript),
     schema: TOPIC_SEGMENTATION_RESPONSE_SCHEMA,
+    schemaName: "topic_segmentation",
   });
   const parsed = parseTopicSegmentationResponse(response);
   validateAiResponseShape(parsed);

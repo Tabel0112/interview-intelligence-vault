@@ -32,7 +32,12 @@ export function createOpenAiJsonClient({
 
   return {
     model,
-    async generateJson({ prompt, input, schema }) {
+    async generateJson({
+      prompt,
+      input,
+      schema,
+      schemaName = "structured_output",
+    }) {
       const response = await fetchImpl(endpoint, {
         method: "POST",
         headers: {
@@ -46,7 +51,7 @@ export function createOpenAiJsonClient({
           text: {
             format: {
               type: "json_schema",
-              name: "topic_segmentation",
+              name: schemaName,
               strict: true,
               schema,
             },

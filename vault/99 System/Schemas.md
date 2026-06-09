@@ -84,6 +84,30 @@ or full quote previews. Topics contain `topic_id`, `title`, `start_turn`,
 `end_turn`, `summary`, and `key_spans`. Multiple topics may reference the same
 segment through `key_spans`.
 
+## Topic Analysis Markdown
+
+Generated topic analysis notes are stored at
+`02 Topic Analyses/<transcript_id>__<topic_slug>.md`.
+
+YAML frontmatter contains:
+
+| Field | Description |
+| --- | --- |
+| `type` | Always `topic_analysis`. |
+| `schema_version` | Currently `topic_analysis.v1`. |
+| `transcript_id` | Canonical source transcript ID. |
+| `topic_id` | Source segmentation topic ID, such as `topic_001`. |
+| `topic_slug` | Stable title-derived slug used in the filename. |
+| `topic_title` | Human-readable topic title. |
+| `source_transcript` | Human-readable source transcript name. |
+| `input_sha256` | Hash used to skip unchanged generated notes. |
+| `turn_ranges` | Source processed-turn range. |
+| `generated_from` | Currently `topic_segmentation.v1`. |
+
+Generated notes contain Summary, synthesized Key Points, optional supported
+Design Implications, Source, and Turn Range sections. They contain no evidence
+quotes or pasted transcript sections.
+
 ## Evidence Card Metadata
 
 | Field | Description |

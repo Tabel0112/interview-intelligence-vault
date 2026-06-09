@@ -1,35 +1,29 @@
 ---
-topic_analysis_id: TA-example_interview-001
-topic: placeholder-topic
+type: topic_analysis
+schema_version: topic_analysis.v1
 transcript_id: example_interview
-participant_id: P001
-source_file: "01 Transcripts/Processed/example_interview.processed.json"
-related_quote_ids: []
-related_evidence_cards: []
-status: draft
-created_date: YYYY-MM-DD
-last_updated: YYYY-MM-DD
+topic_id: topic_001
+topic_slug: placeholder_topic
+topic_title: "Placeholder Topic"
+source_transcript: "Example Interview"
+input_sha256: "<sha256>"
+turn_ranges:
+  - turn_001 - turn_005
+generated_from: topic_segmentation.v1
 ---
 
-# Topic Analysis Note: Placeholder Topic
+<!-- generated: topic-analysis-writer -->
 
-Generated broad topic segmentation is stored at
-`02 Topic Analyses/<transcript_id>.topics.json`. This Markdown template is for
-future human-authored or focused topic notes and should not replace generated
-topic segmentation JSON.
+# Topic Analysis - Placeholder Topic
 
 ## Summary
-
-Short summary of what this transcript says about the topic.
+Compact synthesized summary.
 
 ## Key Points
+- Synthesized key point without quotes.
 
-- Concise point with a source reference.
+## Source
+- [[Example Interview]]
 
-## Evidence References
-
-- `Q-example_interview-001` at `00:00:00`
-
-## Notes
-
-Limitations, ambiguity, or follow-up questions.
+## Turn Range
+- turn_001 - turn_005
