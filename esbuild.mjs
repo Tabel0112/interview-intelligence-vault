@@ -10,14 +10,11 @@ for (const file of readdirSync("src/db/migrations").filter((name) => name.endsWi
 await esbuild.build({
   entryPoints: ["main.ts"],
   bundle: true,
-  external: ["obsidian", "electron", "better-sqlite3"],
+  external: ["obsidian", "electron"],
   format: "cjs",
   target: "es2022",
   platform: "node",
   outfile: "main.js",
-  banner: {
-    js: "globalThis.__TRANSCRIPT_MEMORY_MIGRATION_DIR__ = require('node:path').join(__dirname, 'migrations');",
-  },
   define: {
     "import.meta.url": JSON.stringify("file:///__TRANSCRIPT_MEMORY_BUNDLE__/index.js"),
   },
@@ -34,3 +31,7 @@ for (const dependency of ["better-sqlite3", "bindings", "file-uri-to-path"]) {
   mkdirSync(destination, { recursive: true });
   cpSync(join("node_modules", dependency), destination, { recursive: true });
 }
+cpSync(
+  "native/electron-39.8.3/better_sqlite3.node",
+  join(distribution, "node_modules", "better-sqlite3", "build", "Release", "better_sqlite3.node"),
+);

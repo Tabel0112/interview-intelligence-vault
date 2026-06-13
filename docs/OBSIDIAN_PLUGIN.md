@@ -24,6 +24,8 @@ dist/transcript-memory-vault/
 
 The native `better-sqlite3` binary must be compatible with the Node/Electron ABI used by the installed Obsidian desktop version. If it is incompatible, the plugin shows a startup error instead of opening or modifying the database.
 
+The checked-in MVP release binding targets Obsidian's Electron `39.8.3` / native module ABI `140` on Apple Silicon. Rebuild the native binding when Obsidian changes Electron ABI or when distributing for another operating system or CPU architecture.
+
 ## Manual Installation
 
 1. Build the plugin.

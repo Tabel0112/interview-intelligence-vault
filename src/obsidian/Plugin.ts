@@ -39,6 +39,12 @@ export default class TranscriptMemoryVaultPlugin extends Plugin {
 
     const pluginDirectory = join(fileSystemAdapter!.getBasePath(), this.app.vault.configDir, "plugins", this.manifest.id);
     const databasePath = join(pluginDirectory, "transcript-memory.sqlite");
+    const runtime = globalThis as typeof globalThis & {
+      __TRANSCRIPT_MEMORY_MIGRATION_DIR__?: string;
+      __TRANSCRIPT_MEMORY_NATIVE_BINDING__?: string;
+    };
+    runtime.__TRANSCRIPT_MEMORY_MIGRATION_DIR__ = join(pluginDirectory, "migrations");
+    runtime.__TRANSCRIPT_MEMORY_NATIVE_BINDING__ = join(pluginDirectory, "node_modules", "better-sqlite3", "build", "Release", "better_sqlite3.node");
     this.health = { ...this.health, databasePath };
     try {
       mkdirSync(pluginDirectory, { recursive: true });

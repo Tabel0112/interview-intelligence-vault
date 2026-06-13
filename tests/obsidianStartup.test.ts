@@ -1,6 +1,7 @@
 import { mkdtemp, readdir, readFile, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { spawnSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openDatabase, type SqliteDatabase } from "../src/db/index.js";
 import { PACKAGED_MIGRATION_COUNT, validateMigrationPackage } from "../src/db/migrations/index.js";
@@ -83,5 +84,7 @@ describe("plugin documentation and build inputs", () => {
     for (const path of ["manifest.json", "main.js", "styles.css", "migrations/001_initial_schema.sql"]) {
       expect((await stat(path)).isFile()).toBe(true);
     }
+    const native = spawnSync(process.execPath, ["-e", `require(${JSON.stringify(resolve("native/electron-39.8.3/better_sqlite3.node"))})`], { encoding: "utf8" });
+    expect(`${native.stderr}${native.stdout}`).toContain("NODE_MODULE_VERSION 140");
   });
 });
