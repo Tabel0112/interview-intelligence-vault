@@ -16,6 +16,8 @@ export interface PluginHealth {
   realSqliteStorage: boolean;
   firstRun: boolean;
   lastInitializationError: string | null;
+  nativeBindingTarget: string | null;
+  packagedNativeTargets: string[];
 }
 
 export const initialPluginHealth = (): PluginHealth => ({
@@ -28,6 +30,8 @@ export const initialPluginHealth = (): PluginHealth => ({
   realSqliteStorage: false,
   firstRun: false,
   lastInitializationError: null,
+  nativeBindingTarget: null,
+  packagedNativeTargets: [],
 });
 
 export function startupSupport(input: { isDesktopApp: boolean; hasLocalFilesystem: boolean }): { supported: true } | { supported: false; message: string } {

@@ -28,10 +28,11 @@ export async function mountObsidianUi(root: HTMLElement, api: FrontendApi, navig
       copy.textContent = "Quote copied";
       return;
     }
-    const anchor = (event.target as Element).closest("a");
-    if (!anchor || !anchor.href.startsWith("mv://")) return;
+    const routeControl = (event.target as Element).closest<HTMLElement>("[data-route], a[href]");
+    const target = routeControl?.dataset.route ?? routeControl?.getAttribute("href");
+    if (!isInternalNavigationTarget(target)) return;
     event.preventDefault();
-    void navigateInternal(navigation, anchor.href);
+    void navigateInternal(navigation, target);
   });
   root.addEventListener("change", (event) => {
     const input = event.target as HTMLInputElement;
@@ -84,4 +85,8 @@ export async function mountObsidianUi(root: HTMLElement, api: FrontendApi, navig
     })();
   });
   await render(initialTarget);
+}
+
+export function isInternalNavigationTarget(target: string | null | undefined): target is string {
+  return target?.startsWith("mv://") ?? false;
 }

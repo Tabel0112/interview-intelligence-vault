@@ -3,8 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { SqliteDatabase } from "../connection.js";
 
-const migrationDirectory = () => (globalThis as typeof globalThis & { __TRANSCRIPT_MEMORY_MIGRATION_DIR__?: string }).__TRANSCRIPT_MEMORY_MIGRATION_DIR__
-  ?? dirname(fileURLToPath(import.meta.url));
+const defaultMigrationDirectory = () => dirname(fileURLToPath(import.meta.url));
 export const PACKAGED_MIGRATIONS = [
   { id: "001", name: "initial_schema", filename: "001_initial_schema.sql" },
   { id: "002", name: "tighten_transcript_immutability", filename: "002_tighten_transcript_immutability.sql" },
@@ -22,13 +21,14 @@ export const PACKAGED_MIGRATIONS = [
 
 export const PACKAGED_MIGRATION_COUNT = PACKAGED_MIGRATIONS.length;
 
-export function validateMigrationPackage(directory = migrationDirectory()): { ok: true; count: number } | { ok: false; count: number; missing: string[] } {
+export function validateMigrationPackage(directory = defaultMigrationDirectory()): { ok: true; count: number } | { ok: false; count: number; missing: string[] } {
   const missing = PACKAGED_MIGRATIONS.map((migration) => migration.filename).filter((filename) => !existsSync(join(directory, filename)));
   return missing.length ? { ok: false, count: PACKAGED_MIGRATION_COUNT, missing } : { ok: true, count: PACKAGED_MIGRATION_COUNT };
 }
 
-export function runMigrations(db: SqliteDatabase): void {
-  const packageStatus = validateMigrationPackage();
+export function runMigrations(db: SqliteDatabase, options: { directory?: string } = {}): void {
+  const directory = options.directory ?? defaultMigrationDirectory();
+  const packageStatus = validateMigrationPackage(directory);
   if (!packageStatus.ok) throw new Error(`Missing packaged migrations: ${packageStatus.missing.join(", ")}`);
   db.pragma("foreign_keys = ON");
   db.exec("CREATE TABLE IF NOT EXISTS schema_migrations (id TEXT PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
@@ -36,7 +36,7 @@ export function runMigrations(db: SqliteDatabase): void {
     const applied = db.prepare("SELECT 1 FROM schema_migrations WHERE id = ?").get(migration.id);
     if (!applied) {
       db.transaction(() => {
-        db.exec(readFileSync(join(migrationDirectory(), migration.filename), "utf8"));
+        db.exec(readFileSync(join(directory, migration.filename), "utf8"));
         db.prepare("INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)").run(migration.id, migration.name, new Date().toISOString());
       })();
     }

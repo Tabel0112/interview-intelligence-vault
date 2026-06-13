@@ -17,5 +17,6 @@ export * from "./vaultWriter.js";
 export * from "./manifest.js";
 export * from "./generateVault.js";
 export * from "./pluginTypes.js";
+export * from "./nativeBindings.js";
 export * from "./ObsidianNavigation.js";
 export * from "./services/ObsidianAppApi.js";

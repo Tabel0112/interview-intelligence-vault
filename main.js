@@ -111,7 +111,7 @@ var require_bindings = __commonJS({
     var fs = require("fs");
     var path = require("path");
     var fileURLToPath2 = require_file_uri_to_path();
-    var join3 = path.join;
+    var join4 = path.join;
     var dirname2 = path.dirname;
     var exists = fs.accessSync && function(path2) {
       try {
@@ -171,7 +171,7 @@ var require_bindings = __commonJS({
       var requireFunc = typeof __webpack_require__ === "function" ? __non_webpack_require__ : require;
       var tries = [], i = 0, l = opts.try.length, n, b, err;
       for (; i < l; i++) {
-        n = join3.apply(
+        n = join4.apply(
           null,
           opts.try[i].map(function(p) {
             return opts[p] || p;
@@ -232,7 +232,7 @@ var require_bindings = __commonJS({
         if (dir === ".") {
           dir = process.cwd();
         }
-        if (exists(join3(dir, "package.json")) || exists(join3(dir, "node_modules"))) {
+        if (exists(join4(dir, "package.json")) || exists(join4(dir, "node_modules"))) {
           return dir;
         }
         if (prev === dir) {
@@ -241,7 +241,7 @@ var require_bindings = __commonJS({
           );
         }
         prev = dir;
-        dir = join3(dir, "..");
+        dir = join4(dir, "..");
       }
     };
   }
@@ -815,8 +815,8 @@ module.exports = __toCommonJS(main_exports);
 
 // src/obsidian/Plugin.ts
 var import_obsidian4 = require("obsidian");
-var import_node_fs2 = require("node:fs");
-var import_node_path3 = require("node:path");
+var import_node_fs3 = require("node:fs");
+var import_node_path4 = require("node:path");
 
 // src/db/connection.ts
 var import_better_sqlite3 = __toESM(require_lib(), 1);
@@ -825,7 +825,7 @@ var import_better_sqlite3 = __toESM(require_lib(), 1);
 var import_node_fs = require("node:fs");
 var import_node_path = require("node:path");
 var import_node_url = require("node:url");
-var migrationDirectory = () => globalThis.__TRANSCRIPT_MEMORY_MIGRATION_DIR__ ?? (0, import_node_path.dirname)((0, import_node_url.fileURLToPath)("file:///__TRANSCRIPT_MEMORY_BUNDLE__/index.js"));
+var defaultMigrationDirectory = () => (0, import_node_path.dirname)((0, import_node_url.fileURLToPath)("file:///__TRANSCRIPT_MEMORY_BUNDLE__/index.js"));
 var PACKAGED_MIGRATIONS = [
   { id: "001", name: "initial_schema", filename: "001_initial_schema.sql" },
   { id: "002", name: "tighten_transcript_immutability", filename: "002_tighten_transcript_immutability.sql" },
@@ -841,12 +841,13 @@ var PACKAGED_MIGRATIONS = [
   { id: "012", name: "obsidian_views", filename: "012_obsidian_views.sql" }
 ];
 var PACKAGED_MIGRATION_COUNT = PACKAGED_MIGRATIONS.length;
-function validateMigrationPackage(directory = migrationDirectory()) {
+function validateMigrationPackage(directory = defaultMigrationDirectory()) {
   const missing = PACKAGED_MIGRATIONS.map((migration) => migration.filename).filter((filename) => !(0, import_node_fs.existsSync)((0, import_node_path.join)(directory, filename)));
   return missing.length ? { ok: false, count: PACKAGED_MIGRATION_COUNT, missing } : { ok: true, count: PACKAGED_MIGRATION_COUNT };
 }
-function runMigrations(db) {
-  const packageStatus = validateMigrationPackage();
+function runMigrations(db, options = {}) {
+  const directory = options.directory ?? defaultMigrationDirectory();
+  const packageStatus = validateMigrationPackage(directory);
   if (!packageStatus.ok) throw new Error(`Missing packaged migrations: ${packageStatus.missing.join(", ")}`);
   db.pragma("foreign_keys = ON");
   db.exec("CREATE TABLE IF NOT EXISTS schema_migrations (id TEXT PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
@@ -854,7 +855,7 @@ function runMigrations(db) {
     const applied = db.prepare("SELECT 1 FROM schema_migrations WHERE id = ?").get(migration.id);
     if (!applied) {
       db.transaction(() => {
-        db.exec((0, import_node_fs.readFileSync)((0, import_node_path.join)(migrationDirectory(), migration.filename), "utf8"));
+        db.exec((0, import_node_fs.readFileSync)((0, import_node_path.join)(directory, migration.filename), "utf8"));
         db.prepare("INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)").run(migration.id, migration.name, (/* @__PURE__ */ new Date()).toISOString());
       })();
     }
@@ -888,15 +889,14 @@ function openDatabase(filename = ":memory:", options = {}) {
   const sqliteOptions = {};
   if (options.readonly !== void 0) sqliteOptions.readonly = options.readonly;
   if (options.fileMustExist !== void 0) sqliteOptions.fileMustExist = options.fileMustExist;
-  const nativeBinding = options.nativeBinding ?? globalThis.__TRANSCRIPT_MEMORY_NATIVE_BINDING__;
-  if (nativeBinding !== void 0) sqliteOptions.nativeBinding = nativeBinding;
+  if (options.nativeBinding !== void 0) sqliteOptions.nativeBinding = options.nativeBinding;
   const db = new import_better_sqlite3.default(filename, sqliteOptions);
   db.pragma("foreign_keys = ON");
   if (filename !== ":memory:" && !options.readonly) {
     db.pragma("journal_mode = WAL");
   }
   if (options.runMigrations !== false && !options.readonly) {
-    runMigrations(db);
+    runMigrations(db, { directory: options.migrationDirectory });
   }
   return db;
 }
@@ -1490,6 +1490,45 @@ function createObsidianNavigation(app) {
   };
 }
 
+// src/obsidian/nativeBindings.ts
+var import_node_fs2 = require("node:fs");
+var import_node_path2 = require("node:path");
+var nativeBindingTarget = (runtime) => `${runtime.platform}-${runtime.arch}-abi${runtime.modules ?? "unknown"}`;
+function currentNativeRuntime() {
+  return {
+    platform: process.platform,
+    arch: process.arch,
+    modules: process.versions.modules,
+    electron: process.versions.electron
+  };
+}
+function listPackagedNativeTargets(pluginDirectory) {
+  const nativeDirectory = (0, import_node_path2.join)(pluginDirectory, "native");
+  try {
+    return (0, import_node_fs2.readdirSync)(nativeDirectory, { withFileTypes: true }).filter((entry) => entry.isDirectory() && (0, import_node_fs2.existsSync)((0, import_node_path2.join)(nativeDirectory, entry.name, "better_sqlite3.node"))).map((entry) => entry.name).sort();
+  } catch {
+    return [];
+  }
+}
+function resolveNativeBinding(pluginDirectory, runtime = currentNativeRuntime()) {
+  const target = nativeBindingTarget(runtime);
+  const packagedTargets = listPackagedNativeTargets(pluginDirectory);
+  const bindingPath = (0, import_node_path2.join)(pluginDirectory, "native", target, "better_sqlite3.node");
+  if ((0, import_node_fs2.existsSync)(bindingPath)) return { ok: true, target, bindingPath, packagedTargets, error: null };
+  const electron = runtime.electron ? ` Electron ${runtime.electron}` : "";
+  return {
+    ok: false,
+    target,
+    bindingPath: null,
+    packagedTargets,
+    error: `SQLite native binding unavailable for ${target}.${electron} Packaged targets: ${packagedTargets.join(", ") || "none"}.`
+  };
+}
+function nativeBindingLoadError(resolution, error) {
+  const detail = error instanceof Error ? error.message : String(error);
+  return new Error(`SQLite native binding ${resolution.target} is unavailable or incompatible: ${detail}`);
+}
+
 // src/obsidian/SettingsTab.ts
 var import_obsidian = require("obsidian");
 var TranscriptMemorySettingsTab = class extends import_obsidian.PluginSettingTab {
@@ -1509,6 +1548,8 @@ var TranscriptMemorySettingsTab = class extends import_obsidian.PluginSettingTab
     new import_obsidian.Setting(this.containerEl).setName("SQLite storage").setDesc(health.realSqliteStorage ? "Connected to real local SQLite storage" : "Not connected");
     new import_obsidian.Setting(this.containerEl).setName("Migration status").setDesc(`${health.migrationStatus}: ${health.appliedMigrationCount}/${health.packagedMigrationCount} applied`);
     new import_obsidian.Setting(this.containerEl).setName("Last initialization error").setDesc(health.lastInitializationError ?? "None");
+    new import_obsidian.Setting(this.containerEl).setName("Native binding target").setDesc(health.nativeBindingTarget ?? "Unresolved");
+    new import_obsidian.Setting(this.containerEl).setName("Packaged native targets").setDesc(health.packagedNativeTargets.join(", ") || "None");
     new import_obsidian.Setting(this.containerEl).setName("Dashboard").addButton((button) => button.setButtonText("Open dashboard").onClick(() => void this.navigation.openDashboard()));
   }
 };
@@ -1612,12 +1653,15 @@ function score(value) {
   return value == null ? "not scored" : `${Math.round(value * 100)}%`;
 }
 function emptyState(title, detail, action) {
-  return `<section class="empty-state"><h2>${escapeHtml(title)}</h2><p>${escapeHtml(detail)}</p>${action ? `<a href="${escapeHtml(action.href)}">${escapeHtml(action.label)}</a>` : ""}</section>`;
+  return `<div class="empty-state"><h3>${escapeHtml(title)}</h3><p>${escapeHtml(detail)}</p>${action ? routeButton(action.href, action.label) : ""}</div>`;
+}
+function routeButton(target, label, className = "route-action") {
+  return `<button type="button" class="${escapeHtml(className)}" data-route="${escapeHtml(target)}">${escapeHtml(label)}</button>`;
 }
 function appShell(title, body) {
-  return `<div class="vault-app">
-    <header class="app-header"><a href="mv://dashboard" class="brand">Interview Intelligence Vault</a><nav aria-label="Primary">
-      <a href="mv://upload">Upload</a><a href="mv://ask">Ask AI</a><a href="mv://search">Search</a><a href="mv://graph">Graph</a><a href="mv://review">Review</a>
+  return `<div class="transcript-memory-vault vault-app">
+    <header class="app-header">${routeButton("mv://dashboard", "Interview Intelligence Vault", "route-action brand")}<nav aria-label="Primary">
+      ${routeButton("mv://upload", "Upload")}${routeButton("mv://ask", "Ask AI")}${routeButton("mv://search", "Search")}${routeButton("mv://graph", "Graph")}${routeButton("mv://review", "Review")}
     </nav></header>
     <main><header class="page-header"><h1>${escapeHtml(title)}</h1></header>${body}</main>
   </div>`;
@@ -3278,10 +3322,10 @@ function computeRawSha256(rawText) {
 }
 
 // src/ingest/detectTranscriptFormat.ts
-var import_node_path2 = require("node:path");
+var import_node_path3 = require("node:path");
 var supported = /* @__PURE__ */ new Set(["txt", "md", "srt", "vtt"]);
 function detectTranscriptFormat(filename, _rawText) {
-  const extension = (0, import_node_path2.extname)(filename).slice(1).toLowerCase();
+  const extension = (0, import_node_path3.extname)(filename).slice(1).toLowerCase();
   if (!supported.has(extension)) {
     throw new ValidationError(`Unsupported transcript extension: ${extension || "(none)"}`);
   }
@@ -4097,8 +4141,8 @@ function createSqliteFrontendApi(db, options = {}) {
 }
 
 // src/frontend/render.ts
-var section = (title, body) => `<section><h2>${escapeHtml(title)}</h2>${body}</section>`;
-var links = (items) => items.map((item) => `<a href="${escapeHtml(item.href)}">${escapeHtml(item.label)}</a>`).join(" ");
+var section = (title, body, className = "") => `<section class="vault-section${className ? ` ${escapeHtml(className)}` : ""}"><h2>${escapeHtml(title)}</h2>${body}</section>`;
+var links = (items) => `<div class="route-actions">${items.map((item) => routeButton(item.href, item.label)).join("")}</div>`;
 var correctionForm = (targetType, targetId) => ["memory_object", "answer_claim", "citation", "graph_node", "graph_edge", "evidence", "speaker", "answer", "span", "transcript"].includes(targetType) ? `<form data-action="correction"><input type="hidden" name="targetType" value="${escapeHtml(targetType)}"><input type="hidden" name="targetId" value="${escapeHtml(targetId)}">
       <label>Append-only correction <textarea name="correctionText" required></textarea></label><label>Reason <input name="reason"></label>
       <button type="submit">Submit correction</button></form><div data-form-result></div>` : `<p class="trust-warning">This target type does not yet have a backend correction record type. Use its owning memory, answer, or graph edge.</p>`;
@@ -4187,20 +4231,22 @@ function healthView(health) {
     <dt>Applied migrations</dt><dd>${health.appliedMigrationCount}</dd>
     <dt>Database location</dt><dd>${escapeHtml(health.databasePath ?? "unavailable")}</dd>
     <dt>Last initialization error</dt><dd>${escapeHtml(health.lastInitializationError ?? "none")}</dd>
-  </dl></article>`);
+    <dt>Native binding target</dt><dd>${escapeHtml(health.nativeBindingTarget ?? "unresolved")}</dd>
+    <dt>Packaged native targets</dt><dd>${escapeHtml(health.packagedNativeTargets.join(", ") || "none")}</dd>
+  </dl></article>`, "database-health-section");
 }
 async function renderPage(context) {
   const { api, route } = context;
   switch (route.id) {
     case "dashboard": {
       const view = await api.getDashboard();
-      const firstRun = view.health?.firstRun && view.health.status === "ready" ? `<aside class="immutable-notice"><strong>Transcript Memory Vault is ready.</strong> Upload a transcript to begin. Imported raw transcript snapshots are immutable and stored in local SQLite at ${escapeHtml(view.health.databasePath)}.</aside>` : "";
+      const readyStatus = view.health?.status === "ready" ? `<aside class="immutable-notice status-banner"><strong>Transcript Memory Vault is ready.</strong> ${view.health.firstRun ? "Upload a transcript to begin. " : ""}Imported raw transcript snapshots are immutable and stored in local SQLite at ${escapeHtml(view.health.databasePath)}.</aside>` : "";
       const startupProblem = view.health && view.health.status !== "ready" ? `<aside class="trust-warning">${view.health.status === "unsupported" ? trustBadge("no_evidence", "desktop only") : trustBadge("broken", "startup unavailable")} ${escapeHtml(view.health.lastInitializationError ?? "Database initialization has not completed.")}</aside>` : "";
-      const body = `${firstRun}${startupProblem}<div class="metric-grid"><span>${view.totalTranscriptCount} total transcripts</span><a href="${routeHref.reviewQueue()}">${view.reviewCount} review items</a><span>${view.weakCount} weak/review</span><span>${view.conflictCount} conflicts</span><span>${view.brokenCount} broken pointers</span></div>
+      const body = `${readyStatus}${startupProblem}<div class="metric-grid"><span>${view.totalTranscriptCount} total transcripts</span>${routeButton(routeHref.reviewQueue(), `${view.reviewCount} review items`, "route-action metric-action")}<span>${view.weakCount} weak/review</span><span>${view.conflictCount} conflicts</span><span>${view.brokenCount} broken pointers</span></div>
         ${view.health ? healthView(view.health) : ""}
-        ${section("Quick actions", links([{ href: routeHref.upload(), label: "Upload transcript" }, { href: routeHref.ask(), label: "Ask AI" }, { href: routeHref.search(), label: "Search vault" }, { href: routeHref.graph(), label: "Open graph" }, { href: routeHref.reviewQueue(), label: "Review queue" }]))}
-        ${section("Transcripts", view.transcripts.map((item) => `<article><a href="${escapeHtml(routeHref.transcript(item.id))}">${escapeHtml(item.title)}</a> \xB7 ${item.spanCount} spans</article>`).join("") || emptyState("No transcripts", "Upload a transcript to begin.", { href: routeHref.upload(), label: "Upload transcript" }))}
-        ${section("Recent Ask AI answers", view.recentAnswers.map((item) => `<article>${trustBadge(item.confidence)} <a href="${escapeHtml(routeHref.answer(item.id))}">${escapeHtml(item.question)}</a></article>`).join("") || emptyState("No answers", "Ask a question after adding evidence.", { href: routeHref.ask(), label: "Ask AI" }))}`;
+        ${section("Quick actions", links([{ href: routeHref.upload(), label: "Upload transcript" }, { href: routeHref.ask(), label: "Ask AI" }, { href: routeHref.search(), label: "Search vault" }, { href: routeHref.graph(), label: "Open graph" }, { href: routeHref.reviewQueue(), label: "Review queue" }]), "quick-actions")}
+        ${section("Transcripts", view.transcripts.map((item) => `<article><a href="${escapeHtml(routeHref.transcript(item.id))}">${escapeHtml(item.title)}</a> \xB7 ${item.spanCount} spans</article>`).join("") || emptyState("No transcripts", "Upload a transcript to begin.", { href: routeHref.upload(), label: "Upload transcript" }), "transcripts-section")}
+        ${section("Recent Ask AI answers", view.recentAnswers.map((item) => `<article>${trustBadge(item.confidence)} <a href="${escapeHtml(routeHref.answer(item.id))}">${escapeHtml(item.question)}</a></article>`).join("") || emptyState("No answers", "Ask a question after adding evidence.", { href: routeHref.ask(), label: "Ask AI" }), "recent-answers-section")}`;
       return { title: "Dashboard", html: appShell("Dashboard", body) };
     }
     case "upload":
@@ -4298,10 +4344,11 @@ async function mountObsidianUi(root, api, navigation, initialTarget) {
       copy.textContent = "Quote copied";
       return;
     }
-    const anchor = event.target.closest("a");
-    if (!anchor || !anchor.href.startsWith("mv://")) return;
+    const routeControl = event.target.closest("[data-route], a[href]");
+    const target = routeControl?.dataset.route ?? routeControl?.getAttribute("href");
+    if (!isInternalNavigationTarget(target)) return;
     event.preventDefault();
-    void navigateInternal(navigation, anchor.href);
+    void navigateInternal(navigation, target);
   });
   root.addEventListener("change", (event) => {
     const input = event.target;
@@ -4357,6 +4404,9 @@ async function mountObsidianUi(root, api, navigation, initialTarget) {
   });
   await render(initialTarget);
 }
+function isInternalNavigationTarget(target) {
+  return target?.startsWith("mv://") ?? false;
+}
 
 // src/obsidian/TranscriptMemoryItemView.ts
 var TranscriptMemoryItemView = class extends import_obsidian3.ItemView {
@@ -4394,7 +4444,7 @@ var TranscriptMemoryItemView = class extends import_obsidian3.ItemView {
   }
   async render() {
     this.contentEl.empty();
-    this.contentEl.addClass("transcript-memory-plugin");
+    this.contentEl.addClass("transcript-memory-vault-host");
     try {
       await mountObsidianUi(this.contentEl, this.getApi(), this.vaultNavigation, this.state.target ?? defaultTarget(this.type));
     } catch (error) {
@@ -4418,7 +4468,9 @@ var initialPluginHealth = () => ({
   databasePath: null,
   realSqliteStorage: false,
   firstRun: false,
-  lastInitializationError: null
+  lastInitializationError: null,
+  nativeBindingTarget: null,
+  packagedNativeTargets: []
 });
 function startupSupport(input) {
   return input.isDesktopApp && input.hasLocalFilesystem ? { supported: true } : { supported: false, message: DESKTOP_ONLY_MESSAGE };
@@ -4515,18 +4567,33 @@ var TranscriptMemoryVaultPlugin = class extends import_obsidian4.Plugin {
       console.error("Transcript Memory Vault unsupported environment:", support.message);
       return;
     }
-    const pluginDirectory = (0, import_node_path3.join)(fileSystemAdapter.getBasePath(), this.app.vault.configDir, "plugins", this.manifest.id);
-    const databasePath = (0, import_node_path3.join)(pluginDirectory, "transcript-memory.sqlite");
-    const runtime = globalThis;
-    runtime.__TRANSCRIPT_MEMORY_MIGRATION_DIR__ = (0, import_node_path3.join)(pluginDirectory, "migrations");
-    runtime.__TRANSCRIPT_MEMORY_NATIVE_BINDING__ = (0, import_node_path3.join)(pluginDirectory, "node_modules", "better-sqlite3", "build", "Release", "better_sqlite3.node");
-    this.health = { ...this.health, databasePath };
+    const pluginDirectory = (0, import_node_path4.join)(fileSystemAdapter.getBasePath(), this.app.vault.configDir, "plugins", this.manifest.id);
+    const databasePath = (0, import_node_path4.join)(pluginDirectory, "transcript-memory.sqlite");
+    const migrationDirectory = (0, import_node_path4.join)(pluginDirectory, "migrations");
+    const nativeBinding = resolveNativeBinding(pluginDirectory);
+    this.health = {
+      ...this.health,
+      databasePath,
+      nativeBindingTarget: nativeBinding.target,
+      packagedNativeTargets: nativeBinding.packagedTargets
+    };
+    if (!nativeBinding.ok) {
+      this.health = { ...this.health, status: "error", lastInitializationError: nativeBinding.error };
+      this.api = createUnavailableFrontendApi(() => this.health);
+      new import_obsidian4.Notice(nativeBinding.error);
+      console.error("Transcript Memory Vault native binding unavailable:", nativeBinding.error);
+      return;
+    }
     try {
-      (0, import_node_fs2.mkdirSync)(pluginDirectory, { recursive: true });
-      const migrationPackage = validateMigrationPackage((0, import_node_path3.join)(pluginDirectory, "migrations"));
+      (0, import_node_fs3.mkdirSync)(pluginDirectory, { recursive: true });
+      const migrationPackage = validateMigrationPackage(migrationDirectory);
       if (!migrationPackage.ok) throw new Error(`Missing packaged migrations: ${migrationPackage.missing.join(", ")}`);
-      const firstRun = !(0, import_node_fs2.existsSync)(databasePath);
-      this.db = openDatabase(databasePath);
+      const firstRun = !(0, import_node_fs3.existsSync)(databasePath);
+      try {
+        this.db = openDatabase(databasePath, { nativeBinding: nativeBinding.bindingPath, migrationDirectory });
+      } catch (error) {
+        throw nativeBindingLoadError(nativeBinding, error);
+      }
       const appliedMigrationCount = this.db.prepare("SELECT COUNT(*) count FROM schema_migrations").get().count;
       this.health = {
         ...this.health,

@@ -17,14 +17,14 @@ dist/transcript-memory-vault/
   main.js
   styles.css
   migrations/
-  node_modules/better-sqlite3/
-  node_modules/bindings/
-  node_modules/file-uri-to-path/
+  native/
+    darwin-arm64-abi140/
+      better_sqlite3.node
 ```
 
-The native `better-sqlite3` binary must be compatible with the Node/Electron ABI used by the installed Obsidian desktop version. If it is incompatible, the plugin shows a startup error instead of opening or modifying the database.
+The `better-sqlite3` JavaScript wrapper is bundled into `main.js`. Native bindings are packaged explicitly under `native/<platform>-<architecture>-abi<module ABI>/`. At startup, the plugin selects an exact match using `process.platform`, `process.arch`, and `process.versions.modules`. Migrations and native bindings are resolved relative to the installed plugin directory, not the repository, current working directory, or a developer vault path.
 
-The checked-in MVP release binding targets Obsidian's Electron `39.8.3` / native module ABI `140` on Apple Silicon. Rebuild the native binding when Obsidian changes Electron ABI or when distributing for another operating system or CPU architecture.
+The checked-in MVP release currently supports only `darwin-arm64-abi140`, tested with Obsidian `1.12.7` / Electron `39.8.3` on Apple Silicon. Other operating systems, CPU architectures, and Electron ABIs fail safely with a readable dashboard/settings error until their exact native target is added. Rebuild and test native bindings before distributing to those targets or after Obsidian changes Electron ABI.
 
 ## Manual Installation
 
@@ -57,8 +57,9 @@ The dashboard and plugin settings display:
 - database location
 - last initialization error
 - whether real SQLite storage is connected
+- detected native binding target and packaged native targets
 
-Missing migrations, native SQLite failures, unsupported environments, and view-loading failures produce readable errors. The plugin does not continue as if unavailable data were trustworthy, and it does not expose database reset/delete actions.
+Missing or incompatible native bindings, missing migrations, unsupported environments, and view-loading failures produce readable errors. Views and settings remain available to show health information. The plugin does not continue as if unavailable data were trustworthy, and it does not expose database reset/delete actions.
 
 ## Trust Model
 

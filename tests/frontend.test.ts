@@ -55,6 +55,16 @@ describe("frontend routes and trust rendering", () => {
     expect(await renderRoute(api, "/ask")).toContain("Optional transcript filter");
   });
 
+  it("renders every primary plugin page inside the scoped app shell", async () => {
+    const api = createSqliteFrontendApi(db, { now });
+    for (const route of ["/", "/upload", "/ask", "/search", "/graph", "/review"]) {
+      const html = await renderRoute(api, route);
+      expect(html).toContain('class="transcript-memory-vault vault-app"');
+      expect(html).toContain('aria-label="Primary"');
+      expect(html).toContain('data-route="mv://dashboard"');
+    }
+  });
+
   it("renders explicit weak, conflicting, and no-evidence answer states", async () => {
     const answer = (confidence: AskAIResponse["evidenceConfidence"]): AskAIResponse => {
       const hasEvidence = confidence !== "no_evidence";

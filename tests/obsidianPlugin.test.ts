@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceLeaf } from "obsidian";
 import { askAI, createDatabaseAskAIDependencies } from "../src/ask-ai/index.js";
 import { createRepositories, openDatabase, type SqliteDatabase } from "../src/db/index.js";
-import { createSqliteFrontendApi, navigateInternal, renderRoute, routeHref } from "../src/frontend/index.js";
+import { createSqliteFrontendApi, isInternalNavigationTarget, navigateInternal, renderRoute, routeHref } from "../src/frontend/index.js";
 import { importTranscript } from "../src/ingest/index.js";
 import { createObsidianNavigation } from "../src/obsidian/ObsidianNavigation.js";
 import { OBSIDIAN_COMMANDS, OBSIDIAN_RIBBON, OBSIDIAN_VIEW_TYPES } from "../src/obsidian/pluginTypes.js";
@@ -59,6 +59,47 @@ describe("Obsidian plugin registration contract", () => {
 });
 
 describe("Obsidian internal provenance navigation", () => {
+  it("renders keyboard-accessible nav and quick actions with explicit internal route handlers", async () => {
+    const html = await renderRoute(createSqliteFrontendApi(db, { now }), routeHref.dashboard());
+    for (const target of [
+      routeHref.upload(), routeHref.ask(), routeHref.search(), routeHref.graph(), routeHref.reviewQueue(),
+    ]) {
+      expect(html).toContain(`type="button" class="route-action" data-route="${target}"`);
+      expect(isInternalNavigationTarget(target)).toBe(true);
+    }
+    for (const label of ["Upload transcript", "Ask AI", "Search vault", "Open graph", "Review queue"]) {
+      expect(html).toContain(`>${label}</button>`);
+    }
+    expect(isInternalNavigationTarget("https://example.com")).toBe(false);
+  });
+
+  it("routes every primary navigation action through Obsidian workspace navigation", async () => {
+    const navigation = {
+      openDashboard: vi.fn(async () => undefined),
+      openUpload: vi.fn(async () => undefined),
+      openTranscript: vi.fn(async () => undefined),
+      openAskAI: vi.fn(async () => undefined),
+      openAnswer: vi.fn(async () => undefined),
+      openEvidence: vi.fn(async () => undefined),
+      openMemoryObject: vi.fn(async () => undefined),
+      openGraph: vi.fn(async () => undefined),
+      openSearch: vi.fn(async () => undefined),
+      openReviewQueue: vi.fn(async () => undefined),
+    };
+    await navigateInternal(navigation, routeHref.dashboard());
+    await navigateInternal(navigation, routeHref.upload());
+    await navigateInternal(navigation, routeHref.ask());
+    await navigateInternal(navigation, routeHref.search());
+    await navigateInternal(navigation, routeHref.graph());
+    await navigateInternal(navigation, routeHref.reviewQueue());
+    expect(navigation.openDashboard).toHaveBeenCalledOnce();
+    expect(navigation.openUpload).toHaveBeenCalledOnce();
+    expect(navigation.openAskAI).toHaveBeenCalledOnce();
+    expect(navigation.openSearch).toHaveBeenCalledOnce();
+    expect(navigation.openGraph).toHaveBeenCalledOnce();
+    expect(navigation.openReviewQueue).toHaveBeenCalledOnce();
+  });
+
   it("preserves answer to citation to evidence to exact highlighted transcript span", async () => {
     const seeded = await fixture();
     const api = createSqliteFrontendApi(db, { now });

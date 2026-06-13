@@ -5,6 +5,7 @@ import { openDatabase, type SqliteDatabase } from "../db/index.js";
 import { validateMigrationPackage } from "../db/migrations/index.js";
 import type { FrontendApi } from "../frontend/index.js";
 import { createObsidianNavigation } from "./ObsidianNavigation.js";
+import { nativeBindingLoadError, resolveNativeBinding } from "./nativeBindings.js";
 import { TranscriptMemorySettingsTab } from "./SettingsTab.js";
 import { TranscriptMemoryItemView } from "./TranscriptMemoryItemView.js";
 import { createObsidianAppApi } from "./services/ObsidianAppApi.js";
@@ -39,19 +40,28 @@ export default class TranscriptMemoryVaultPlugin extends Plugin {
 
     const pluginDirectory = join(fileSystemAdapter!.getBasePath(), this.app.vault.configDir, "plugins", this.manifest.id);
     const databasePath = join(pluginDirectory, "transcript-memory.sqlite");
-    const runtime = globalThis as typeof globalThis & {
-      __TRANSCRIPT_MEMORY_MIGRATION_DIR__?: string;
-      __TRANSCRIPT_MEMORY_NATIVE_BINDING__?: string;
+    const migrationDirectory = join(pluginDirectory, "migrations");
+    const nativeBinding = resolveNativeBinding(pluginDirectory);
+    this.health = {
+      ...this.health, databasePath, nativeBindingTarget: nativeBinding.target, packagedNativeTargets: nativeBinding.packagedTargets,
     };
-    runtime.__TRANSCRIPT_MEMORY_MIGRATION_DIR__ = join(pluginDirectory, "migrations");
-    runtime.__TRANSCRIPT_MEMORY_NATIVE_BINDING__ = join(pluginDirectory, "node_modules", "better-sqlite3", "build", "Release", "better_sqlite3.node");
-    this.health = { ...this.health, databasePath };
+    if (!nativeBinding.ok) {
+      this.health = { ...this.health, status: "error", lastInitializationError: nativeBinding.error };
+      this.api = createUnavailableFrontendApi(() => this.health);
+      new Notice(nativeBinding.error!);
+      console.error("Transcript Memory Vault native binding unavailable:", nativeBinding.error);
+      return;
+    }
     try {
       mkdirSync(pluginDirectory, { recursive: true });
-      const migrationPackage = validateMigrationPackage(join(pluginDirectory, "migrations"));
+      const migrationPackage = validateMigrationPackage(migrationDirectory);
       if (!migrationPackage.ok) throw new Error(`Missing packaged migrations: ${migrationPackage.missing.join(", ")}`);
       const firstRun = !existsSync(databasePath);
-      this.db = openDatabase(databasePath);
+      try {
+        this.db = openDatabase(databasePath, { nativeBinding: nativeBinding.bindingPath!, migrationDirectory });
+      } catch (error) {
+        throw nativeBindingLoadError(nativeBinding, error);
+      }
       const appliedMigrationCount = (this.db.prepare("SELECT COUNT(*) count FROM schema_migrations").get() as { count: number }).count;
       this.health = {
         ...this.health, status: "ready", databaseConnected: true, migrationStatus: "current", appliedMigrationCount,

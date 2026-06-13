@@ -24,7 +24,7 @@ export class TranscriptMemoryItemView extends ItemView {
 
   private async render(): Promise<void> {
     this.contentEl.empty();
-    this.contentEl.addClass("transcript-memory-plugin");
+    this.contentEl.addClass("transcript-memory-vault-host");
     try {
       await mountObsidianUi(this.contentEl, this.getApi(), this.vaultNavigation, this.state.target ?? defaultTarget(this.type));
     } catch (error) {

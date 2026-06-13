@@ -70,6 +70,22 @@ describe("migration packaging and first-run health", () => {
     expect(html).toContain("database connected");
     expect(html).toContain(`${PACKAGED_MIGRATION_COUNT}`);
     expect(html).toContain("No transcripts");
+    const orderedContent = [
+      'aria-label="Primary"',
+      "<h1>Dashboard</h1>",
+      'class="immutable-notice status-banner"',
+      'class="metric-grid"',
+      'class="vault-section database-health-section"',
+      'class="vault-section quick-actions"',
+      'class="vault-section transcripts-section"',
+      'class="vault-section recent-answers-section"',
+    ];
+    for (let index = 1; index < orderedContent.length; index += 1) {
+      expect(html.indexOf(orderedContent[index])).toBeGreaterThan(html.indexOf(orderedContent[index - 1]));
+    }
+    expect(html.indexOf("No transcripts")).toBeGreaterThan(html.indexOf('class="vault-section database-health-section"'));
+    expect(html.indexOf("No answers")).toBeGreaterThan(html.indexOf('class="vault-section database-health-section"'));
+    expect(html).not.toContain('<section class="empty-state"');
   });
 });
 
@@ -84,7 +100,10 @@ describe("plugin documentation and build inputs", () => {
     for (const path of ["manifest.json", "main.js", "styles.css", "migrations/001_initial_schema.sql"]) {
       expect((await stat(path)).isFile()).toBe(true);
     }
-    const native = spawnSync(process.execPath, ["-e", `require(${JSON.stringify(resolve("native/electron-39.8.3/better_sqlite3.node"))})`], { encoding: "utf8" });
-    expect(`${native.stderr}${native.stdout}`).toContain("NODE_MODULE_VERSION 140");
+    const native = spawnSync(process.execPath, ["-e", `require(${JSON.stringify(resolve("native/darwin-arm64-abi140/better_sqlite3.node"))})`], { encoding: "utf8" });
+    if (process.platform === "darwin" && process.arch === "arm64") {
+      if (process.versions.modules === "140") expect(native.status).toBe(0);
+      else expect(`${native.stderr}${native.stdout}`).toContain("NODE_MODULE_VERSION 140");
+    }
   });
 });

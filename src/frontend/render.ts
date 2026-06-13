@@ -1,9 +1,9 @@
-import { appShell, emptyState, escapeHtml, score, trustBadge } from "./html.js";
+import { appShell, emptyState, escapeHtml, routeButton, score, trustBadge } from "./html.js";
 import { routeHref } from "./router.js";
 import type { EvidenceView, FrontendAnswerView, MemoryView, PageContext, RenderedPage, ReviewItemView, SearchResultView, TranscriptView, TrustState } from "./types.js";
 
-const section = (title: string, body: string) => `<section><h2>${escapeHtml(title)}</h2>${body}</section>`;
-const links = (items: Array<{ href: string; label: string }>) => items.map((item) => `<a href="${escapeHtml(item.href)}">${escapeHtml(item.label)}</a>`).join(" ");
+const section = (title: string, body: string, className = "") => `<section class="vault-section${className ? ` ${escapeHtml(className)}` : ""}"><h2>${escapeHtml(title)}</h2>${body}</section>`;
+const links = (items: Array<{ href: string; label: string }>) => `<div class="route-actions">${items.map((item) => routeButton(item.href, item.label)).join("")}</div>`;
 const correctionForm = (targetType: string, targetId: string) => ["memory_object", "answer_claim", "citation", "graph_node", "graph_edge", "evidence", "speaker", "answer", "span", "transcript"].includes(targetType)
   ? `<form data-action="correction"><input type="hidden" name="targetType" value="${escapeHtml(targetType)}"><input type="hidden" name="targetId" value="${escapeHtml(targetId)}">
       <label>Append-only correction <textarea name="correctionText" required></textarea></label><label>Reason <input name="reason"></label>
@@ -114,7 +114,9 @@ function healthView(health: NonNullable<Awaited<ReturnType<PageContext["api"]["g
     <dt>Applied migrations</dt><dd>${health.appliedMigrationCount}</dd>
     <dt>Database location</dt><dd>${escapeHtml(health.databasePath ?? "unavailable")}</dd>
     <dt>Last initialization error</dt><dd>${escapeHtml(health.lastInitializationError ?? "none")}</dd>
-  </dl></article>`);
+    <dt>Native binding target</dt><dd>${escapeHtml(health.nativeBindingTarget ?? "unresolved")}</dd>
+    <dt>Packaged native targets</dt><dd>${escapeHtml(health.packagedNativeTargets.join(", ") || "none")}</dd>
+  </dl></article>`, "database-health-section");
 }
 
 export async function renderPage(context: PageContext): Promise<RenderedPage> {
@@ -122,15 +124,15 @@ export async function renderPage(context: PageContext): Promise<RenderedPage> {
   switch (route.id) {
     case "dashboard": {
       const view = await api.getDashboard();
-      const firstRun = view.health?.firstRun && view.health.status === "ready"
-        ? `<aside class="immutable-notice"><strong>Transcript Memory Vault is ready.</strong> Upload a transcript to begin. Imported raw transcript snapshots are immutable and stored in local SQLite at ${escapeHtml(view.health.databasePath)}.</aside>` : "";
+      const readyStatus = view.health?.status === "ready"
+        ? `<aside class="immutable-notice status-banner"><strong>Transcript Memory Vault is ready.</strong> ${view.health.firstRun ? "Upload a transcript to begin. " : ""}Imported raw transcript snapshots are immutable and stored in local SQLite at ${escapeHtml(view.health.databasePath)}.</aside>` : "";
       const startupProblem = view.health && view.health.status !== "ready"
         ? `<aside class="trust-warning">${view.health.status === "unsupported" ? trustBadge("no_evidence", "desktop only") : trustBadge("broken", "startup unavailable")} ${escapeHtml(view.health.lastInitializationError ?? "Database initialization has not completed.")}</aside>` : "";
-      const body = `${firstRun}${startupProblem}<div class="metric-grid"><span>${view.totalTranscriptCount} total transcripts</span><a href="${routeHref.reviewQueue()}">${view.reviewCount} review items</a><span>${view.weakCount} weak/review</span><span>${view.conflictCount} conflicts</span><span>${view.brokenCount} broken pointers</span></div>
+      const body = `${readyStatus}${startupProblem}<div class="metric-grid"><span>${view.totalTranscriptCount} total transcripts</span>${routeButton(routeHref.reviewQueue(), `${view.reviewCount} review items`, "route-action metric-action")}<span>${view.weakCount} weak/review</span><span>${view.conflictCount} conflicts</span><span>${view.brokenCount} broken pointers</span></div>
         ${view.health ? healthView(view.health) : ""}
-        ${section("Quick actions", links([{ href: routeHref.upload(), label: "Upload transcript" }, { href: routeHref.ask(), label: "Ask AI" }, { href: routeHref.search(), label: "Search vault" }, { href: routeHref.graph(), label: "Open graph" }, { href: routeHref.reviewQueue(), label: "Review queue" }]))}
-        ${section("Transcripts", view.transcripts.map((item) => `<article><a href="${escapeHtml(routeHref.transcript(item.id))}">${escapeHtml(item.title)}</a> · ${item.spanCount} spans</article>`).join("") || emptyState("No transcripts", "Upload a transcript to begin.", { href: routeHref.upload(), label: "Upload transcript" }))}
-        ${section("Recent Ask AI answers", view.recentAnswers.map((item) => `<article>${trustBadge(item.confidence)} <a href="${escapeHtml(routeHref.answer(item.id))}">${escapeHtml(item.question)}</a></article>`).join("") || emptyState("No answers", "Ask a question after adding evidence.", { href: routeHref.ask(), label: "Ask AI" }))}`;
+        ${section("Quick actions", links([{ href: routeHref.upload(), label: "Upload transcript" }, { href: routeHref.ask(), label: "Ask AI" }, { href: routeHref.search(), label: "Search vault" }, { href: routeHref.graph(), label: "Open graph" }, { href: routeHref.reviewQueue(), label: "Review queue" }]), "quick-actions")}
+        ${section("Transcripts", view.transcripts.map((item) => `<article><a href="${escapeHtml(routeHref.transcript(item.id))}">${escapeHtml(item.title)}</a> · ${item.spanCount} spans</article>`).join("") || emptyState("No transcripts", "Upload a transcript to begin.", { href: routeHref.upload(), label: "Upload transcript" }), "transcripts-section")}
+        ${section("Recent Ask AI answers", view.recentAnswers.map((item) => `<article>${trustBadge(item.confidence)} <a href="${escapeHtml(routeHref.answer(item.id))}">${escapeHtml(item.question)}</a></article>`).join("") || emptyState("No answers", "Ask a question after adding evidence.", { href: routeHref.ask(), label: "Ask AI" }), "recent-answers-section")}`;
       return { title: "Dashboard", html: appShell("Dashboard", body) };
     }
     case "upload":

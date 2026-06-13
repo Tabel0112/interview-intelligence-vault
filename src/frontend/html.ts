@@ -15,13 +15,17 @@ export function score(value: number | null | undefined): string {
 }
 
 export function emptyState(title: string, detail: string, action?: { href: string; label: string }): string {
-  return `<section class="empty-state"><h2>${escapeHtml(title)}</h2><p>${escapeHtml(detail)}</p>${action ? `<a href="${escapeHtml(action.href)}">${escapeHtml(action.label)}</a>` : ""}</section>`;
+  return `<div class="empty-state"><h3>${escapeHtml(title)}</h3><p>${escapeHtml(detail)}</p>${action ? routeButton(action.href, action.label) : ""}</div>`;
+}
+
+export function routeButton(target: string, label: string, className = "route-action"): string {
+  return `<button type="button" class="${escapeHtml(className)}" data-route="${escapeHtml(target)}">${escapeHtml(label)}</button>`;
 }
 
 export function appShell(title: string, body: string): string {
-  return `<div class="vault-app">
-    <header class="app-header"><a href="mv://dashboard" class="brand">Interview Intelligence Vault</a><nav aria-label="Primary">
-      <a href="mv://upload">Upload</a><a href="mv://ask">Ask AI</a><a href="mv://search">Search</a><a href="mv://graph">Graph</a><a href="mv://review">Review</a>
+  return `<div class="transcript-memory-vault vault-app">
+    <header class="app-header">${routeButton("mv://dashboard", "Interview Intelligence Vault", "route-action brand")}<nav aria-label="Primary">
+      ${routeButton("mv://upload", "Upload")}${routeButton("mv://ask", "Ask AI")}${routeButton("mv://search", "Search")}${routeButton("mv://graph", "Graph")}${routeButton("mv://review", "Review")}
     </nav></header>
     <main><header class="page-header"><h1>${escapeHtml(title)}</h1></header>${body}</main>
   </div>`;
