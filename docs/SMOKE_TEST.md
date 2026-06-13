@@ -1,0 +1,21 @@
+# Obsidian Plugin Smoke Test
+
+- [ ] Run `npm run build`.
+- [ ] Copy `dist/transcript-memory-vault/` into `<vault>/.obsidian/plugins/transcript-memory-vault/`.
+- [ ] Restart Obsidian and enable the plugin.
+- [ ] Confirm the dashboard opens from the database ribbon icon.
+- [ ] Confirm database and migration health show connected/current.
+- [ ] Upload a transcript.
+- [ ] Open the read-only transcript view.
+- [ ] Ask an AI question.
+- [ ] Click an answer citation.
+- [ ] Confirm the EvidenceView opens.
+- [ ] Click **Open exact transcript evidence**.
+- [ ] Confirm the TranscriptView opens with the exact span highlighted.
+- [ ] Confirm weak, conflicting, no-evidence, and broken states are visible when present.
+- [ ] Open search and follow a result.
+- [ ] Open the graph and follow an evidence link.
+- [ ] Open the review queue.
+- [ ] Submit an append-only correction.
+- [ ] Restart Obsidian and verify data persists.
+- [ ] Confirm Markdown notes remain views/exports and SQLite remains the source of truth.

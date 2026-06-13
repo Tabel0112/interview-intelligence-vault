@@ -1,0 +1,3784 @@
+globalThis.__TRANSCRIPT_MEMORY_MIGRATION_DIR__ = require('node:path').join(__dirname, 'migrations');
+"use strict";
+var __create = Object.create;
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+
+// main.ts
+var main_exports = {};
+__export(main_exports, {
+  default: () => TranscriptMemoryVaultPlugin
+});
+module.exports = __toCommonJS(main_exports);
+
+// src/obsidian/Plugin.ts
+var import_obsidian4 = require("obsidian");
+var import_node_fs2 = require("node:fs");
+var import_node_path3 = require("node:path");
+
+// src/db/connection.ts
+var import_better_sqlite3 = __toESM(require("better-sqlite3"), 1);
+
+// src/db/migrations/index.ts
+var import_node_fs = require("node:fs");
+var import_node_path = require("node:path");
+var import_node_url = require("node:url");
+var migrationDirectory = globalThis.__TRANSCRIPT_MEMORY_MIGRATION_DIR__ ?? (0, import_node_path.dirname)((0, import_node_url.fileURLToPath)("file:///__TRANSCRIPT_MEMORY_BUNDLE__/index.js"));
+var PACKAGED_MIGRATIONS = [
+  { id: "001", name: "initial_schema", filename: "001_initial_schema.sql" },
+  { id: "002", name: "tighten_transcript_immutability", filename: "002_tighten_transcript_immutability.sql" },
+  { id: "003", name: "transcript_ingestion", filename: "003_transcript_ingestion.sql" },
+  { id: "004", name: "provenance_pointers", filename: "004_provenance_pointers.sql" },
+  { id: "005", name: "memory_extraction", filename: "005_memory_extraction.sql" },
+  { id: "006", name: "canonical_memory_status", filename: "006_canonical_memory_status.sql" },
+  { id: "007", name: "search_retrieval", filename: "007_search_retrieval.sql" },
+  { id: "008", name: "evidence_quality_scoring", filename: "008_evidence_quality_scoring.sql" },
+  { id: "009", name: "ask_ai_pipeline", filename: "009_ask_ai_pipeline.sql" },
+  { id: "010", name: "conflict_detection", filename: "010_conflict_detection.sql" },
+  { id: "011", name: "agent_orchestration_hermes", filename: "011_agent_orchestration_hermes.sql" },
+  { id: "012", name: "obsidian_views", filename: "012_obsidian_views.sql" }
+];
+var PACKAGED_MIGRATION_COUNT = PACKAGED_MIGRATIONS.length;
+function validateMigrationPackage(directory = migrationDirectory) {
+  const missing = PACKAGED_MIGRATIONS.map((migration) => migration.filename).filter((filename) => !(0, import_node_fs.existsSync)((0, import_node_path.join)(directory, filename)));
+  return missing.length ? { ok: false, count: PACKAGED_MIGRATION_COUNT, missing } : { ok: true, count: PACKAGED_MIGRATION_COUNT };
+}
+function runMigrations(db) {
+  const packageStatus = validateMigrationPackage();
+  if (!packageStatus.ok) throw new Error(`Missing packaged migrations: ${packageStatus.missing.join(", ")}`);
+  db.pragma("foreign_keys = ON");
+  db.exec("CREATE TABLE IF NOT EXISTS schema_migrations (id TEXT PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
+  for (const migration of PACKAGED_MIGRATIONS) {
+    const applied = db.prepare("SELECT 1 FROM schema_migrations WHERE id = ?").get(migration.id);
+    if (!applied) {
+      db.transaction(() => {
+        db.exec((0, import_node_fs.readFileSync)((0, import_node_path.join)(migrationDirectory, migration.filename), "utf8"));
+        db.prepare("INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)").run(migration.id, migration.name, (/* @__PURE__ */ new Date()).toISOString());
+      })();
+    }
+  }
+  try {
+    db.exec("CREATE VIRTUAL TABLE IF NOT EXISTS search_documents_fts USING fts5(search_text, content='search_documents', content_rowid='rowid')");
+    db.exec(`
+      CREATE TRIGGER IF NOT EXISTS search_documents_ai AFTER INSERT ON search_documents BEGIN
+        INSERT INTO search_documents_fts(rowid, search_text) VALUES (new.rowid, new.search_text);
+      END;
+      CREATE TRIGGER IF NOT EXISTS search_documents_ad AFTER DELETE ON search_documents BEGIN
+        INSERT INTO search_documents_fts(search_documents_fts, rowid, search_text) VALUES ('delete', old.rowid, old.search_text);
+      END;
+      CREATE TRIGGER IF NOT EXISTS search_documents_au AFTER UPDATE ON search_documents BEGIN
+        INSERT INTO search_documents_fts(search_documents_fts, rowid, search_text) VALUES ('delete', old.rowid, old.search_text);
+        INSERT INTO search_documents_fts(rowid, search_text) VALUES (new.rowid, new.search_text);
+      END;
+    `);
+  } catch {
+  }
+  try {
+    db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS retrieval_documents_fts USING fts5(
+      target_type UNINDEXED,target_id UNINDEXED,title,search_text,speaker_name,topic_text,tokenize='unicode61'
+    )`);
+  } catch {
+  }
+}
+
+// src/db/connection.ts
+function openDatabase(filename = ":memory:", options = {}) {
+  const sqliteOptions = {};
+  if (options.readonly !== void 0) sqliteOptions.readonly = options.readonly;
+  if (options.fileMustExist !== void 0) sqliteOptions.fileMustExist = options.fileMustExist;
+  const db = new import_better_sqlite3.default(filename, sqliteOptions);
+  db.pragma("foreign_keys = ON");
+  if (filename !== ":memory:" && !options.readonly) {
+    db.pragma("journal_mode = WAL");
+  }
+  if (options.runMigrations !== false && !options.readonly) {
+    runMigrations(db);
+  }
+  return db;
+}
+
+// src/db/errors.ts
+var DatabaseError = class extends Error {
+  constructor(message, options) {
+    super(message, options);
+    this.name = new.target.name;
+  }
+};
+var DuplicateContentError = class extends DatabaseError {
+};
+var NotFoundError = class extends DatabaseError {
+};
+var ValidationError = class extends DatabaseError {
+};
+var EvidenceRequiredError = class extends ValidationError {
+};
+var InvalidEvidenceError = class extends ValidationError {
+};
+
+// src/db/ids.ts
+var import_node_crypto = require("node:crypto");
+function createId(prefix) {
+  return `${prefix}${(0, import_node_crypto.randomBytes)(16).toString("base64url")}`;
+}
+function contentHash(text) {
+  return (0, import_node_crypto.createHash)("sha256").update(text).digest("hex");
+}
+
+// src/db/utils.ts
+var now = () => (/* @__PURE__ */ new Date()).toISOString();
+var json = (value = {}) => JSON.stringify(value);
+function parseRow(row) {
+  if (!row) return null;
+  const result = { ...row };
+  for (const key of ["metadata_json", "input_json", "output_json", "error_json", "old_value_json", "new_value_json", "embedding_json"]) {
+    if (key in result) {
+      const target = key.replace(/_json$/, "");
+      result[target] = result[key] == null ? null : JSON.parse(String(result[key]));
+      delete result[key];
+    }
+  }
+  return result;
+}
+function parseRows(rows) {
+  return rows.map((row) => parseRow(row));
+}
+function assertScore(value, field) {
+  if (value != null && (value < 0 || value > 1 || !Number.isFinite(value))) {
+    throw new ValidationError(`${field} must be between 0 and 1`);
+  }
+}
+function requireRow(db, table, id) {
+  const row = db.prepare(`SELECT id FROM ${table} WHERE id = ?`).get(id);
+  if (!row) throw new NotFoundError(`${table} row not found: ${id}`);
+}
+function metadataHasMissingEvidence(metadata) {
+  return metadata?.reason === "missing_evidence" || metadata?.missing_evidence_reason != null;
+}
+
+// src/db/repositories/transcriptsRepo.ts
+function createTranscriptsRepo(db) {
+  return {
+    createTranscriptSource(input) {
+      const row = { id: input.id ?? createId("src_"), ...input, original_filename: input.original_filename ?? null, created_at: now(), metadata_json: json(input.metadata) };
+      try {
+        db.prepare(`INSERT INTO transcript_sources(id,source_type,original_filename,raw_storage_uri,content_hash,byte_length,created_at,metadata_json)
+          VALUES (@id,@source_type,@original_filename,@raw_storage_uri,@content_hash,@byte_length,@created_at,@metadata_json)`).run(row);
+      } catch (error) {
+        if (String(error).includes("content_hash")) throw new DuplicateContentError(`Transcript source content already exists: ${input.content_hash}`, { cause: error });
+        throw error;
+      }
+      return parseRow(db.prepare("SELECT * FROM transcript_sources WHERE id = ?").get(row.id));
+    },
+    createTranscript(input) {
+      const timestamp = now();
+      const row = { id: input.id ?? createId("tr_"), source_id: input.source_id, title: input.title, language: input.language ?? null, status: input.status ?? "imported", content_hash: input.content_hash, imported_at: timestamp, updated_at: timestamp, metadata_json: json(input.metadata) };
+      db.prepare(`INSERT INTO transcripts(id,source_id,title,language,status,content_hash,imported_at,updated_at,metadata_json)
+        VALUES (@id,@source_id,@title,@language,@status,@content_hash,@imported_at,@updated_at,@metadata_json)`).run(row);
+      return parseRow(db.prepare("SELECT * FROM transcripts WHERE id = ?").get(row.id));
+    },
+    getTranscript(id) {
+      return parseRow(db.prepare("SELECT * FROM transcripts WHERE id = ?").get(id));
+    },
+    findTranscriptByContentHash(hash) {
+      return parseRow(db.prepare("SELECT * FROM transcripts WHERE content_hash = ? ORDER BY imported_at LIMIT 1").get(hash));
+    },
+    listTranscripts() {
+      return parseRows(db.prepare("SELECT * FROM transcripts ORDER BY imported_at").all());
+    },
+    updateTranscriptStatus(id, status) {
+      const result = db.prepare("UPDATE transcripts SET status = ?, updated_at = ? WHERE id = ?").run(status, now(), id);
+      if (!result.changes) throw new NotFoundError(`Transcript not found: ${id}`);
+    }
+  };
+}
+
+// src/db/repositories/spansRepo.ts
+function createSpansRepo(db) {
+  const createSpan = (input) => {
+    if (input.end_char <= input.start_char || input.start_char < 0) throw new ValidationError("Span offsets must satisfy end_char > start_char >= 0");
+    if (input.text_preview.length > 500) throw new ValidationError("text_preview must not exceed 500 characters");
+    const transcript = db.prepare("SELECT source_id FROM transcripts WHERE id = ?").get(input.transcript_id);
+    if (!transcript) throw new NotFoundError(`Transcript not found: ${input.transcript_id}`);
+    if (transcript.source_id !== input.source_id) throw new ValidationError("Span source_id must match transcript source_id");
+    if (input.speaker_id) {
+      const speaker = db.prepare("SELECT transcript_id FROM transcript_speakers WHERE id = ?").get(input.speaker_id);
+      if (!speaker || speaker.transcript_id !== input.transcript_id) throw new ValidationError("Speaker must belong to the span transcript");
+    }
+    const row = { id: input.id ?? createId("span_"), transcript_id: input.transcript_id, source_id: input.source_id, speaker_id: input.speaker_id ?? null, ordinal: input.ordinal, start_char: input.start_char, end_char: input.end_char, start_time_ms: input.start_time_ms ?? null, end_time_ms: input.end_time_ms ?? null, text_preview: input.text_preview, text_hash: input.text_hash, topic_hint: input.topic_hint ?? null, created_at: now(), metadata_json: json(input.metadata) };
+    db.prepare(`INSERT INTO transcript_spans(id,transcript_id,source_id,speaker_id,ordinal,start_char,end_char,start_time_ms,end_time_ms,text_preview,text_hash,topic_hint,created_at,metadata_json)
+      VALUES (@id,@transcript_id,@source_id,@speaker_id,@ordinal,@start_char,@end_char,@start_time_ms,@end_time_ms,@text_preview,@text_hash,@topic_hint,@created_at,@metadata_json)`).run(row);
+    return parseRow(db.prepare("SELECT * FROM transcript_spans WHERE id = ?").get(row.id));
+  };
+  return {
+    createSpeaker(input) {
+      assertScore(input.confidence, "confidence");
+      const row = { id: input.id ?? createId("spk_"), transcript_id: input.transcript_id, speaker_label: input.speaker_label, display_name: input.display_name ?? null, canonical_entity_id: input.canonical_entity_id ?? null, confidence: input.confidence ?? null, metadata_json: json(input.metadata) };
+      db.prepare(`INSERT INTO transcript_speakers(id,transcript_id,speaker_label,display_name,canonical_entity_id,confidence,metadata_json)
+        VALUES (@id,@transcript_id,@speaker_label,@display_name,@canonical_entity_id,@confidence,@metadata_json)`).run(row);
+      return parseRow(db.prepare("SELECT * FROM transcript_speakers WHERE id = ?").get(row.id));
+    },
+    createSpan,
+    createSpans(inputs) {
+      return db.transaction(() => inputs.map(createSpan))();
+    },
+    getSpan(id) {
+      return parseRow(db.prepare("SELECT * FROM transcript_spans WHERE id = ?").get(id));
+    },
+    listSpansForTranscript(transcriptId) {
+      return parseRows(db.prepare("SELECT * FROM transcript_spans WHERE transcript_id = ? ORDER BY ordinal").all(transcriptId));
+    },
+    listSpansByIds(ids) {
+      if (!ids.length) return [];
+      return parseRows(db.prepare(`SELECT * FROM transcript_spans WHERE id IN (${ids.map(() => "?").join(",")}) ORDER BY transcript_id, ordinal`).all(...ids));
+    }
+  };
+}
+
+// src/db/repositories/runsRepo.ts
+function createRunsRepo(db) {
+  const getRun = (id) => parseRow(db.prepare("SELECT * FROM processing_runs WHERE id = ?").get(id));
+  const finish = (id, status, value) => {
+    const field = status === "completed" ? "output_json" : "error_json";
+    const result = db.prepare(`UPDATE processing_runs SET status = ?, completed_at = ?, ${field} = ? WHERE id = ? AND status = 'running'`).run(status, now(), json(value), id);
+    if (!result.changes) throw new NotFoundError(`Running processing run not found: ${id}`);
+    return getRun(id);
+  };
+  return {
+    startRun(input) {
+      const row = { id: input.id ?? createId("run_"), run_type: input.run_type, status: "running", started_at: now(), model_name: input.model_name ?? null, agent_name: input.agent_name ?? null, input_json: json(input.input), metadata_json: json(input.metadata) };
+      db.prepare(`INSERT INTO processing_runs(id,run_type,status,started_at,model_name,agent_name,input_json,metadata_json) VALUES (@id,@run_type,@status,@started_at,@model_name,@agent_name,@input_json,@metadata_json)`).run(row);
+      return getRun(row.id);
+    },
+    completeRun(id, output = {}) {
+      return finish(id, "completed", output);
+    },
+    failRun(id, error) {
+      return finish(id, "failed", error);
+    },
+    getRun
+  };
+}
+
+// src/memory/canonical.ts
+function confidenceLabel(confidence) {
+  return confidence >= 0.8 ? "high" : confidence >= 0.6 ? "medium" : "low";
+}
+function getCanonicalMemoryObject(row, evidenceSpanIds) {
+  return {
+    id: row.id,
+    type: row.extraction_type ?? row.type,
+    status: row.extraction_status ?? row.status,
+    confidence: row.confidence,
+    confidenceLabel: row.confidence_label ?? confidenceLabel(row.confidence),
+    title: row.title ?? "",
+    body: row.generated_text,
+    evidenceSpanIds: [...new Set(evidenceSpanIds)],
+    duplicateOfId: row.duplicate_of_id ?? null,
+    userCorrected: Boolean(row.user_corrected)
+  };
+}
+function isStrongMemoryObject(memory) {
+  return memory.status === "active" && memory.evidenceSpanIds.length > 0 && memory.duplicateOfId == null && (memory.userCorrected || memory.confidenceLabel === "high" && memory.confidence >= 0.8);
+}
+function isReviewableMemoryObject(memory) {
+  return (memory.status === "weak" || memory.status === "needs_review") && memory.evidenceSpanIds.length > 0;
+}
+function isUsableAsEvidence(memory, options = {}) {
+  if (memory.duplicateOfId != null && !options.includeDuplicates) return false;
+  if (isStrongMemoryObject(memory) || options.includeDuplicates === true && isStrongMemoryObject({ ...memory, duplicateOfId: null })) return true;
+  return options.includeWeak === true && isReviewableMemoryObject(memory);
+}
+
+// src/db/repositories/memoryObjectsRepo.ts
+function createMemoryObjectsRepo(db) {
+  const getMemoryObject = (id) => parseRow(db.prepare("SELECT * FROM memory_objects WHERE id = ?").get(id));
+  const canonicalize = (row) => {
+    const evidence = db.prepare(`SELECT e.span_id FROM memory_object_evidence e JOIN transcript_spans s ON s.id=e.span_id WHERE e.memory_id=?
+      UNION SELECT e.span_id FROM evidence_pointers e JOIN transcript_spans s ON s.id=e.span_id
+      WHERE e.target_type IN ('memory_object','claim','summary') AND e.target_id=?`).all(row.id, row.id);
+    return getCanonicalMemoryObject(row, evidence.map(({ span_id }) => span_id));
+  };
+  const addEvidence = (memoryId, input) => {
+    assertScore(input.evidence_score, "evidence_score");
+    requireRow(db, "memory_objects", memoryId);
+    requireRow(db, "transcript_spans", input.span_id);
+    const row = { id: input.id ?? createId("evi_"), memory_id: memoryId, span_id: input.span_id, role: input.role, evidence_score: input.evidence_score, explanation: input.explanation ?? null, created_at: now(), metadata_json: json(input.metadata) };
+    db.prepare(`INSERT INTO memory_object_evidence(id,memory_id,span_id,role,evidence_score,explanation,created_at,metadata_json) VALUES (@id,@memory_id,@span_id,@role,@evidence_score,@explanation,@created_at,@metadata_json)`).run(row);
+    return parseRow(db.prepare("SELECT * FROM memory_object_evidence WHERE id = ?").get(row.id));
+  };
+  const createMemoryObject = (input, evidenceInputs) => db.transaction(() => {
+    assertScore(input.confidence, "confidence");
+    const status = input.status ?? "active";
+    if (!evidenceInputs.length && !(status === "needs_review" && metadataHasMissingEvidence(input.metadata))) throw new EvidenceRequiredError("Memory objects require evidence unless needs_review with a missing-evidence reason");
+    const timestamp = now();
+    const row = { id: input.id ?? createId("mem_"), type: input.type, title: input.title ?? null, generated_text: input.generated_text, normalized_text: input.normalized_text ?? null, status, confidence: input.confidence, created_by: input.created_by, created_run_id: input.created_run_id ?? null, supersedes_memory_id: input.supersedes_memory_id ?? null, created_at: timestamp, updated_at: timestamp, metadata_json: json(input.metadata) };
+    db.prepare(`INSERT INTO memory_objects(id,type,title,generated_text,normalized_text,status,confidence,created_by,created_run_id,supersedes_memory_id,created_at,updated_at,metadata_json)
+      VALUES (@id,@type,@title,@generated_text,@normalized_text,@status,@confidence,@created_by,@created_run_id,@supersedes_memory_id,@created_at,@updated_at,@metadata_json)`).run(row);
+    evidenceInputs.forEach((item) => addEvidence(row.id, item));
+    return getMemoryObject(row.id);
+  })();
+  return {
+    createMemoryObject,
+    getMemoryObject,
+    addEvidence,
+    getCanonicalMemoryObject(id) {
+      const row = db.prepare("SELECT * FROM memory_objects WHERE id=?").get(id);
+      return row ? canonicalize(row) : null;
+    },
+    listCanonicalMemoryObjects(filter = {}) {
+      const rows = db.prepare("SELECT * FROM memory_objects ORDER BY created_at").all();
+      return rows.map(canonicalize).filter((memory) => (!filter.type || memory.type === filter.type) && (!filter.status || memory.status === filter.status));
+    },
+    // Raw compatibility rows. Prefer listCanonicalMemoryObjects for downstream systems.
+    listMemoryObjects(filter = {}) {
+      const clauses = [], values = [];
+      if (filter.type) {
+        clauses.push("type = ?");
+        values.push(filter.type);
+      }
+      if (filter.status) {
+        clauses.push("status = ?");
+        values.push(filter.status);
+      }
+      return parseRows(db.prepare(`SELECT * FROM memory_objects ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""} ORDER BY created_at`).all(...values));
+    },
+    getMemoryObjectWithEvidence(id) {
+      const memory = getMemoryObject(id);
+      if (!memory) return null;
+      return { ...memory, evidence: parseRows(db.prepare("SELECT * FROM memory_object_evidence WHERE memory_id = ? ORDER BY created_at").all(id)) };
+    },
+    updateMemoryObjectStatus(id, status) {
+      requireRow(db, "memory_objects", id);
+      if (status === "active") {
+        const current = db.prepare("SELECT extraction_status,confidence,confidence_label FROM memory_objects WHERE id=?").get(id);
+        if (current.extraction_status != null && (current.confidence_label !== "high" || current.confidence < 0.8)) {
+          throw new ValidationError("Weak or review-only extracted memory cannot be promoted to active without an explicit user correction");
+        }
+        const evidenceCount = db.prepare(`SELECT
+          (SELECT COUNT(*) FROM memory_object_evidence WHERE memory_id = ?) +
+          (SELECT COUNT(*) FROM evidence_pointers WHERE target_type IN ('memory_object','claim','summary') AND target_id = ?) count`).get(id, id).count;
+        if (!evidenceCount) throw new EvidenceRequiredError("An active memory object requires evidence");
+      }
+      const result = db.prepare(`UPDATE memory_objects
+        SET status = ?, extraction_status = CASE WHEN extraction_status IS NULL THEN NULL ELSE ? END, updated_at = ?
+        WHERE id = ?`).run(status, status, now(), id);
+      if (!result.changes) throw new NotFoundError(`Memory object status was not updated: ${id}`);
+    },
+    supersedeMemoryObject(oldId, newInput, evidenceInputs) {
+      return db.transaction(() => {
+        requireRow(db, "memory_objects", oldId);
+        const created = createMemoryObject({ ...newInput, supersedes_memory_id: oldId }, evidenceInputs);
+        db.prepare(`UPDATE memory_objects
+          SET status = 'superseded', extraction_status = CASE WHEN extraction_status IS NULL THEN NULL ELSE 'superseded' END, updated_at = ?
+          WHERE id = ?`).run(now(), oldId);
+        return created;
+      })();
+    }
+  };
+}
+
+// src/db/repositories/evidenceRepo.ts
+function createEvidenceRepo(db, options = {}) {
+  const timestamp = () => options.now?.().toISOString() ?? now();
+  const getBundle = (id) => parseRow(db.prepare("SELECT * FROM evidence_bundles WHERE id = ?").get(id));
+  return {
+    createEvidenceBundle(input) {
+      assertScore(input.overall_score, "overall_score");
+      const row = { id: input.id ?? createId("evb_"), purpose: input.purpose, query_text: input.query_text ?? null, query_embedding_model: input.query_embedding_model ?? null, created_run_id: input.created_run_id ?? null, overall_score: input.overall_score ?? null, status: input.status ?? "needs_review", created_at: timestamp(), metadata_json: json(input.metadata) };
+      db.prepare(`INSERT INTO evidence_bundles(id,purpose,query_text,query_embedding_model,created_run_id,overall_score,status,created_at,metadata_json)
+        VALUES (@id,@purpose,@query_text,@query_embedding_model,@created_run_id,@overall_score,@status,@created_at,@metadata_json)`).run(row);
+      return getBundle(row.id);
+    },
+    addEvidenceItem(bundleId, input) {
+      requireRow(db, "evidence_bundles", bundleId);
+      requireRow(db, "transcript_spans", input.span_id);
+      for (const field of ["vector_score", "keyword_score", "recency_score", "speaker_score", "rerank_score", "final_score"]) assertScore(input[field], field);
+      const row = { id: input.id ?? createId("evi_"), bundle_id: bundleId, span_id: input.span_id, memory_id: input.memory_id ?? null, retrieval_rank: input.retrieval_rank ?? null, vector_score: input.vector_score ?? null, keyword_score: input.keyword_score ?? null, recency_score: input.recency_score ?? null, speaker_score: input.speaker_score ?? null, rerank_score: input.rerank_score ?? null, final_score: input.final_score, stance: input.stance, reason: input.reason ?? null, created_at: timestamp(), metadata_json: json(input.metadata) };
+      db.prepare(`INSERT INTO evidence_items(id,bundle_id,span_id,memory_id,retrieval_rank,vector_score,keyword_score,recency_score,speaker_score,rerank_score,final_score,stance,reason,created_at,metadata_json)
+        VALUES (@id,@bundle_id,@span_id,@memory_id,@retrieval_rank,@vector_score,@keyword_score,@recency_score,@speaker_score,@rerank_score,@final_score,@stance,@reason,@created_at,@metadata_json)`).run(row);
+      return parseRow(db.prepare("SELECT * FROM evidence_items WHERE id = ?").get(row.id));
+    },
+    getEvidenceBundleWithItems(bundleId) {
+      const bundle = getBundle(bundleId);
+      if (!bundle) return null;
+      return { ...bundle, items: parseRows(db.prepare("SELECT * FROM evidence_items WHERE bundle_id = ? ORDER BY retrieval_rank, created_at").all(bundleId)) };
+    },
+    scoreEvidenceBundle(bundleId) {
+      if (!getBundle(bundleId)) throw new NotFoundError(`Evidence bundle not found: ${bundleId}`);
+      const items = db.prepare("SELECT final_score, stance FROM evidence_items WHERE bundle_id = ?").all(bundleId);
+      const average = items.length ? items.reduce((sum, item) => sum + item.final_score, 0) / items.length : null;
+      const high = (stance) => items.some((item) => item.stance === stance && item.final_score >= 0.75);
+      const status = high("supports") && high("contradicts") ? "conflicting" : average != null && average >= 0.75 ? "strong" : average != null && average >= 0.45 ? "mixed" : "weak";
+      db.prepare("UPDATE evidence_bundles SET overall_score = ?, status = ? WHERE id = ?").run(average, status, bundleId);
+      return getBundle(bundleId);
+    }
+  };
+}
+
+// src/db/repositories/answersRepo.ts
+function createAnswersRepo(db) {
+  const getAnswer = (id) => parseRow(db.prepare("SELECT * FROM ai_answers WHERE id = ?").get(id));
+  return {
+    createAnswer(input) {
+      const bundle = db.prepare("SELECT status FROM evidence_bundles WHERE id = ?").get(input.evidence_bundle_id);
+      if (!bundle) throw new InvalidEvidenceError(`Evidence bundle not found: ${input.evidence_bundle_id}`);
+      const itemCount = db.prepare("SELECT COUNT(*) count FROM evidence_items WHERE bundle_id = ?").get(input.evidence_bundle_id).count;
+      if (input.answer_status !== "refused_no_evidence" && !itemCount) throw new InvalidEvidenceError("Non-refusal answers require evidence items");
+      const allowed = {
+        weak: ["weak_evidence", "refused_no_evidence"],
+        conflicting: ["conflicting_evidence"],
+        strong: ["answered"],
+        mixed: ["answered"],
+        needs_review: ["weak_evidence", "refused_no_evidence"]
+      };
+      if (!allowed[bundle.status].includes(input.answer_status)) throw new InvalidEvidenceError(`Answer status ${input.answer_status} is incompatible with ${bundle.status} evidence`);
+      const row = { id: input.id ?? createId("ans_"), question_text: input.question_text, answer_text: input.answer_text, evidence_bundle_id: input.evidence_bundle_id, confidence: input.confidence, answer_status: input.answer_status, model_name: input.model_name ?? null, created_run_id: input.created_run_id ?? null, created_at: now(), metadata_json: json(input.metadata) };
+      db.prepare(`INSERT INTO ai_answers(id,question_text,answer_text,evidence_bundle_id,confidence,answer_status,model_name,created_run_id,created_at,metadata_json)
+        VALUES (@id,@question_text,@answer_text,@evidence_bundle_id,@confidence,@answer_status,@model_name,@created_run_id,@created_at,@metadata_json)`).run(row);
+      return getAnswer(row.id);
+    },
+    addCitation(answerId, evidenceItemId, quotedText) {
+      const pair = db.prepare(`SELECT a.evidence_bundle_id answer_bundle, e.bundle_id item_bundle FROM ai_answers a, evidence_items e WHERE a.id = ? AND e.id = ?`).get(answerId, evidenceItemId);
+      if (!pair) throw new NotFoundError("Answer or evidence item not found");
+      if (pair.answer_bundle !== pair.item_bundle) throw new InvalidEvidenceError("Citation evidence item must belong to the answer evidence bundle");
+      const order = db.prepare("SELECT COALESCE(MAX(citation_order), 0) + 1 next_order FROM ai_answer_citations WHERE answer_id = ?").get(answerId).next_order;
+      const row = { id: createId("evi_"), answer_id: answerId, evidence_item_id: evidenceItemId, citation_order: order, quoted_text: quotedText ?? null, created_at: now() };
+      db.prepare("INSERT INTO ai_answer_citations(id,answer_id,evidence_item_id,citation_order,quoted_text,created_at) VALUES (@id,@answer_id,@evidence_item_id,@citation_order,@quoted_text,@created_at)").run(row);
+      return row;
+    },
+    getAnswerWithCitations(answerId) {
+      const answer = getAnswer(answerId);
+      if (!answer) return null;
+      return { ...answer, citations: parseRows(db.prepare("SELECT * FROM ai_answer_citations WHERE answer_id = ? ORDER BY citation_order").all(answerId)) };
+    },
+    listAnswers(filter = {}) {
+      const clauses = [], values = [];
+      for (const key of ["confidence", "answer_status", "evidence_bundle_id"]) if (filter[key]) {
+        clauses.push(`${key} = ?`);
+        values.push(filter[key]);
+      }
+      return parseRows(db.prepare(`SELECT * FROM ai_answers ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""} ORDER BY created_at`).all(...values));
+    }
+  };
+}
+
+// src/db/repositories/graphRepo.ts
+function createGraphRepo(db, options = {}) {
+  const timestamp = () => options.now?.().toISOString() ?? now();
+  const createGraphNode = (input) => {
+    const createdAt = timestamp(), row = { id: input.id ?? createId("node_"), node_type: input.node_type, ref_id: input.ref_id, label: input.label, created_at: createdAt, updated_at: createdAt, metadata_json: json(input.metadata) };
+    db.prepare("INSERT INTO graph_nodes(id,node_type,ref_id,label,created_at,updated_at,metadata_json) VALUES (@id,@node_type,@ref_id,@label,@created_at,@updated_at,@metadata_json)").run(row);
+    return parseRow(db.prepare("SELECT * FROM graph_nodes WHERE id = ?").get(row.id));
+  };
+  const getGraphEdge = (id) => parseRow(db.prepare("SELECT * FROM graph_edges WHERE id = ?").get(id));
+  return {
+    createGraphNode,
+    getOrCreateGraphNode(input) {
+      return parseRow(db.prepare("SELECT * FROM graph_nodes WHERE node_type = ? AND ref_id = ?").get(input.node_type, input.ref_id)) ?? createGraphNode(input);
+    },
+    createGraphEdge(input) {
+      assertScore(input.confidence, "confidence");
+      if (input.source_type === "source_backed" && !input.evidence_bundle_id) throw new EvidenceRequiredError("Source-backed graph edges require an evidence bundle");
+      if (input.source_type !== "inferred" && !input.evidence_bundle_id) throw new EvidenceRequiredError("Only inferred graph edges may omit evidence");
+      if (!input.evidence_bundle_id && input.source_type !== "inferred") throw new ValidationError("Evidence-free graph edges must be inferred");
+      if (input.source_type === "source_backed") {
+        const count = db.prepare("SELECT COUNT(*) count FROM evidence_items WHERE bundle_id = ?").get(input.evidence_bundle_id).count;
+        if (!count) throw new EvidenceRequiredError("Source-backed graph edge evidence bundle must contain evidence items");
+      }
+      requireRow(db, "graph_nodes", input.from_node_id);
+      requireRow(db, "graph_nodes", input.to_node_id);
+      const createdAt = timestamp(), row = { id: input.id ?? createId("edge_"), from_node_id: input.from_node_id, to_node_id: input.to_node_id, edge_type: input.edge_type, source_type: input.source_type, confidence: input.confidence, evidence_bundle_id: input.evidence_bundle_id ?? null, created_run_id: input.created_run_id ?? null, status: input.status ?? "active", created_at: createdAt, updated_at: createdAt, metadata_json: json(input.metadata) };
+      db.prepare(`INSERT INTO graph_edges(id,from_node_id,to_node_id,edge_type,source_type,confidence,evidence_bundle_id,created_run_id,status,created_at,updated_at,metadata_json)
+        VALUES (@id,@from_node_id,@to_node_id,@edge_type,@source_type,@confidence,@evidence_bundle_id,@created_run_id,@status,@created_at,@updated_at,@metadata_json)`).run(row);
+      return getGraphEdge(row.id);
+    },
+    getGraphEdge,
+    listEdgesForNode(nodeId) {
+      return parseRows(db.prepare("SELECT * FROM graph_edges WHERE from_node_id = ? OR to_node_id = ? ORDER BY created_at").all(nodeId, nodeId));
+    },
+    listContradictionsForNode(nodeId) {
+      return parseRows(db.prepare("SELECT * FROM graph_edges WHERE edge_type = 'contradicts' AND (from_node_id = ? OR to_node_id = ?) ORDER BY created_at").all(nodeId, nodeId));
+    },
+    updateGraphEdgeStatus(id, status) {
+      const result = db.prepare("UPDATE graph_edges SET status = ?, updated_at = ? WHERE id = ?").run(status, timestamp(), id);
+      if (!result.changes) throw new NotFoundError(`Graph edge not found: ${id}`);
+    }
+  };
+}
+
+// src/db/repositories/correctionsRepo.ts
+var memoryFields = /* @__PURE__ */ new Set(["title", "generated_text", "normalized_text", "status", "confidence", "metadata_json"]);
+var edgeFields = /* @__PURE__ */ new Set(["edge_type", "source_type", "confidence", "evidence_bundle_id", "status", "metadata_json"]);
+function createCorrectionsRepo(db) {
+  const createCorrection = (input) => {
+    const row = { id: input.id ?? createId("corr_"), target_type: input.target_type, target_id: input.target_id, correction_type: input.correction_type, old_value_json: input.old_value == null ? null : json(input.old_value), new_value_json: json(input.new_value), reason: input.reason ?? null, created_at: now(), created_by: input.created_by ?? "user", metadata_json: json(input.metadata) };
+    db.prepare(`INSERT INTO user_corrections(id,target_type,target_id,correction_type,old_value_json,new_value_json,reason,created_at,created_by,metadata_json)
+      VALUES (@id,@target_type,@target_id,@correction_type,@old_value_json,@new_value_json,@reason,@created_at,@created_by,@metadata_json)`).run(row);
+    return parseRow(db.prepare("SELECT * FROM user_corrections WHERE id = ?").get(row.id));
+  };
+  const apply = (table, targetType, id, input, allowed) => db.transaction(() => {
+    const current = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id);
+    if (!current) throw new NotFoundError(`${targetType} not found: ${id}`);
+    const entries = Object.entries(input.new_value);
+    if (!entries.length || entries.some(([key]) => !allowed.has(key))) throw new ValidationError(`Correction contains unsupported ${targetType} fields`);
+    const confidence = input.new_value.confidence;
+    if (typeof confidence === "number") assertScore(confidence, "confidence");
+    const resulting = { ...current, ...input.new_value };
+    if (table === "memory_objects" && resulting.status === "active") {
+      const count = db.prepare(`SELECT
+        (SELECT COUNT(*) FROM memory_object_evidence WHERE memory_id=?) +
+        (SELECT COUNT(*) FROM evidence_pointers WHERE target_type IN ('memory_object','claim','summary') AND target_id=?) count`).get(id, id).count;
+      if (!count) throw new EvidenceRequiredError("An active corrected memory object requires evidence");
+    }
+    if (table === "graph_edges" && resulting.source_type === "source_backed") {
+      const count = resulting.evidence_bundle_id ? db.prepare("SELECT COUNT(*) count FROM evidence_items WHERE bundle_id = ?").get(resulting.evidence_bundle_id).count : 0;
+      if (!count) throw new EvidenceRequiredError("A source-backed corrected graph edge requires evidence");
+    }
+    const assignments = entries.map(([key]) => `${key} = @${key}`).concat("updated_at = @updated_at");
+    const values = Object.fromEntries(entries.map(([key, value]) => [key, key === "metadata_json" ? json(value) : value]));
+    if (table === "memory_objects") {
+      assignments.push("user_corrected = 1");
+      if (input.new_value.status != null && current.extraction_status != null) {
+        assignments.push("extraction_status = @canonical_status");
+        values.canonical_status = input.new_value.status;
+      }
+      if (typeof input.new_value.confidence === "number" && current.confidence_label != null) {
+        assignments.push("confidence_label = @canonical_confidence_label");
+        values.canonical_confidence_label = input.new_value.confidence >= 0.8 ? "high" : input.new_value.confidence >= 0.6 ? "medium" : "low";
+      }
+    }
+    db.prepare(`UPDATE ${table} SET ${assignments.join(", ")} WHERE id = @id`).run({ ...values, id, updated_at: now() });
+    createCorrection({ ...input, target_type: targetType, target_id: id, old_value: Object.fromEntries(entries.map(([key]) => [key, current[key]])) });
+    return parseRow(db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id));
+  })();
+  return {
+    createCorrection,
+    listCorrectionsForTarget(targetType, targetId) {
+      return parseRows(db.prepare("SELECT * FROM user_corrections WHERE target_type = ? AND target_id = ? ORDER BY created_at").all(targetType, targetId));
+    },
+    applyMemoryObjectCorrection(memoryId, input) {
+      return apply("memory_objects", "memory_object", memoryId, input, memoryFields);
+    },
+    applyGraphEdgeCorrection(edgeId2, input) {
+      return apply("graph_edges", "graph_edge", edgeId2, input, edgeFields);
+    }
+  };
+}
+
+// src/db/repositories/searchRepo.ts
+function createSearchRepo(db) {
+  const getSearchDocument = (docType, refId) => parseRow(db.prepare("SELECT * FROM search_documents WHERE doc_type = ? AND ref_id = ?").get(docType, refId));
+  return {
+    upsertSearchDocument(input) {
+      const existing = getSearchDocument(input.doc_type, input.ref_id), timestamp = now();
+      const row = { id: existing?.id ?? input.id ?? createId("doc_"), doc_type: input.doc_type, ref_id: input.ref_id, search_text: input.search_text, language: input.language ?? null, created_at: existing?.created_at ?? timestamp, updated_at: timestamp, metadata_json: json(input.metadata) };
+      db.prepare(`INSERT INTO search_documents(id,doc_type,ref_id,search_text,language,created_at,updated_at,metadata_json)
+        VALUES (@id,@doc_type,@ref_id,@search_text,@language,@created_at,@updated_at,@metadata_json)
+        ON CONFLICT(doc_type,ref_id) DO UPDATE SET search_text=excluded.search_text,language=excluded.language,updated_at=excluded.updated_at,metadata_json=excluded.metadata_json`).run(row);
+      return getSearchDocument(input.doc_type, input.ref_id);
+    },
+    getSearchDocument,
+    searchKeyword(query, limit = 20) {
+      try {
+        return parseRows(db.prepare(`SELECT d.* FROM search_documents_fts f JOIN search_documents d ON d.rowid=f.rowid WHERE search_documents_fts MATCH ? ORDER BY bm25(search_documents_fts) LIMIT ?`).all(query, limit));
+      } catch {
+        return parseRows(db.prepare("SELECT * FROM search_documents WHERE search_text LIKE ? ORDER BY updated_at DESC LIMIT ?").all(`%${query}%`, limit));
+      }
+    },
+    createEmbeddingRecord(input) {
+      const row = { id: input.id ?? createId("emb_"), doc_type: input.doc_type, ref_id: input.ref_id, embedding_model: input.embedding_model, embedding_dim: input.embedding_dim, embedding_storage_uri: input.embedding_storage_uri ?? null, embedding_json: input.embedding == null ? null : json(input.embedding), content_hash: input.content_hash, created_run_id: input.created_run_id ?? null, created_at: now(), metadata_json: json(input.metadata) };
+      db.prepare(`INSERT INTO embedding_records(id,doc_type,ref_id,embedding_model,embedding_dim,embedding_storage_uri,embedding_json,content_hash,created_run_id,created_at,metadata_json)
+        VALUES (@id,@doc_type,@ref_id,@embedding_model,@embedding_dim,@embedding_storage_uri,@embedding_json,@content_hash,@created_run_id,@created_at,@metadata_json)`).run(row);
+      return parseRow(db.prepare("SELECT * FROM embedding_records WHERE id = ?").get(row.id));
+    },
+    getEmbeddingRecord(docType, refId, model, hash) {
+      return parseRow(db.prepare("SELECT * FROM embedding_records WHERE doc_type = ? AND ref_id = ? AND embedding_model = ? AND content_hash = ?").get(docType, refId, model, hash));
+    }
+  };
+}
+
+// src/db/index.ts
+function createRepositories(db) {
+  return {
+    transcripts: createTranscriptsRepo(db),
+    spans: createSpansRepo(db),
+    runs: createRunsRepo(db),
+    memoryObjects: createMemoryObjectsRepo(db),
+    evidence: createEvidenceRepo(db),
+    answers: createAnswersRepo(db),
+    graph: createGraphRepo(db),
+    corrections: createCorrectionsRepo(db),
+    search: createSearchRepo(db)
+  };
+}
+
+// src/obsidian/pluginTypes.ts
+var OBSIDIAN_VIEW_TYPES = {
+  dashboard: "transcript-memory-dashboard",
+  upload: "transcript-memory-upload",
+  transcript: "transcript-memory-transcript",
+  ask: "transcript-memory-ask",
+  answer: "transcript-memory-answer",
+  evidence: "transcript-memory-evidence",
+  memory: "transcript-memory-memory-object",
+  graph: "transcript-memory-graph",
+  search: "transcript-memory-search",
+  review: "transcript-memory-review"
+};
+var OBSIDIAN_COMMANDS = [
+  { id: "open-dashboard", name: "Open Transcript Memory Dashboard", viewType: OBSIDIAN_VIEW_TYPES.dashboard },
+  { id: "upload-transcript", name: "Upload Transcript", viewType: OBSIDIAN_VIEW_TYPES.upload },
+  { id: "ask-ai", name: "Ask AI About Transcripts", viewType: OBSIDIAN_VIEW_TYPES.ask },
+  { id: "search-vault", name: "Search Transcript Memory Vault", viewType: OBSIDIAN_VIEW_TYPES.search },
+  { id: "open-graph", name: "Open Memory Graph", viewType: OBSIDIAN_VIEW_TYPES.graph },
+  { id: "open-review", name: "Open Review Queue", viewType: OBSIDIAN_VIEW_TYPES.review }
+];
+var OBSIDIAN_RIBBON = { icon: "database", title: "Open Transcript Memory Dashboard" };
+var viewTitle = (type) => ({
+  [OBSIDIAN_VIEW_TYPES.dashboard]: "Transcript Memory Dashboard",
+  [OBSIDIAN_VIEW_TYPES.upload]: "Upload Transcript",
+  [OBSIDIAN_VIEW_TYPES.transcript]: "Transcript Source",
+  [OBSIDIAN_VIEW_TYPES.ask]: "Ask AI",
+  [OBSIDIAN_VIEW_TYPES.answer]: "AI Answer",
+  [OBSIDIAN_VIEW_TYPES.evidence]: "Evidence",
+  [OBSIDIAN_VIEW_TYPES.memory]: "Memory Object",
+  [OBSIDIAN_VIEW_TYPES.graph]: "Memory Graph",
+  [OBSIDIAN_VIEW_TYPES.search]: "Search Transcript Memory",
+  [OBSIDIAN_VIEW_TYPES.review]: "Review Queue"
+})[type];
+var defaultTarget = (type) => ({
+  [OBSIDIAN_VIEW_TYPES.dashboard]: "mv://dashboard",
+  [OBSIDIAN_VIEW_TYPES.upload]: "mv://upload",
+  [OBSIDIAN_VIEW_TYPES.transcript]: "mv://transcripts/missing",
+  [OBSIDIAN_VIEW_TYPES.ask]: "mv://ask",
+  [OBSIDIAN_VIEW_TYPES.answer]: "mv://answers/missing",
+  [OBSIDIAN_VIEW_TYPES.evidence]: "mv://evidence/missing",
+  [OBSIDIAN_VIEW_TYPES.memory]: "mv://memory/missing",
+  [OBSIDIAN_VIEW_TYPES.graph]: "mv://graph",
+  [OBSIDIAN_VIEW_TYPES.search]: "mv://search",
+  [OBSIDIAN_VIEW_TYPES.review]: "mv://review"
+})[type];
+
+// src/obsidian/ObsidianNavigation.ts
+function createObsidianNavigation(app) {
+  const open = async (type, target) => {
+    const leaf = app.workspace.getLeaf("tab");
+    await leaf.setViewState({ type, active: true, state: { target } });
+    app.workspace.revealLeaf(leaf);
+  };
+  return {
+    openDashboard: () => open(OBSIDIAN_VIEW_TYPES.dashboard, "mv://dashboard"),
+    openUpload: () => open(OBSIDIAN_VIEW_TYPES.upload, "mv://upload"),
+    openTranscript: (id, options) => open(OBSIDIAN_VIEW_TYPES.transcript, `mv://transcripts/${encodeURIComponent(id)}${options?.spanId ? `?span=${encodeURIComponent(options.spanId)}` : ""}`),
+    openAskAI: (options) => open(OBSIDIAN_VIEW_TYPES.ask, `mv://ask${options?.transcriptIds?.length ? `?transcriptIds=${options.transcriptIds.map(encodeURIComponent).join(",")}` : ""}`),
+    openAnswer: (id) => open(OBSIDIAN_VIEW_TYPES.answer, `mv://answers/${encodeURIComponent(id)}`),
+    openEvidence: (id) => open(OBSIDIAN_VIEW_TYPES.evidence, `mv://evidence/${encodeURIComponent(id)}`),
+    openMemoryObject: (id) => open(OBSIDIAN_VIEW_TYPES.memory, `mv://memory/${encodeURIComponent(id)}`),
+    openGraph: (options) => {
+      const params = new URLSearchParams();
+      if (options?.selectedNodeId) params.set("selectedNode", options.selectedNodeId);
+      if (options?.selectedEdgeId) params.set("selectedEdge", options.selectedEdgeId);
+      if (options?.query) params.set("q", options.query);
+      return open(OBSIDIAN_VIEW_TYPES.graph, `mv://graph${params.size ? `?${params}` : ""}`);
+    },
+    openSearch: (query) => open(OBSIDIAN_VIEW_TYPES.search, `mv://search${query ? `?q=${encodeURIComponent(query)}` : ""}`),
+    openReviewQueue: (options) => open(OBSIDIAN_VIEW_TYPES.review, options?.reviewItemId ? `mv://review/${encodeURIComponent(options.reviewItemId)}` : "mv://review")
+  };
+}
+
+// src/obsidian/SettingsTab.ts
+var import_obsidian = require("obsidian");
+var TranscriptMemorySettingsTab = class extends import_obsidian.PluginSettingTab {
+  constructor(app, plugin, getHealth, navigation) {
+    super(app, plugin);
+    this.getHealth = getHealth;
+    this.navigation = navigation;
+  }
+  getHealth;
+  navigation;
+  display() {
+    const health = this.getHealth();
+    this.containerEl.empty();
+    this.containerEl.createEl("h2", { text: "Transcript Memory Vault" });
+    new import_obsidian.Setting(this.containerEl).setName("Plugin status").setDesc(health.status);
+    new import_obsidian.Setting(this.containerEl).setName("Database location").setDesc(health.databasePath ?? "Unavailable");
+    new import_obsidian.Setting(this.containerEl).setName("SQLite storage").setDesc(health.realSqliteStorage ? "Connected to real local SQLite storage" : "Not connected");
+    new import_obsidian.Setting(this.containerEl).setName("Migration status").setDesc(`${health.migrationStatus}: ${health.appliedMigrationCount}/${health.packagedMigrationCount} applied`);
+    new import_obsidian.Setting(this.containerEl).setName("Last initialization error").setDesc(health.lastInitializationError ?? "None");
+    new import_obsidian.Setting(this.containerEl).setName("Dashboard").addButton((button) => button.setButtonText("Open dashboard").onClick(() => void this.navigation.openDashboard()));
+  }
+};
+
+// src/obsidian/TranscriptMemoryItemView.ts
+var import_obsidian3 = require("obsidian");
+
+// src/frontend/router.ts
+var patterns = [
+  { id: "dashboard", pattern: /^\/(?:dashboard\/?)?$/ },
+  { id: "upload", pattern: /^\/upload\/?$/ },
+  { id: "transcript", pattern: /^\/transcripts\/([^/]+)\/?$/, names: ["id"] },
+  { id: "ask", pattern: /^\/ask\/?$/ },
+  { id: "answer", pattern: /^\/answers\/([^/]+)\/?$/, names: ["id"] },
+  { id: "evidence", pattern: /^\/evidence\/([^/]+)\/?$/, names: ["id"] },
+  { id: "memory", pattern: /^\/memory\/([^/]+)\/?$/, names: ["id"] },
+  { id: "graph", pattern: /^\/graph\/?$/ },
+  { id: "search", pattern: /^\/search\/?$/ },
+  { id: "review", pattern: /^\/review\/?$/ },
+  { id: "review_detail", pattern: /^\/review\/([^/]+)\/?$/, names: ["id"] }
+];
+function matchRoute(input) {
+  const internal = input.startsWith("mv://") ? new URL(input) : null;
+  const inputPath = internal ? `/${internal.host}${internal.pathname}${internal.search}` : input;
+  const url = new URL(inputPath, "http://vault.local");
+  for (const route of patterns) {
+    const match = route.pattern.exec(url.pathname);
+    if (!match) continue;
+    return {
+      id: route.id,
+      path: url.pathname,
+      params: Object.fromEntries((route.names ?? []).map((name, index) => [name, decodeURIComponent(match[index + 1])])),
+      query: url.searchParams
+    };
+  }
+  return { id: "not_found", path: url.pathname, params: {}, query: url.searchParams };
+}
+var routeHref = {
+  dashboard: () => "mv://dashboard",
+  upload: () => "mv://upload",
+  ask: () => "mv://ask",
+  graph: (query = "") => `mv://graph${query}`,
+  search: (query = "") => `mv://search${query}`,
+  reviewQueue: (query = "") => `mv://review${query}`,
+  transcript: (id, spanId) => `mv://transcripts/${encodeURIComponent(id)}${spanId ? `?span=${encodeURIComponent(spanId)}` : ""}`,
+  answer: (id) => `mv://answers/${encodeURIComponent(id)}`,
+  evidence: (id) => `mv://evidence/${encodeURIComponent(id)}`,
+  memory: (id) => `mv://memory/${encodeURIComponent(id)}`,
+  review: (id) => `mv://review/${encodeURIComponent(id)}`
+};
+
+// src/frontend/navigation.ts
+async function navigateInternal(navigation, target) {
+  const route = matchRoute(target);
+  switch (route.id) {
+    case "dashboard":
+      return navigation.openDashboard();
+    case "upload":
+      return navigation.openUpload();
+    case "transcript":
+      return navigation.openTranscript(route.params.id, { spanId: route.query.get("span") ?? void 0 });
+    case "ask":
+      return navigation.openAskAI();
+    case "answer":
+      return navigation.openAnswer(route.params.id);
+    case "evidence":
+      return navigation.openEvidence(route.params.id);
+    case "memory":
+      return navigation.openMemoryObject(route.params.id);
+    case "graph":
+      return navigation.openGraph({
+        selectedNodeId: route.query.get("selectedNode") ?? void 0,
+        selectedEdgeId: route.query.get("selectedEdge") ?? void 0,
+        query: route.query.get("q") ?? void 0
+      });
+    case "search":
+      return navigation.openSearch(route.query.get("q") ?? void 0);
+    case "review_detail":
+      return navigation.openReviewQueue({ reviewItemId: route.params.id });
+    case "review":
+      return navigation.openReviewQueue();
+    default:
+      throw new Error(`Unsupported internal navigation target: ${target}`);
+  }
+}
+
+// src/frontend/html.ts
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;"
+  })[character]);
+}
+function trustBadge(state, label = state.replaceAll("_", " ")) {
+  return `<span class="trust-badge trust-${escapeHtml(state)}" data-trust-state="${escapeHtml(state)}">${escapeHtml(label)}</span>`;
+}
+function score(value) {
+  return value == null ? "not scored" : `${Math.round(value * 100)}%`;
+}
+function emptyState(title, detail, action) {
+  return `<section class="empty-state"><h2>${escapeHtml(title)}</h2><p>${escapeHtml(detail)}</p>${action ? `<a href="${escapeHtml(action.href)}">${escapeHtml(action.label)}</a>` : ""}</section>`;
+}
+function appShell(title, body) {
+  return `<div class="vault-app">
+    <header class="app-header"><a href="mv://dashboard" class="brand">Interview Intelligence Vault</a><nav aria-label="Primary">
+      <a href="mv://upload">Upload</a><a href="mv://ask">Ask AI</a><a href="mv://search">Search</a><a href="mv://graph">Graph</a><a href="mv://review">Review</a>
+    </nav></header>
+    <main><header class="page-header"><h1>${escapeHtml(title)}</h1></header>${body}</main>
+  </div>`;
+}
+
+// src/ask-ai/queryUnderstanding.ts
+var unique = (values) => [...new Set(values.filter(Boolean))];
+function understandQuestion(question, options = {}) {
+  const normalizedQuestion = question.trim().replace(/\s+/g, " ");
+  if (!normalizedQuestion) throw new ValidationError("Ask AI question must not be empty");
+  const lower = normalizedQuestion.toLowerCase();
+  const needsRecommendation = options.mode === "recommendation" || /\b(should|recommend|what should|best option|what do i do)\b/.test(lower);
+  const needsComparison = /\b(compare|compared|comparison|versus|vs\.?|difference|both sides)\b/.test(lower);
+  const needsChronology = /\b(timeline|chronology|before|after|when|sequence)\b/.test(lower);
+  const isSummary = options.mode === "summary" || /\b(summarize|summary|overview|recap)\b/.test(lower);
+  const isPattern = /\b(pattern|often|usually|repeated|trend)\b/.test(lower);
+  const isInference = /\b(why|infer|suggest|imply|likely)\b/.test(lower);
+  const answerMode = options.mode ?? (needsRecommendation ? "recommendation" : isSummary ? "summary" : needsComparison || needsChronology ? "exploratory" : "direct");
+  const requestedClaimKinds = unique([
+    needsRecommendation ? "recommendation" : "",
+    isPattern ? "pattern" : "",
+    isInference ? "inference" : "",
+    !needsRecommendation && !isPattern && !isInference ? "fact" : ""
+  ]);
+  const detectedEntities = unique([
+    ...(normalizedQuestion.match(/\b[A-Z][\p{L}\p{N}_'-]*(?:\s+[A-Z][\p{L}\p{N}_'-]*)*/gu) ?? []).filter((value) => !/^(What|Why|When|How|Do|Does|Is|Are)$/i.test(value)),
+    ...options.entityIds ?? []
+  ]);
+  const quoted = [...normalizedQuestion.matchAll(/["']([^"']+)["']/g)].map((match) => match[1]);
+  const timeHints = unique(normalizedQuestion.match(/\b(?:recently|today|yesterday|last week|last month|before|after|20\d{2}|january|february|march|april|may|june|july|august|september|october|november|december)\b/gi) ?? []);
+  return {
+    originalQuestion: question,
+    normalizedQuestion,
+    answerMode,
+    detectedEntities,
+    detectedTopics: quoted,
+    timeHints,
+    requestedClaimKinds,
+    needsRecommendation,
+    needsComparison,
+    needsChronology,
+    shouldUseMemoryObjects: answerMode !== "direct" || isPattern,
+    shouldUseRawTranscriptSpans: true,
+    transcriptIds: [...options.transcriptIds ?? []],
+    entityIds: [...options.entityIds ?? []],
+    memoryObjectIds: [...options.memoryObjectIds ?? []],
+    timeRange: options.timeRange
+  };
+}
+
+// src/ask-ai/evidenceSelection.ts
+var rank = { strong: 4, mixed: 3, weak: 2, conflicting: 1, no_evidence: 0 };
+var sourceRank = { raw_transcript_span: 6, user_correction: 5, memory_object_with_pointers: 4, generated_summary_with_pointers: 3, graph_edge_with_pointers: 2, answer_claim_with_pointers: 1 };
+function scoredCandidateToEvidence(item) {
+  const candidate = item.candidate, spanId = candidate.spanIds[0];
+  if (!candidate.evidencePointerId || !candidate.transcriptId || !spanId || !candidate.provenanceValidated || !candidate.quote) return null;
+  return {
+    evidencePointerId: candidate.evidencePointerId,
+    sourcePointerId: typeof candidate.metadata?.sourcePointerId === "string" ? candidate.metadata.sourcePointerId : void 0,
+    transcriptId: candidate.transcriptId,
+    spanId,
+    quotePreview: candidate.quote.slice(0, 500),
+    speaker: candidate.speaker,
+    timestampStart: candidate.turnTimestampStartMs == null ? void 0 : String(candidate.turnTimestampStartMs),
+    timestampEnd: candidate.turnTimestampEndMs == null ? void 0 : String(candidate.turnTimestampEndMs),
+    relevanceScore: item.components.relevance,
+    evidenceScore: item.finalScore,
+    evidenceConfidence: item.strength,
+    scoringExplanation: item.reasons.join("; ") || `Evidence classified as ${item.strength}.`,
+    clickbackUri: `mv://evidence/${encodeURIComponent(candidate.evidencePointerId)}`,
+    stance: item.stance,
+    sourceKind: candidate.sourceKind
+  };
+}
+function selectEvidenceForAnswer(assessment, options = {}) {
+  const max = Math.max(1, options.maxEvidenceItems ?? 8);
+  const validSpans = new Set(assessment.usableEvidence.flatMap((item) => item.candidate.spanIds));
+  const materialized = (options.materializedEvidence ?? assessment.scoredEvidence.map(scoredCandidateToEvidence).filter((item) => item != null)).filter((item) => validSpans.has(item.spanId));
+  const seenSpans = /* @__PURE__ */ new Set(), seenQuotes = /* @__PURE__ */ new Set();
+  const evidence = [...materialized].sort((a, b) => rank[b.evidenceConfidence] - rank[a.evidenceConfidence] || sourceRank[b.sourceKind] - sourceRank[a.sourceKind] || b.evidenceScore - a.evidenceScore || a.spanId.localeCompare(b.spanId)).filter((item) => {
+    const quote2 = item.quotePreview.toLowerCase().replace(/\s+/g, " ").trim();
+    if (!item.evidencePointerId || !item.transcriptId || !item.spanId || seenSpans.has(item.spanId) || seenQuotes.has(quote2)) return false;
+    seenSpans.add(item.spanId);
+    seenQuotes.add(quote2);
+    return true;
+  }).slice(0, max);
+  return { evidence, confidence: evidence.length ? assessment.strength : "no_evidence", assessment };
+}
+
+// src/ask-ai/claimGeneration.ts
+var import_node_crypto2 = require("node:crypto");
+var stableId = (value) => `aiclaim_${(0, import_node_crypto2.createHash)("sha256").update(value).digest("hex").slice(0, 24)}`;
+var supportStatus = (confidence) => confidence === "strong" || confidence === "mixed" ? "supported" : confidence === "conflicting" ? "conflicting" : confidence === "weak" ? "weakly_supported" : "unsupported";
+function defaultClaimText(kind, evidence) {
+  const quote2 = evidence[0]?.quotePreview.replace(/^[^:]{1,80}:\s*/, "").trim() ?? "";
+  if (kind === "inference") return `Inference: ${quote2}`;
+  if (kind === "recommendation") return `Recommendation based on the available transcript evidence: ${quote2}`;
+  if (kind === "pattern") return evidence.length > 1 ? `Pattern across the selected evidence: ${quote2}` : `Tentative pattern from limited evidence: ${quote2}`;
+  return quote2;
+}
+async function generateClaimsFromEvidence(query, evidence, citations, options) {
+  if (!evidence.length || options.confidence === "no_evidence") return [];
+  const citationByPointer = new Map(citations.map((item) => [item.evidencePointerId, item]));
+  const selectedPointers = new Set(evidence.map((item) => item.evidencePointerId));
+  const kinds = query.requestedClaimKinds.length ? query.requestedClaimKinds : ["fact"];
+  const conflictEvidence = [
+    evidence.find((item) => item.stance === "supports" || item.stance === "updates"),
+    evidence.find((item) => item.stance === "opposes")
+  ].filter((item) => item != null);
+  const proposed = options.confidence === "conflicting" ? conflictEvidence.map((item) => ({ kind: kinds[0] ?? "fact", text: defaultClaimText(kinds[0] ?? "fact", [item]), evidencePointerIds: [item.evidencePointerId] })) : options.llm ? await options.llm.generateClaims({ query, evidence }) : kinds.map((kind) => ({ kind, text: defaultClaimText(kind, evidence), evidencePointerIds: evidence.map((item) => item.evidencePointerId) }));
+  return proposed.flatMap((claim, index) => {
+    const pointers = [...new Set(claim.evidencePointerIds)].filter((id) => selectedPointers.has(id));
+    if (!claim.text.trim() || !pointers.length) return [];
+    const claimEvidence = evidence.filter((item) => pointers.includes(item.evidencePointerId));
+    const kind = claim.kind;
+    let status = supportStatus(options.confidence);
+    let explanation = claim.explanation;
+    if (kind === "pattern" && claimEvidence.length < 2 && !/\b(always|usually|often|repeatedly|consistently)\b/i.test(claimEvidence[0]?.quotePreview ?? "")) {
+      status = "weakly_supported";
+      explanation = explanation ?? "Pattern is tentative because only one independent span supports it.";
+    }
+    if (kind === "inference") explanation = explanation ?? "This is an inference derived from the cited transcript evidence.";
+    if (kind === "recommendation") explanation = explanation ?? "This recommendation is based only on the cited goals, constraints, or preferences.";
+    const citationIds = pointers.map((id) => citationByPointer.get(id)?.id).filter((id) => id != null);
+    if (!citationIds.length) return [];
+    return [{ id: stableId(`${index}:${kind}:${claim.text}:${pointers.join(",")}`), kind, text: claim.text.trim(), supportStatus: status, evidencePointerIds: pointers, citationIds, explanation }];
+  });
+}
+
+// src/ask-ai/citations.ts
+var import_node_crypto3 = require("node:crypto");
+var stableId2 = (value) => `aic_${(0, import_node_crypto3.createHash)("sha256").update(value).digest("hex").slice(0, 24)}`;
+function buildCitations(evidence) {
+  const seen = /* @__PURE__ */ new Set();
+  return evidence.filter((item) => {
+    if (seen.has(item.evidencePointerId)) return false;
+    seen.add(item.evidencePointerId);
+    return true;
+  }).map((item, index) => ({
+    id: stableId2(item.evidencePointerId),
+    label: `[${index + 1}]`,
+    evidencePointerId: item.evidencePointerId,
+    sourcePointerId: item.sourcePointerId,
+    transcriptId: item.transcriptId,
+    spanId: item.spanId,
+    quotePreview: item.quotePreview,
+    clickbackUri: item.clickbackUri
+  }));
+}
+var renderCitation = (citation) => `${citation.label}(${citation.clickbackUri})`;
+
+// src/ask-ai/answerRendering.ts
+function renderAnswer(input) {
+  if (input.confidence === "no_evidence" || !input.claims.length) return "I don't have enough transcript-backed evidence to answer that.";
+  const citations = new Map(input.citations.map((item) => [item.id, item]));
+  const lines = input.claims.map((claim) => {
+    const links2 = claim.citationIds.map((id) => citations.get(id)).filter((item) => item != null).map(renderCitation);
+    if (!links2.length) throw new ValidationError(`Ask AI claim has no selected citation: ${claim.id}`);
+    const label = claim.kind === "fact" ? "" : `**${claim.kind[0].toUpperCase()}${claim.kind.slice(1)}:** `;
+    return `${label}${claim.text} ${links2.join(" ")}`;
+  });
+  const intro = input.confidence === "weak" ? "The evidence I found is weak, so this should be treated cautiously." : input.confidence === "conflicting" ? "The evidence conflicts, so I can't give one clean answer. Both sides are shown below." : input.confidence === "mixed" ? "The transcript evidence supports a qualified answer." : "Based on the transcript evidence:";
+  return `${intro}
+
+${lines.join("\n\n")}`;
+}
+
+// src/ask-ai/followups.ts
+function suggestFollowups(confidence, query) {
+  if (confidence === "no_evidence") return ["Do you want to search only within a specific transcript?", "Do you want to import more transcripts related to this topic?"];
+  if (confidence === "weak") return ["Do you want to see the exact transcript spans I found?", "Do you want to broaden the search?"];
+  if (confidence === "conflicting") return ["Do you want to compare the conflicting transcript moments?", "Do you want to review which source is newer?"];
+  return query.needsChronology ? ["Do you want the answer grouped by speaker?", "Do you want the supporting transcript clips?"] : ["Do you want a timeline of this?", "Do you want the answer grouped by speaker?", "Do you want the supporting transcript clips?"];
+}
+
+// src/provenance/pointerFormat.ts
+function encodeId(value, name) {
+  if (!value.trim()) throw new ValidationError(`${name} must be non-empty`);
+  return encodeURIComponent(value);
+}
+function makeSourcePointerUri(input) {
+  return `mv://source/transcript/${encodeId(input.transcriptId, "transcriptId")}/span/${encodeId(input.spanId, "spanId")}`;
+}
+function parseSourcePointerUri(uri) {
+  const match = uri.match(/^mv:\/\/source\/transcript\/([^/]+)\/span\/([^/]+)$/);
+  if (!match) throw new ValidationError(`Malformed source pointer URI: ${uri}`);
+  try {
+    const transcriptId = decodeURIComponent(match[1]), spanId = decodeURIComponent(match[2]);
+    if (!transcriptId.trim() || !spanId.trim()) throw new Error();
+    return { transcriptId, spanId };
+  } catch {
+    throw new ValidationError(`Malformed source pointer URI: ${uri}`);
+  }
+}
+function makeEvidencePointerUri(evidencePointerId) {
+  return `mv://evidence/${encodeId(evidencePointerId, "evidencePointerId")}`;
+}
+function parseEvidencePointerUri(uri) {
+  const match = uri.match(/^mv:\/\/evidence\/([^/]+)$/);
+  if (!match) throw new ValidationError(`Malformed evidence pointer URI: ${uri}`);
+  try {
+    const evidencePointerId = decodeURIComponent(match[1]);
+    if (!evidencePointerId.trim()) throw new Error();
+    return { evidencePointerId };
+  } catch {
+    throw new ValidationError(`Malformed evidence pointer URI: ${uri}`);
+  }
+}
+
+// src/provenance/sourcePointers.ts
+function loadSpanSource(db, transcriptId, spanId) {
+  return db.prepare(`SELECT s.id span_id,s.transcript_id,s.speaker_id,s.start_char,s.end_char,s.start_time_ms,s.end_time_ms,s.text,
+      t.raw_text,t.raw_sha256,t.title
+    FROM transcript_spans s JOIN transcripts t ON t.id=s.transcript_id
+    WHERE s.id=? AND t.id=?`).get(spanId, transcriptId) ?? null;
+}
+function getSourcePointer(db, pointerUri) {
+  return db.prepare("SELECT * FROM source_pointers WHERE pointer_uri = ?").get(pointerUri) ?? null;
+}
+function createSourcePointerForSpan(db, input) {
+  const pointerUri = makeSourcePointerUri(input);
+  const existing = getSourcePointer(db, pointerUri);
+  if (existing) {
+    const resolution = resolveSourcePointer(db, pointerUri);
+    if (!resolution.ok) throw new ValidationError(`Existing source pointer is broken: ${resolution.reason}`);
+    return existing;
+  }
+  const row = loadSpanSource(db, input.transcriptId, input.spanId);
+  if (!row) throw new NotFoundError(`Transcript span not found: ${input.spanId}`);
+  if (row.raw_text == null) throw new ValidationError(`Raw transcript is unavailable: ${input.transcriptId}`);
+  if (row.start_char < 0 || row.end_char <= row.start_char || row.end_char > row.raw_text.length) throw new ValidationError("Span has invalid raw transcript offsets");
+  const substring = row.raw_text.slice(row.start_char, row.end_char);
+  if (row.text == null || row.text !== substring) throw new ValidationError("Span text does not match immutable raw transcript text");
+  const turn = db.prepare(`SELECT id FROM transcript_turns WHERE transcript_id=? AND start_char<=? AND end_char>=? ORDER BY turn_index LIMIT 1`).get(input.transcriptId, row.start_char, row.end_char);
+  db.prepare(`INSERT INTO source_pointers(pointer_uri,transcript_id,span_id,turn_id,raw_start_offset,raw_end_offset,raw_text_sha256,span_text_sha256,speaker_id,start_ms,end_ms)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(
+    pointerUri,
+    input.transcriptId,
+    input.spanId,
+    turn?.id ?? null,
+    row.start_char,
+    row.end_char,
+    contentHash(row.raw_text),
+    contentHash(substring),
+    row.speaker_id,
+    row.start_time_ms,
+    row.end_time_ms
+  );
+  return getSourcePointer(db, pointerUri);
+}
+function resolveSourcePointer(db, pointerUri) {
+  try {
+    parseSourcePointerUri(pointerUri);
+  } catch {
+    return { ok: false, reason: "not_found", pointerUri };
+  }
+  const pointer = getSourcePointer(db, pointerUri);
+  if (!pointer) return { ok: false, reason: "not_found", pointerUri };
+  const row = loadSpanSource(db, pointer.transcript_id, pointer.span_id);
+  if (!row || row.raw_text == null) return { ok: false, reason: "raw_transcript_missing", pointerUri };
+  if (pointer.raw_start_offset < 0 || pointer.raw_end_offset <= pointer.raw_start_offset || pointer.raw_end_offset > row.raw_text.length) {
+    return { ok: false, reason: "invalid_offsets", pointerUri };
+  }
+  const spanText = row.raw_text.slice(pointer.raw_start_offset, pointer.raw_end_offset);
+  if (row.text !== spanText || contentHash(row.raw_text) !== pointer.raw_text_sha256 || contentHash(spanText) !== pointer.span_text_sha256) {
+    return { ok: false, reason: "hash_mismatch", pointerUri };
+  }
+  return { ok: true, pointer, rawText: row.raw_text, spanText, transcriptTitle: row.title };
+}
+
+// src/provenance/utils.ts
+var import_node_crypto4 = require("node:crypto");
+var stableProvenanceId = (prefix, value) => `${prefix}${(0, import_node_crypto4.createHash)("sha256").update(value).digest("hex").slice(0, 24)}`;
+function validateScore(value, name) {
+  if (value != null && (!Number.isFinite(value) || value < 0 || value > 1)) throw new ValidationError(`${name} must be between 0 and 1`);
+}
+function requireTarget(db, type, id) {
+  const tables = {
+    memory_object: "memory_objects",
+    claim: "memory_objects",
+    summary: "memory_objects",
+    answer: "ai_answers",
+    answer_claim: "answer_claims",
+    graph_node: "graph_nodes",
+    graph_edge: "graph_edges"
+  };
+  const idColumns = { answer_claim: "answer_claim_id" };
+  const column = idColumns[type] ?? "id";
+  const row = db.prepare(`SELECT 1 FROM ${tables[type]} WHERE ${column} = ?`).get(id);
+  if (!row) throw new NotFoundError(`${type} target not found: ${id}`);
+}
+
+// src/provenance/evidencePointers.ts
+var targetTypes = /* @__PURE__ */ new Set(["memory_object", "claim", "answer", "answer_claim", "graph_node", "graph_edge", "summary"]);
+var roles = /* @__PURE__ */ new Set(["support", "opposition", "neutral", "conditional", "unclear"]);
+var strengths = /* @__PURE__ */ new Set(["strong", "mixed", "weak", "conflicting", "unknown"]);
+function quotePreview(text) {
+  const clean = text.trim().replace(/\s+/g, " ");
+  return clean.length <= 240 ? clean : `${clean.slice(0, 237)}...`;
+}
+function updateAnswerClaimSupportStatus(db, answerClaimId) {
+  const rows = db.prepare("SELECT evidence_role,evidence_strength FROM evidence_pointers WHERE target_type='answer_claim' AND target_id=?").all(answerClaimId);
+  const support = rows.filter((row) => row.evidence_role === "support");
+  const opposition = rows.some((row) => row.evidence_role === "opposition");
+  let status = "unsupported";
+  if (support.length && opposition) status = "conflicted";
+  else if (support.some((row) => row.evidence_strength === "strong" || row.evidence_strength === "mixed")) status = "supported";
+  else if (support.length) status = "weakly_supported";
+  else if (rows.length) status = "unclear";
+  db.prepare("UPDATE answer_claims SET support_status=? WHERE answer_claim_id=?").run(status, answerClaimId);
+}
+function createEvidencePointer(db, input) {
+  if (!targetTypes.has(input.targetType)) throw new ValidationError(`Invalid evidence target type: ${input.targetType}`);
+  if (!roles.has(input.evidenceRole)) throw new ValidationError(`Invalid evidence role: ${input.evidenceRole}`);
+  if (!strengths.has(input.evidenceStrength)) throw new ValidationError(`Invalid evidence strength: ${input.evidenceStrength}`);
+  for (const [name, value] of Object.entries({
+    confidence: input.confidence,
+    relevanceScore: input.relevanceScore,
+    semanticScore: input.semanticScore,
+    lexicalScore: input.lexicalScore,
+    recencyScore: input.recencyScore,
+    finalScore: input.finalScore
+  })) validateScore(value, name);
+  requireTarget(db, input.targetType, input.targetId);
+  const source = createSourcePointerForSpan(db, { transcriptId: input.transcriptId, spanId: input.spanId });
+  const resolved = resolveSourcePointer(db, source.pointer_uri);
+  if (!resolved.ok) throw new ValidationError(`Source pointer is broken: ${resolved.reason}`);
+  const id = stableProvenanceId("evp_", `${input.targetType}:${input.targetId}:${source.pointer_uri}:${input.evidenceRole}`);
+  const pointerUri = makeEvidencePointerUri(id);
+  db.prepare(`INSERT OR IGNORE INTO evidence_pointers(
+    evidence_pointer_id,pointer_uri,source_pointer_uri,target_type,target_id,transcript_id,span_id,evidence_role,evidence_strength,
+    confidence,relevance_score,semantic_score,lexical_score,recency_score,final_score,quote_preview,created_at
+  ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+    id,
+    pointerUri,
+    source.pointer_uri,
+    input.targetType,
+    input.targetId,
+    input.transcriptId,
+    input.spanId,
+    input.evidenceRole,
+    input.evidenceStrength,
+    input.confidence,
+    input.relevanceScore ?? null,
+    input.semanticScore ?? null,
+    input.lexicalScore ?? null,
+    input.recencyScore ?? null,
+    input.finalScore ?? null,
+    quotePreview(resolved.spanText),
+    now()
+  );
+  if (input.targetType === "answer_claim") updateAnswerClaimSupportStatus(db, input.targetId);
+  return db.prepare("SELECT * FROM evidence_pointers WHERE evidence_pointer_id=?").get(id);
+}
+function resolveEvidencePointer(db, idOrUri) {
+  let id = idOrUri;
+  if (idOrUri.startsWith("mv://")) {
+    try {
+      id = parseEvidencePointerUri(idOrUri).evidencePointerId;
+    } catch {
+      return { ok: false, reason: "not_found" };
+    }
+  }
+  const evidence = db.prepare("SELECT * FROM evidence_pointers WHERE evidence_pointer_id=?").get(id);
+  if (!evidence) return { ok: false, reason: "not_found" };
+  const source = resolveSourcePointer(db, evidence.source_pointer_uri);
+  if (!source.ok) return { ok: false, reason: source.reason };
+  return { ok: true, evidence, source: source.pointer, spanText: source.spanText, rawText: source.rawText };
+}
+function createAnswerClaim(db, input) {
+  requireTarget(db, "answer", input.answerId);
+  if (input.claimOrder < 0 || !Number.isInteger(input.claimOrder)) throw new ValidationError("claimOrder must be a non-negative integer");
+  const id = stableProvenanceId("ac_", `${input.answerId}:${input.claimOrder}:${input.claimText}`);
+  db.prepare(`INSERT OR IGNORE INTO answer_claims(answer_claim_id,answer_id,claim_text,claim_order,support_status,created_at)
+    VALUES (?,?,?,?, 'unsupported', ?)`).run(id, input.answerId, input.claimText, input.claimOrder, now());
+  return db.prepare("SELECT * FROM answer_claims WHERE answer_claim_id=?").get(id);
+}
+function linkAnswerClaimToEvidence(db, input) {
+  return createEvidencePointer(db, { targetType: "answer_claim", targetId: input.answerClaimId, transcriptId: input.transcriptId, spanId: input.spanId, evidenceRole: input.evidenceRole, evidenceStrength: input.evidenceStrength, confidence: input.confidence, ...input.scores });
+}
+
+// src/provenance/citations.ts
+function formatCitationLabel(order) {
+  if (!Number.isInteger(order) || order < 1) throw new ValidationError("Citation order must be a positive integer");
+  return `[${order}]`;
+}
+function createCitationLinksForAnswer(db, input) {
+  if (!db.prepare("SELECT 1 FROM ai_answers WHERE id=?").get(input.answerId)) throw new NotFoundError(`Answer not found: ${input.answerId}`);
+  const claims = db.prepare("SELECT answer_claim_id,claim_order FROM answer_claims WHERE answer_id=? ORDER BY claim_order").all(input.answerId);
+  const selected = input.answerClaimIds ? new Set(input.answerClaimIds) : null;
+  const evidence = [];
+  evidence.push(...db.prepare("SELECT *,NULL answer_claim_id,-1 claim_order FROM evidence_pointers WHERE target_type='answer' AND target_id=?").all(input.answerId));
+  for (const claim of claims) {
+    if (selected && !selected.has(claim.answer_claim_id)) continue;
+    const rows = db.prepare("SELECT * FROM evidence_pointers WHERE target_type='answer_claim' AND target_id=?").all(claim.answer_claim_id);
+    evidence.push(...rows.map((row) => ({ ...row, answer_claim_id: claim.answer_claim_id, claim_order: claim.claim_order })));
+  }
+  const roleOrder = { support: 1, opposition: 2, conditional: 3, neutral: 4, unclear: 5 };
+  evidence.sort((a, b) => a.claim_order - b.claim_order || roleOrder[a.evidence_role] - roleOrder[b.evidence_role] || (b.final_score ?? -1) - (a.final_score ?? -1) || a.evidence_pointer_id.localeCompare(b.evidence_pointer_id));
+  return db.transaction(() => {
+    db.prepare("DELETE FROM citation_links WHERE answer_id=?").run(input.answerId);
+    return evidence.map((item, index) => {
+      const order = index + 1;
+      const id = stableProvenanceId("cit_", `${input.answerId}:${item.evidence_pointer_id}`);
+      db.prepare(`INSERT INTO citation_links(citation_link_id,answer_id,answer_claim_id,evidence_pointer_id,citation_label,citation_order,created_at)
+        VALUES (?,?,?,?,?,?,?)`).run(id, input.answerId, item.answer_claim_id, item.evidence_pointer_id, formatCitationLabel(order), order, now());
+      return db.prepare("SELECT * FROM citation_links WHERE citation_link_id=?").get(id);
+    });
+  })();
+}
+
+// src/conflicts/rules.ts
+var stopwords = /* @__PURE__ */ new Set(["a", "an", "and", "are", "as", "be", "but", "for", "i", "in", "is", "it", "of", "on", "or", "the", "to", "we"]);
+var conditional = /\b(if|when|unless|depending|except|only when|in uncertain|for uncertain|high[- ]confidence|low[- ]confidence)\b/i;
+var negative = /\b(no|not|never|avoid|reject|without|cannot|can't|shouldn't|mustn't|do not|don't)\b/i;
+var assertion = /\b(should|must|prefer|want|accept|use|require|allow|is|are|will)\b/i;
+var tensionPairs = [
+  [/\bautomatic|automated|speed|fast\b/i, /\bmanual|review|accurate|accuracy\b/i],
+  [/\bsimple|simplicity\b/i, /\bvisible|reviewable|auditable|transparent\b/i],
+  [/\bprivate|privacy\b/i, /\bshare|shared|collaborative\b/i]
+];
+var round = (value) => Math.round(Math.max(0, Math.min(1, value)) * 1e3) / 1e3;
+var tokens = (text) => new Set(text.toLowerCase().match(/[a-z0-9]+/g)?.filter((token) => token.length > 2 && !stopwords.has(token)) ?? []);
+var overlap = (a, b) => {
+  const left = tokens(a), right = tokens(b);
+  const shared = [...left].filter((token) => right.has(token)).length;
+  return round(shared / Math.max(1, Math.min(left.size, right.size)));
+};
+function temporal(candidate) {
+  const left = candidate.leftTimestamp ? Date.parse(candidate.leftTimestamp) : Number.NaN;
+  const right = candidate.rightTimestamp ? Date.parse(candidate.rightTimestamp) : Number.NaN;
+  if (!Number.isFinite(left) || !Number.isFinite(right) || left === right) return { score: 0, newerTargetId: null, olderTargetId: null };
+  const distance = Math.min(1, Math.abs(left - right) / (1e3 * 60 * 60 * 24 * 30));
+  return {
+    score: round(distance),
+    newerTargetId: left > right ? candidate.leftTargetId : candidate.rightTargetId,
+    olderTargetId: left > right ? candidate.rightTargetId : candidate.leftTargetId
+  };
+}
+function scoreConflict(candidate, kind, components, options = {}) {
+  const validated = new Set(options.validatedEvidenceIds ?? [...candidate.leftEvidenceIds, ...candidate.rightEvidenceIds]);
+  const leftValid = candidate.leftEvidenceIds.filter((id) => validated.has(id));
+  const rightValid = candidate.rightEvidenceIds.filter((id) => validated.has(id));
+  if (!leftValid.length || !rightValid.length) return round(0.15 + 0.2 * components.topicOverlap);
+  const average = (ids) => ids.reduce((sum, id) => sum + (options.evidenceScores?.[id] ?? 0.7), 0) / ids.length;
+  const quality = Math.min(average(leftValid), average(rightValid));
+  const correctionBoost = new Set(options.userCorrectionTargetIds ?? []).has(candidate.leftTargetId) || new Set(options.userCorrectionTargetIds ?? []).has(candidate.rightTargetId) ? 0.08 : 0;
+  const base = kind === "direct_contradiction" ? 0.45 + 0.2 * components.topicOverlap + 0.2 * quality + 0.15 * components.polarityOpposition : kind === "temporal_update" ? 0.4 + 0.15 * components.topicOverlap + 0.2 * quality + 0.2 * components.temporalDistance : kind === "conditional_difference" ? 0.4 + 0.15 * components.topicOverlap + 0.2 * quality + 0.15 * components.conditionality : kind === "tension" ? 0.4 + 0.2 * components.topicOverlap + 0.2 * quality : 0.15 + 0.15 * components.topicOverlap;
+  const scored = round(base + correctionBoost);
+  if (quality < 0.45) return Math.min(scored, 0.59);
+  if (quality < 0.65) return Math.min(scored, 0.79);
+  return scored;
+}
+function classifyConflictCandidate(candidate, options = {}) {
+  const topicOverlap = candidate.sharedEntities?.length || candidate.sharedTopics?.length ? 1 : overlap(candidate.leftText, candidate.rightText);
+  const leftNegative = negative.test(candidate.leftText), rightNegative = negative.test(candidate.rightText);
+  const polarityOpposition = leftNegative !== rightNegative && assertion.test(candidate.leftText) && assertion.test(candidate.rightText) ? 1 : 0;
+  const conditionality = conditional.test(candidate.leftText) || conditional.test(candidate.rightText) ? 1 : 0;
+  const temporalInfo = temporal(candidate);
+  const validated = new Set(options.validatedEvidenceIds ?? [...candidate.leftEvidenceIds, ...candidate.rightEvidenceIds]);
+  const evidenceCoverage = candidate.leftEvidenceIds.some((id) => validated.has(id)) && candidate.rightEvidenceIds.some((id) => validated.has(id)) ? 1 : 0;
+  const tension = tensionPairs.some(([left, right]) => left.test(candidate.leftText) && right.test(candidate.rightText) || right.test(candidate.leftText) && left.test(candidate.rightText));
+  const components = { topicOverlap, polarityOpposition, conditionality, temporalDistance: temporalInfo.score, evidenceCoverage };
+  let kind = "weak_or_ambiguous";
+  if (evidenceCoverage && topicOverlap >= 0.15) {
+    if (conditionality && (polarityOpposition || tension)) kind = "conditional_difference";
+    else if ((options.preferTemporalUpdate ?? candidate.preferTemporalUpdate) && temporalInfo.score > 0 && (polarityOpposition || tension)) kind = "temporal_update";
+    else if (polarityOpposition) kind = "direct_contradiction";
+    else if (tension) kind = "tension";
+  }
+  const confidence = scoreConflict(candidate, kind, components, options);
+  const labels = {
+    direct_contradiction: "The two source-backed statements directly oppose each other.",
+    tension: "The statements express competing goals or constraints.",
+    temporal_update: "The newer source-backed statement appears to update the older one.",
+    conditional_difference: "The statements differ under an explicit condition or context.",
+    weak_or_ambiguous: "The pair lacks enough shared context or source-backed evidence for a reliable conflict."
+  };
+  return {
+    kind,
+    confidence,
+    summary: `${kind.replaceAll("_", " ")} between ${candidate.leftTargetId} and ${candidate.rightTargetId}`,
+    explanation: `${labels[kind]} Topic overlap=${topicOverlap.toFixed(3)}; polarity opposition=${polarityOpposition.toFixed(3)}; conditionality=${conditionality.toFixed(3)}; temporal clarity=${temporalInfo.score.toFixed(3)}; validated-side coverage=${evidenceCoverage.toFixed(3)}; confidence=${confidence.toFixed(3)}.`,
+    componentScores: components,
+    newerTargetId: kind === "temporal_update" ? temporalInfo.newerTargetId : null,
+    olderTargetId: kind === "temporal_update" ? temporalInfo.olderTargetId : null
+  };
+}
+
+// src/conflicts/repository.ts
+var leftKey = (candidate) => `${candidate.leftTargetType}:${candidate.leftTargetId}`;
+var rightKey = (candidate) => `${candidate.rightTargetType}:${candidate.rightTargetId}`;
+var conflictPairKey = (candidate) => [leftKey(candidate), rightKey(candidate)].sort().join("|");
+function normalizeCandidate(candidate) {
+  return leftKey(candidate) <= rightKey(candidate) ? candidate : {
+    ...candidate,
+    leftTargetId: candidate.rightTargetId,
+    leftTargetType: candidate.rightTargetType,
+    leftText: candidate.rightText,
+    leftEvidenceIds: candidate.rightEvidenceIds,
+    leftTimestamp: candidate.rightTimestamp,
+    rightTargetId: candidate.leftTargetId,
+    rightTargetType: candidate.leftTargetType,
+    rightText: candidate.leftText,
+    rightEvidenceIds: candidate.leftEvidenceIds,
+    rightTimestamp: candidate.leftTimestamp
+  };
+}
+function parseLink(row) {
+  return {
+    id: String(row.id),
+    conflictAssessmentId: String(row.conflict_assessment_id),
+    evidencePointerId: String(row.evidence_pointer_id),
+    side: row.side,
+    role: row.role,
+    provenanceValidated: Boolean(row.provenance_validated),
+    transcriptId: row.transcript_id == null ? void 0 : String(row.transcript_id),
+    spanId: row.span_id == null ? void 0 : String(row.span_id),
+    sourcePointerId: row.source_pointer_uri == null ? void 0 : String(row.source_pointer_uri),
+    quotePreview: row.quote_preview == null ? void 0 : String(row.quote_preview),
+    evidenceStrength: row.evidence_strength == null ? void 0 : String(row.evidence_strength),
+    confidence: row.confidence == null ? void 0 : Number(row.confidence),
+    createdAt: String(row.created_at)
+  };
+}
+function parseAssessment(db, row) {
+  const links2 = db.prepare(`SELECT l.*,p.transcript_id,p.span_id,p.source_pointer_uri,p.quote_preview,p.evidence_strength,p.confidence FROM conflict_evidence_links l
+    JOIN evidence_pointers p ON p.evidence_pointer_id=l.evidence_pointer_id
+    WHERE l.conflict_assessment_id=? ORDER BY l.side,l.created_at,l.id`).all(row.id);
+  return {
+    id: String(row.id),
+    kind: row.kind,
+    confidence: Number(row.confidence),
+    status: row.status,
+    leftTargetType: row.left_target_type,
+    leftTargetId: String(row.left_target_id),
+    rightTargetType: row.right_target_type,
+    rightTargetId: String(row.right_target_id),
+    pairKey: String(row.pair_key),
+    summary: String(row.summary),
+    explanation: String(row.explanation),
+    componentScores: JSON.parse(String(row.component_scores_json)),
+    newerTargetId: row.newer_target_id == null ? null : String(row.newer_target_id),
+    olderTargetId: row.older_target_id == null ? null : String(row.older_target_id),
+    winningTargetId: row.winning_target_id == null ? null : String(row.winning_target_id),
+    resolutionNote: row.resolution_note == null ? null : String(row.resolution_note),
+    evidence: links2.map(parseLink),
+    evidenceLinks: links2.map(parseLink),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  };
+}
+function validatedPointers(db, candidate, side) {
+  const targetType = side === "left" ? candidate.leftTargetType : candidate.rightTargetType;
+  const targetId = side === "left" ? candidate.leftTargetId : candidate.rightTargetId;
+  const ids = side === "left" ? candidate.leftEvidenceIds : candidate.rightEvidenceIds;
+  return ids.map((id) => {
+    const resolution = resolveEvidencePointer(db, id);
+    if (!resolution.ok) throw new ValidationError(`Conflict evidence pointer is broken: ${id}`);
+    if (targetType !== "evidence_pointer" && (resolution.evidence.target_type !== targetType || resolution.evidence.target_id !== targetId)) {
+      throw new ValidationError(`Conflict evidence pointer does not belong to ${targetType}:${targetId}: ${id}`);
+    }
+    if (targetType === "evidence_pointer" && id !== targetId) {
+      throw new ValidationError(`Conflict evidence pointer target does not match itself: ${id}`);
+    }
+    return resolution.evidence;
+  });
+}
+function createConflictRepository(db, options = {}) {
+  const timestamp = () => (options.now?.() ?? /* @__PURE__ */ new Date()).toISOString();
+  const get = (id) => {
+    const row = db.prepare("SELECT * FROM conflict_assessments WHERE id=?").get(id);
+    return row ? parseAssessment(db, row) : null;
+  };
+  const list = (where = "", values = []) => db.prepare(`SELECT * FROM conflict_assessments ${where} ORDER BY created_at,id`).all(...values).map((row) => parseAssessment(db, row));
+  const revalidate = (id) => db.transaction(() => {
+    const conflict = get(id);
+    if (!conflict) throw new NotFoundError(`Conflict assessment not found: ${id}`);
+    for (const link of conflict.evidenceLinks) {
+      const valid = resolveEvidencePointer(db, link.evidencePointerId).ok;
+      if (valid !== link.provenanceValidated) {
+        db.prepare("UPDATE conflict_evidence_links SET provenance_validated=? WHERE id=?").run(valid ? 1 : 0, link.id);
+      }
+    }
+    const coverage = db.prepare(`SELECT
+      EXISTS(SELECT 1 FROM conflict_evidence_links WHERE conflict_assessment_id=? AND side='left' AND provenance_validated=1) left_valid,
+      EXISTS(SELECT 1 FROM conflict_evidence_links WHERE conflict_assessment_id=? AND side='right' AND provenance_validated=1) right_valid`).get(id, id);
+    if (conflict.status === "active" && (!coverage.left_valid || !coverage.right_valid)) {
+      db.prepare("UPDATE conflict_assessments SET status='needs_review',updated_at=? WHERE id=?").run(timestamp(), id);
+    }
+    return get(id);
+  })();
+  const pointerScore = (pointer) => {
+    const raw = pointer.final_score ?? pointer.confidence;
+    return pointer.evidence_strength === "strong" ? raw : pointer.evidence_strength === "mixed" ? Math.min(raw, 0.7) : pointer.evidence_strength === "weak" ? Math.min(raw, 0.4) : Math.min(raw, 0.5);
+  };
+  const targetIsTrusted = (type, id) => {
+    if (type !== "memory_object" && type !== "claim" && type !== "summary") return true;
+    const memory = createMemoryObjectsRepo(db).getCanonicalMemoryObject(id);
+    return memory != null && isUsableAsEvidence(memory);
+  };
+  return {
+    create(input) {
+      return db.transaction(() => {
+        const candidate = normalizeCandidate(input.candidate);
+        const pairKey = conflictPairKey(candidate);
+        const existing = db.prepare("SELECT * FROM conflict_assessments WHERE pair_key=? ORDER BY created_at LIMIT 1").get(pairKey);
+        if (existing) return parseAssessment(db, existing);
+        const left = validatedPointers(db, candidate, "left"), right = validatedPointers(db, candidate, "right");
+        const allPointers = [...left, ...right];
+        const userCorrected = [candidate.leftTargetId, candidate.rightTargetId].filter((targetId) => Boolean(db.prepare("SELECT 1 FROM memory_objects WHERE id=? AND user_corrected=1").get(targetId)));
+        const evidenceOptions = {
+          validatedEvidenceIds: allPointers.map((pointer) => pointer.evidence_pointer_id),
+          evidenceScores: Object.fromEntries(allPointers.map((pointer) => [pointer.evidence_pointer_id, pointerScore(pointer)])),
+          userCorrectionTargetIds: userCorrected
+        };
+        const computed = classifyConflictCandidate(candidate, evidenceOptions);
+        const classification = input.classification ? { ...input.classification, confidence: Math.min(input.classification.confidence, computed.confidence) } : computed;
+        if (!targetIsTrusted(candidate.leftTargetType, candidate.leftTargetId) || !targetIsTrusted(candidate.rightTargetType, candidate.rightTargetId)) {
+          classification.confidence = Math.min(classification.confidence, 0.59);
+        }
+        const createdAt = timestamp();
+        const id = stableProvenanceId("conf_", pairKey);
+        db.prepare(`INSERT INTO conflict_assessments(
+          id,kind,confidence,status,left_target_type,left_target_id,right_target_type,right_target_id,pair_key,summary,explanation,
+          component_scores_json,newer_target_id,older_target_id,created_at,updated_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+          id,
+          classification.kind,
+          classification.confidence,
+          "needs_review",
+          candidate.leftTargetType,
+          candidate.leftTargetId,
+          candidate.rightTargetType,
+          candidate.rightTargetId,
+          pairKey,
+          classification.summary,
+          classification.explanation,
+          JSON.stringify(classification.componentScores),
+          classification.newerTargetId,
+          classification.olderTargetId,
+          createdAt,
+          createdAt
+        );
+        for (const [side, pointers] of [["left", left], ["right", right]]) {
+          for (const pointer of pointers) {
+            db.prepare(`INSERT OR IGNORE INTO conflict_evidence_links(
+              id,conflict_assessment_id,evidence_pointer_id,side,role,provenance_validated,created_at
+            ) VALUES (?,?,?,?,?,?,?)`).run(
+              stableProvenanceId("cel_", `${id}:${side}:${pointer.evidence_pointer_id}`),
+              id,
+              pointer.evidence_pointer_id,
+              side,
+              side === "left" ? "supports_left" : "supports_right",
+              1,
+              createdAt
+            );
+          }
+        }
+        if (classification.kind !== "weak_or_ambiguous" && classification.confidence >= 0.6 && left.length && right.length) {
+          db.prepare("UPDATE conflict_assessments SET status='active',updated_at=? WHERE id=?").run(createdAt, id);
+        }
+        return get(id);
+      })();
+    },
+    createConflictAssessment(input) {
+      return this.create(input);
+    },
+    get,
+    getConflictAssessment(id) {
+      return get(id);
+    },
+    listForTarget(targetType, targetId, options2 = {}) {
+      return list(
+        `WHERE ((left_target_type=? AND left_target_id=?) OR (right_target_type=? AND right_target_id=?))${options2.activeOnly ? " AND status='active'" : ""}`,
+        [targetType, targetId, targetType, targetId]
+      );
+    },
+    listConflictsForTarget(targetType, targetId, options2 = {}) {
+      return list(
+        `WHERE ((left_target_type=? AND left_target_id=?) OR (right_target_type=? AND right_target_id=?))${options2.activeOnly ? " AND status='active'" : ""}`,
+        [targetType, targetId, targetType, targetId]
+      );
+    },
+    listActiveForEvidencePointers(pointerIds) {
+      if (!pointerIds.length) return [];
+      const placeholders = pointerIds.map(() => "?").join(",");
+      return list(`WHERE status='active' AND id IN (
+        SELECT conflict_assessment_id FROM conflict_evidence_links WHERE evidence_pointer_id IN (${placeholders})
+      )`, pointerIds).map((conflict) => revalidate(conflict.id)).filter((conflict) => conflict.status === "active");
+    },
+    listActiveConflicts() {
+      return list("WHERE status='active'").map((conflict) => revalidate(conflict.id)).filter((conflict) => conflict.status === "active");
+    },
+    listConflictsForEvidence(evidencePointerId) {
+      return list("WHERE id IN (SELECT conflict_assessment_id FROM conflict_evidence_links WHERE evidence_pointer_id=?)", [evidencePointerId]);
+    },
+    revalidateConflictEvidence(id) {
+      return revalidate(id);
+    },
+    addEvidenceLink(id, evidencePointerId, role) {
+      const conflict = get(id);
+      if (!conflict) throw new NotFoundError(`Conflict assessment not found: ${id}`);
+      const resolution = resolveEvidencePointer(db, evidencePointerId);
+      if (!resolution.ok) throw new ValidationError(`Conflict evidence pointer is broken: ${evidencePointerId}`);
+      const side = role === "supports_left" || role === "opposes_right" ? "left" : role === "supports_right" || role === "opposes_left" ? "right" : resolution.evidence.target_id === conflict.leftTargetId ? "left" : "right";
+      db.prepare(`INSERT OR IGNORE INTO conflict_evidence_links(
+        id,conflict_assessment_id,evidence_pointer_id,side,role,provenance_validated,created_at
+      ) VALUES (?,?,?,?,?,1,?)`).run(stableProvenanceId("cel_", `${id}:${role}:${evidencePointerId}`), id, evidencePointerId, side, role, timestamp());
+      return get(id);
+    },
+    updateConflictStatus(id, status) {
+      const current = get(id);
+      if (!current) throw new NotFoundError(`Conflict assessment not found: ${id}`);
+      if (status === "active" && current.kind === "weak_or_ambiguous") throw new ValidationError("Weak or ambiguous conflicts cannot be promoted to active");
+      const result = db.prepare("UPDATE conflict_assessments SET status=?,updated_at=? WHERE id=?").run(status, timestamp(), id);
+      if (!result.changes) throw new NotFoundError(`Conflict assessment not found: ${id}`);
+      return get(id);
+    },
+    deleteOrDowngradeConflictsForMissingEvidence(evidencePointerId) {
+      const ids = db.prepare("SELECT DISTINCT conflict_assessment_id id FROM conflict_evidence_links WHERE evidence_pointer_id=?").all(evidencePointerId);
+      db.prepare("DELETE FROM conflict_evidence_links WHERE evidence_pointer_id=?").run(evidencePointerId);
+      if (!ids.length) return [];
+      return list(`WHERE id IN (${ids.map(() => "?").join(",")})`, ids.map((row) => row.id));
+    },
+    applyCorrection(id, input) {
+      return db.transaction(() => {
+        const conflict = get(id);
+        if (!conflict) throw new NotFoundError(`Conflict assessment not found: ${id}`);
+        const winner = input.action === "mark_left_correct" ? conflict.leftTargetId : input.action === "mark_right_correct" ? conflict.rightTargetId : input.action === "mark_newer_supersedes_older" ? conflict.newerTargetId : null;
+        if (input.action === "mark_newer_supersedes_older" && (!conflict.newerTargetId || !conflict.olderTargetId)) {
+          throw new ValidationError("Conflict has no deterministic newer/older targets");
+        }
+        const correctedAt = timestamp();
+        db.prepare(`INSERT INTO conflict_corrections(id,conflict_assessment_id,action,winning_target_id,note,created_by,created_at)
+          VALUES (?,?,?,?,?,?,?)`).run(createId("cc_"), id, input.action, winner, input.note ?? null, input.createdBy ?? "user", correctedAt);
+        const status = input.action === "dismiss_not_conflict" ? "dismissed" : input.action === "mark_both_contextual" || input.action === "keep_both_as_tension" ? "active" : "resolved";
+        const kind = input.action === "mark_both_contextual" ? "conditional_difference" : input.action === "keep_both_as_tension" ? "tension" : conflict.kind;
+        db.prepare(`UPDATE conflict_assessments SET status=?,kind=?,winning_target_id=?,resolution_note=?,updated_at=? WHERE id=?`).run(status, kind, winner, input.note ?? null, correctedAt, id);
+        if (input.action === "mark_newer_supersedes_older" && conflict.olderTargetId) {
+          const oldType = conflict.leftTargetId === conflict.olderTargetId ? conflict.leftTargetType : conflict.rightTargetType;
+          if (oldType === "memory_object" || oldType === "claim" || oldType === "summary") {
+            db.prepare(`UPDATE memory_objects SET status='superseded',
+              extraction_status=CASE WHEN extraction_status IS NULL THEN NULL ELSE 'superseded' END,updated_at=? WHERE id=?`).run(correctedAt, conflict.olderTargetId);
+          }
+        }
+        return get(id);
+      })();
+    },
+    dismissConflict(id, note) {
+      return this.applyCorrection(id, { action: "dismiss_not_conflict", note });
+    },
+    resolveConflict(id, winningTargetId, note) {
+      const conflict = get(id);
+      if (!conflict) throw new NotFoundError(`Conflict assessment not found: ${id}`);
+      const action = winningTargetId === conflict.rightTargetId ? "mark_right_correct" : "mark_left_correct";
+      return this.applyCorrection(id, { action, note });
+    }
+  };
+}
+
+// src/conflicts/render.ts
+function renderConflictContext(conflicts) {
+  const active = conflicts.filter((conflict) => conflict.status === "active");
+  if (!active.length) return "";
+  const lines = active.map((conflict) => {
+    const citations = conflict.evidence.map((item) => `[source](mv://evidence/${item.evidencePointerId})`).join(" ");
+    return `- **${conflict.kind.replaceAll("_", " ")}:** ${conflict.explanation} ${citations}`;
+  });
+  return `**Conflict context**
+
+${lines.join("\n")}`;
+}
+
+// src/conflicts/askAiIntegration.ts
+function confidenceWithConflicts(confidence, conflicts) {
+  const active = conflicts.filter((conflict) => conflict.status === "active");
+  if (active.some((conflict) => conflict.kind === "direct_contradiction")) return "conflicting";
+  if (confidence === "strong" && active.some((conflict) => conflict.kind === "tension" || conflict.kind === "conditional_difference" || conflict.kind === "temporal_update")) return "mixed";
+  return confidence;
+}
+function addConflictContext(answerMarkdown, conflicts) {
+  const context = renderConflictContext(conflicts);
+  return context ? `${answerMarkdown}
+
+${context}` : answerMarkdown;
+}
+function conflictEvidenceForAnswer(conflicts) {
+  const items = conflicts.filter((conflict) => conflict.status === "active").flatMap((conflict) => conflict.evidenceLinks.flatMap((link) => {
+    if (!link.provenanceValidated || !link.transcriptId || !link.spanId || !link.quotePreview) return [];
+    const stance = conflict.kind === "direct_contradiction" ? link.side === "left" ? "supports" : "opposes" : conflict.kind === "temporal_update" && link.side === (conflict.newerTargetId === conflict.leftTargetId ? "left" : "right") ? "updates" : "qualifies";
+    const strength = link.evidenceStrength;
+    const evidenceConfidence = strength === "strong" || strength === "mixed" || strength === "weak" || strength === "conflicting" ? strength : "weak";
+    return [{
+      evidencePointerId: link.evidencePointerId,
+      sourcePointerId: link.sourcePointerId,
+      transcriptId: link.transcriptId,
+      spanId: link.spanId,
+      quotePreview: link.quotePreview,
+      evidenceScore: link.confidence ?? conflict.confidence,
+      evidenceConfidence,
+      scoringExplanation: conflict.explanation,
+      clickbackUri: `mv://evidence/${link.evidencePointerId}`,
+      stance,
+      sourceKind: "raw_transcript_span"
+    }];
+  }));
+  return [...new Map(items.map((item) => [item.evidencePointerId, item])).values()];
+}
+
+// src/ask-ai/repository.ts
+var bundleStatus = (confidence) => confidence === "no_evidence" ? "weak" : confidence;
+var answerStatus = (confidence) => confidence === "no_evidence" ? "refused_no_evidence" : confidence === "weak" ? "weak_evidence" : confidence === "conflicting" ? "conflicting_evidence" : "answered";
+var answerConfidence = (confidence) => confidence === "strong" ? "high" : confidence === "mixed" || confidence === "conflicting" ? "medium" : "low";
+var itemStance = (stance) => stance === "opposes" ? "contradicts" : stance === "qualifies" ? "qualifies" : stance === "supports" || stance === "updates" ? "supports" : "unknown";
+var pointerRole = (stance) => stance === "opposes" ? "opposition" : stance === "qualifies" ? "conditional" : stance === "supports" || stance === "updates" ? "support" : "unclear";
+var pointerStrength = (strength) => strength === "no_evidence" ? "weak" : strength;
+var claimSupportStatus = (status) => status === "supported" ? "supported" : status === "weakly_supported" ? "weakly_supported" : status === "conflicted" ? "conflicting" : "unsupported";
+function persistAskAIResponse(db, response) {
+  db.transaction(() => {
+    const repos = createRepositories(db);
+    const bundle = repos.evidence.createEvidenceBundle({
+      purpose: "ask_ai",
+      query_text: response.queryUnderstanding.normalizedQuestion,
+      status: bundleStatus(response.evidenceConfidence),
+      overall_score: response.evidence.length ? Math.max(...response.evidence.map((item) => item.evidenceScore)) : null,
+      metadata: { ask_ai_run_id: response.id, score_run_id: response.scoreRunId ?? null }
+    });
+    response.evidence.forEach((item, index) => {
+      const pointer = resolveEvidencePointer(db, item.evidencePointerId);
+      if (!pointer.ok || pointer.evidence.transcript_id !== item.transcriptId || pointer.evidence.span_id !== item.spanId) {
+        throw new ValidationError(`Ask AI evidence pointer is broken or mismatched: ${item.evidencePointerId}`);
+      }
+      const sourcePointerId = item.sourcePointerId ?? pointer.evidence.source_pointer_uri;
+      if (!resolveSourcePointer(db, sourcePointerId).ok) throw new ValidationError(`Ask AI source pointer is broken: ${sourcePointerId}`);
+      repos.evidence.addEvidenceItem(bundle.id, {
+        span_id: item.spanId,
+        retrieval_rank: index + 1,
+        final_score: item.evidenceScore,
+        stance: itemStance(item.stance),
+        reason: item.scoringExplanation,
+        metadata: { evidence_pointer_id: item.evidencePointerId, source_pointer_id: sourcePointerId }
+      });
+    });
+    const answer = repos.answers.createAnswer({
+      id: response.id,
+      question_text: response.question,
+      answer_text: response.answerMarkdown,
+      evidence_bundle_id: bundle.id,
+      confidence: answerConfidence(response.evidenceConfidence),
+      answer_status: answerStatus(response.evidenceConfidence),
+      metadata: { ask_ai: true, score_run_id: response.scoreRunId ?? null }
+    });
+    const selected = new Map(response.evidence.map((item) => [item.evidencePointerId, item]));
+    response.claims.forEach((claim, index) => {
+      const stored = createAnswerClaim(db, { answerId: answer.id, claimText: claim.text, claimOrder: index });
+      db.prepare("INSERT INTO ask_ai_claim_metadata(answer_claim_id,kind,explanation) VALUES (?,?,?)").run(stored.answer_claim_id, claim.kind, claim.explanation ?? null);
+      claim.evidencePointerIds.forEach((pointerId) => {
+        const item = selected.get(pointerId);
+        if (!item) throw new ValidationError(`Ask AI claim references unselected evidence: ${pointerId}`);
+        linkAnswerClaimToEvidence(db, {
+          answerClaimId: stored.answer_claim_id,
+          transcriptId: item.transcriptId,
+          spanId: item.spanId,
+          evidenceRole: pointerRole(item.stance),
+          evidenceStrength: pointerStrength(item.evidenceConfidence),
+          confidence: item.evidenceScore,
+          scores: { relevanceScore: item.relevanceScore, finalScore: item.evidenceScore }
+        });
+      });
+    });
+    createCitationLinksForAnswer(db, { answerId: answer.id });
+    db.prepare(`INSERT INTO ask_ai_runs(
+      id,question,normalized_question,answer_markdown,evidence_confidence,query_understanding_json,answer_id,score_run_id,not_enough_evidence,created_at
+    ) VALUES (?,?,?,?,?,?,?,?,?,?)`).run(
+      response.id,
+      response.question,
+      response.queryUnderstanding.normalizedQuestion,
+      response.answerMarkdown,
+      response.evidenceConfidence,
+      JSON.stringify(response.queryUnderstanding),
+      answer.id,
+      response.scoreRunId ?? null,
+      response.notEnoughEvidence ? 1 : 0,
+      response.createdAt
+    );
+    response.evidence.forEach((item, index) => db.prepare(`INSERT INTO ask_ai_run_evidence(
+      ask_ai_run_id,evidence_pointer_id,source_pointer_id,transcript_id,span_id,rank,evidence_score,evidence_confidence,quote_preview,scoring_explanation
+    ) VALUES (?,?,?,?,?,?,?,?,?,?)`).run(
+      response.id,
+      item.evidencePointerId,
+      item.sourcePointerId ?? null,
+      item.transcriptId,
+      item.spanId,
+      index + 1,
+      item.evidenceScore,
+      item.evidenceConfidence,
+      item.quotePreview,
+      item.scoringExplanation
+    ));
+    response.suggestedFollowups.forEach((text, index) => db.prepare(
+      "INSERT INTO ask_ai_suggested_followups(id,ask_ai_run_id,text,rank) VALUES (?,?,?,?)"
+    ).run(createId("aif_"), response.id, text, index + 1));
+    response.conflicts.forEach((conflict) => db.prepare(
+      "INSERT INTO ask_ai_run_conflicts(ask_ai_run_id,conflict_assessment_id) VALUES (?,?)"
+    ).run(response.id, conflict.id));
+  })();
+}
+function getAskAIResponse(db, id) {
+  const run = db.prepare("SELECT * FROM ask_ai_runs WHERE id=?").get(id);
+  if (!run) throw new NotFoundError(`Ask AI run not found: ${id}`);
+  const evidenceRows = db.prepare("SELECT * FROM ask_ai_run_evidence WHERE ask_ai_run_id=? ORDER BY rank").all(id);
+  const claimRows = db.prepare(`SELECT c.*,m.kind,m.explanation FROM answer_claims c JOIN ask_ai_claim_metadata m ON m.answer_claim_id=c.answer_claim_id
+    WHERE c.answer_id=? ORDER BY c.claim_order`).all(run.answer_id);
+  const linkRows = db.prepare(`SELECT l.*,e.source_pointer_uri,e.transcript_id,e.span_id,e.quote_preview
+    FROM citation_links l JOIN evidence_pointers e ON e.evidence_pointer_id=l.evidence_pointer_id
+    WHERE l.answer_id=? ORDER BY l.citation_order`).all(run.answer_id);
+  const followups = db.prepare("SELECT text FROM ask_ai_suggested_followups WHERE ask_ai_run_id=? ORDER BY rank").all(id);
+  const conflicts = db.prepare("SELECT conflict_assessment_id FROM ask_ai_run_conflicts WHERE ask_ai_run_id=? ORDER BY conflict_assessment_id").all(id).map((row) => createConflictRepository(db).get(row.conflict_assessment_id)).filter(Boolean);
+  const citations = linkRows.map((item) => ({
+    id: String(item.citation_link_id),
+    label: String(item.citation_label),
+    evidencePointerId: String(item.evidence_pointer_id),
+    sourcePointerId: String(item.source_pointer_uri),
+    transcriptId: String(item.transcript_id),
+    spanId: String(item.span_id),
+    quotePreview: String(item.quote_preview),
+    clickbackUri: `mv://evidence/${String(item.evidence_pointer_id)}`
+  }));
+  return {
+    id,
+    question: String(run.question),
+    answerMarkdown: String(run.answer_markdown),
+    evidenceConfidence: run.evidence_confidence,
+    notEnoughEvidence: Boolean(run.not_enough_evidence),
+    createdAt: String(run.created_at),
+    queryUnderstanding: JSON.parse(String(run.query_understanding_json)),
+    scoreRunId: run.score_run_id == null ? void 0 : String(run.score_run_id),
+    evidence: evidenceRows.map((item) => ({
+      evidencePointerId: String(item.evidence_pointer_id),
+      sourcePointerId: item.source_pointer_id == null ? void 0 : String(item.source_pointer_id),
+      transcriptId: String(item.transcript_id),
+      spanId: String(item.span_id),
+      quotePreview: String(item.quote_preview),
+      evidenceScore: Number(item.evidence_score),
+      evidenceConfidence: item.evidence_confidence,
+      scoringExplanation: String(item.scoring_explanation),
+      clickbackUri: `mv://evidence/${String(item.evidence_pointer_id)}`,
+      stance: "unknown",
+      sourceKind: "raw_transcript_span"
+    })),
+    claims: claimRows.map((item) => {
+      const claimCitations = citations.filter((citation) => linkRows.some((link) => link.answer_claim_id === item.answer_claim_id && link.citation_link_id === citation.id));
+      return {
+        id: String(item.answer_claim_id),
+        kind: item.kind,
+        text: String(item.claim_text),
+        supportStatus: claimSupportStatus(item.support_status),
+        evidencePointerIds: claimCitations.map((citation) => citation.evidencePointerId),
+        citationIds: claimCitations.map((citation) => citation.id),
+        explanation: item.explanation == null ? void 0 : String(item.explanation)
+      };
+    }),
+    citations,
+    suggestedFollowups: followups.map((item) => item.text),
+    conflicts
+  };
+}
+
+// src/evidence/rules.ts
+var SCORER_VERSION = "mvp-evidence-v1";
+var USE_TYPE_WEIGHTS = {
+  direct_fact: { relevance: 0.2, directness: 0.26, specificity: 0.2, sourceStrength: 0.16, repetition: 0.04, recency: 0.04, correctionWeight: 0.06, confidence: 0.04 },
+  pattern: { relevance: 0.18, directness: 0.14, specificity: 0.12, sourceStrength: 0.15, repetition: 0.24, recency: 0.06, correctionWeight: 0.06, confidence: 0.05 },
+  inference: { relevance: 0.22, directness: 0.12, specificity: 0.14, sourceStrength: 0.18, repetition: 0.18, recency: 0.05, correctionWeight: 0.06, confidence: 0.05 },
+  recommendation: { relevance: 0.2, directness: 0.15, specificity: 0.14, sourceStrength: 0.15, repetition: 0.1, recency: 0.14, correctionWeight: 0.08, confidence: 0.04 }
+};
+var stopWords = /* @__PURE__ */ new Set(["a", "an", "and", "are", "as", "at", "be", "because", "by", "for", "from", "has", "in", "is", "it", "of", "on", "or", "that", "the", "this", "to", "was", "were", "with"]);
+var clamp = (value) => Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
+var round2 = (value) => Math.round(clamp(value) * 1e4) / 1e4;
+function tokens2(text = "") {
+  return [...new Set(text.toLowerCase().match(/[\p{L}\p{N}]+/gu)?.filter((token) => token.length > 1 && !stopWords.has(token)) ?? [])];
+}
+function lexicalCoverage(claimText, quote2 = "") {
+  const claim = tokens2(claimText), evidence = new Set(tokens2(quote2));
+  return claim.length ? claim.filter((token) => evidence.has(token)).length / claim.length : 0;
+}
+function calculateRelevance(candidate, claimText, requiredTerms = []) {
+  const available = [candidate.retrievalScore, candidate.vectorScore, candidate.keywordScore].filter((score2) => score2 != null).map(clamp);
+  const lexical = lexicalCoverage(claimText, candidate.quote);
+  const requiredCoverage = requiredTerms.length ? requiredTerms.filter((term) => candidate.quote?.toLowerCase().includes(term.toLowerCase())).length / requiredTerms.length : lexical;
+  if (!available.length) return round2(0.75 * lexical + 0.25 * requiredCoverage);
+  const retrieval = clamp(candidate.retrievalScore ?? lexical);
+  const vector = clamp(candidate.vectorScore ?? lexical);
+  const keyword = clamp(candidate.keywordScore ?? lexical);
+  return round2(0.35 * retrieval + 0.2 * vector + 0.2 * keyword + 0.15 * lexical + 0.1 * requiredCoverage);
+}
+function calculateDirectness(candidate, useType3) {
+  if (candidate.userCorrectionStatus === "confirmed") return 1;
+  if (!candidate.spanIds.length) return 0;
+  const base = {
+    raw_transcript_span: candidate.quote ? 0.95 : 0.75,
+    user_correction: 0.9,
+    generated_summary_with_pointers: 0.62,
+    memory_object_with_pointers: 0.62,
+    graph_edge_with_pointers: 0.55,
+    answer_claim_with_pointers: 0.58
+  };
+  return round2(base[candidate.sourceKind] + (useType3 === "inference" ? 0.05 : 0));
+}
+function calculateSpecificity(candidate, claimText, requiredTerms = []) {
+  const quote2 = candidate.quote ?? "";
+  const coverage = lexicalCoverage(claimText, quote2);
+  const claimSpecifics = tokens2(claimText).filter((token) => /\d/.test(token) || token.length >= 7);
+  const required = [.../* @__PURE__ */ new Set([...requiredTerms.map((term) => term.toLowerCase()), ...claimSpecifics])];
+  const specificCoverage = required.length ? required.filter((term) => quote2.toLowerCase().includes(term)).length / required.length : coverage;
+  const concrete = /\d|(?:\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|may|june|july|august|september|october|november|december)\b)/i.test(quote2) ? 0.15 : 0;
+  return round2(0.55 * coverage + 0.45 * specificCoverage + concrete);
+}
+function calculateSourceStrength(candidate) {
+  if (candidate.userCorrectionStatus === "rejected") return 0;
+  if (candidate.userCorrectionStatus === "superseded") return 0.15;
+  if (candidate.userCorrectionStatus === "confirmed") return 1;
+  if (!candidate.spanIds.length) return 0;
+  const strengths2 = {
+    raw_transcript_span: 0.95,
+    user_correction: 0.85,
+    generated_summary_with_pointers: 0.68,
+    memory_object_with_pointers: 0.68,
+    graph_edge_with_pointers: 0.65,
+    answer_claim_with_pointers: 0.62
+  };
+  return strengths2[candidate.sourceKind];
+}
+function calculateCorrectionWeight(candidate) {
+  if (candidate.userCorrectionStatus === "confirmed" || candidate.isUserCorrection) return 1;
+  if (candidate.userCorrectionStatus === "rejected" || candidate.userCorrectionStatus === "superseded") return 0;
+  return 0.5;
+}
+function calculateConfidence(candidate) {
+  const values = [candidate.sourceConfidence, candidate.extractionConfidence].filter((value) => value != null);
+  return round2(values.length ? values.reduce((sum, value) => sum + clamp(value), 0) / values.length : 0.5);
+}
+function candidateCaps(candidate, useType3, components, requiredTerms = [], claimText = "") {
+  const reasons = [];
+  let maxStrength;
+  const capWeak = (reason) => {
+    if (maxStrength !== "no_evidence") maxStrength = "weak";
+    reasons.push(reason);
+  };
+  const capNone = (reason) => {
+    maxStrength = "no_evidence";
+    reasons.push(reason);
+  };
+  if (candidate.userCorrectionStatus === "rejected") capNone("Rejected user correction is excluded");
+  else if (candidate.userCorrectionStatus === "superseded" || candidate.metadata?.superseded === true) capWeak("Superseded evidence is not current truth");
+  if (!candidate.spanIds.length && candidate.userCorrectionStatus !== "confirmed") capNone("No raw transcript span or confirmed correction");
+  if (candidate.sourceKind !== "raw_transcript_span" && candidate.sourceKind !== "user_correction" && !candidate.spanIds.length) capNone("Generated-only evidence has no raw pointers");
+  if (candidate.sourceKind !== "raw_transcript_span" && candidate.sourceKind !== "user_correction" && candidate.provenanceValidated !== true) {
+    capNone("Generated-object evidence was not validated against a raw transcript span");
+  }
+  if (components.relevance < 0.35) capWeak("Low relevance cannot establish the claim");
+  if (useType3 === "direct_fact" && components.directness < 0.5) capWeak("Direct fact lacks direct evidence");
+  if (components.specificity < 0.4) capWeak("Specific claim lacks required details");
+  if (candidate.vectorScore != null && candidate.keywordScore == null && candidate.retrievalScore == null && lexicalCoverage(claimText, candidate.quote) < 0.5) capWeak("Vector-only match cannot establish truth");
+  const memoryStatus = candidate.metadata?.canonicalMemoryStatus;
+  if (candidate.sourceKind === "memory_object_with_pointers" && memoryStatus !== void 0 && memoryStatus !== "active") capWeak("Canonical memory status is not active");
+  if (candidate.metadata?.memoryUsableAsEvidence === false || candidate.metadata?.duplicateOfId != null) capWeak("Memory object is not independently usable as strong evidence");
+  return { maxStrength, reasons };
+}
+var rank2 = { no_evidence: 0, weak: 1, mixed: 2, strong: 3, conflicting: 3 };
+function classifyEvidenceStrength(score2, caps = { reasons: [] }) {
+  let strength = score2 >= 0.78 ? "strong" : score2 >= 0.55 ? "mixed" : score2 >= 0.35 ? "weak" : "no_evidence";
+  if (caps.maxStrength && rank2[strength] > rank2[caps.maxStrength]) strength = caps.maxStrength;
+  return strength;
+}
+
+// src/evidence/repetition.ts
+var normalizeQuote = (quote2 = "") => quote2.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+function nearIdentical(left = "", right = "") {
+  const a = new Set(normalizeQuote(left).split(" ").filter(Boolean)), b = new Set(normalizeQuote(right).split(" ").filter(Boolean));
+  if (!a.size || !b.size) return false;
+  const intersection = [...a].filter((token) => b.has(token)).length;
+  return intersection / Math.max(a.size, b.size) >= 0.9;
+}
+function areDuplicates(left, right) {
+  if (left.evidencePointerId && left.evidencePointerId === right.evidencePointerId) return true;
+  if (left.spanIds.some((id) => right.spanIds.includes(id))) return true;
+  if (nearIdentical(left.quote, right.quote)) return true;
+  return left.transcriptId != null && left.transcriptId === right.transcriptId && left.turnTimestampStartMs != null && left.turnTimestampStartMs === right.turnTimestampStartMs && left.turnTimestampEndMs != null && left.turnTimestampEndMs === right.turnTimestampEndMs;
+}
+function deduplicateEvidenceCandidates(candidates) {
+  const accepted = [];
+  for (const candidate of candidates) {
+    if (!accepted.some((item) => areDuplicates(item, candidate))) accepted.push(candidate);
+  }
+  return accepted;
+}
+function calculateRepetitionScore(candidate, allCandidates, useType3 = "direct_fact") {
+  const sameStance = deduplicateEvidenceCandidates(allCandidates).filter((item) => (item.stance ?? "unknown") === (candidate.stance ?? "unknown"));
+  const count = sameStance.length;
+  if (useType3 === "pattern") return round2(count >= 3 ? 1 : count === 2 ? 0.78 : 0.2);
+  return round2(count >= 3 ? 1 : count === 2 ? 0.75 : 0.5);
+}
+
+// src/evidence/recency.ts
+function calculateRecencyScore(candidate, now2, useType3) {
+  const date = candidate.transcriptRecordedAt ?? candidate.createdAt;
+  if (!date || !now2) return 0.5;
+  const nowMs = Date.parse(now2), dateMs = Date.parse(date);
+  if (!Number.isFinite(nowMs) || !Number.isFinite(dateMs)) return 0.5;
+  const ageDays = Math.max(0, (nowMs - dateMs) / 864e5);
+  let score2 = ageDays <= 7 ? 1 : ageDays <= 30 ? 0.8 : ageDays <= 180 ? 0.6 : 0.4;
+  if (useType3 === "direct_fact" || useType3 === "inference") score2 = 0.5 + score2 * 0.5;
+  return round2(score2);
+}
+
+// src/evidence/explain.ts
+function explanationForStrength(strength, useType3) {
+  const subject = useType3 === "inference" ? "inference" : useType3 === "recommendation" ? "recommendation" : "claim";
+  if (strength === "strong") return `Strong evidence: the ${subject} is supported by specific source-backed evidence with no meaningful unresolved opposition.`;
+  if (strength === "mixed") return `Mixed evidence: the ${subject} has usable support, but some evidence qualifies or partially challenges it.`;
+  if (strength === "conflicting") return `Conflicting evidence: there is strong support for the ${subject}, but other source-backed evidence directly opposes it.`;
+  if (strength === "weak") return `Weak evidence: the available source-backed evidence is related, but it is not sufficient to support the ${useType3 === "pattern" ? "pattern" : subject} confidently.`;
+  return `No evidence: no usable source-backed transcript spans or confirmed corrections were found for this ${subject}.`;
+}
+function explainEvidenceScore(assessment) {
+  return explanationForStrength(assessment.strength, assessment.useType);
+}
+
+// src/evidence/scoring.ts
+var scoreOrder = { strong: 4, mixed: 3, weak: 2, conflicting: 1, no_evidence: 0 };
+var byScore = (a, b) => b.finalScore - a.finalScore || a.candidate.id.localeCompare(b.candidate.id);
+var meaningful = (item) => item.strength !== "no_evidence";
+var supportStances = /* @__PURE__ */ new Set(["supports", "updates"]);
+function scoreEvidenceCandidate(candidate, context) {
+  const stance = context.knownOppositionCandidateIds?.includes(candidate.id) ? "opposes" : candidate.stance ?? "unknown";
+  const components = {
+    relevance: calculateRelevance(candidate, context.claimText, context.requiredSpecificityTerms),
+    directness: calculateDirectness(candidate, context.useType),
+    specificity: calculateSpecificity(candidate, context.claimText, context.requiredSpecificityTerms),
+    sourceStrength: calculateSourceStrength(candidate),
+    repetition: calculateRepetitionScore({ ...candidate, stance }, context.allCandidates, context.useType),
+    recency: calculateRecencyScore(candidate, context.now, context.useType),
+    correctionWeight: calculateCorrectionWeight(candidate),
+    confidence: calculateConfidence(candidate),
+    oppositionPenalty: stance === "opposes" ? 0.05 : 0
+  };
+  const weights = USE_TYPE_WEIGHTS[context.useType];
+  const weighted = Object.entries(weights).reduce((sum, [key, weight]) => sum + components[key] * weight, 0);
+  const finalScore = round2(weighted - components.oppositionPenalty);
+  const caps = candidateCaps(candidate, context.useType, components, context.requiredSpecificityTerms, context.claimText);
+  const strength = classifyEvidenceStrength(finalScore, caps);
+  const reasons = [
+    ...caps.reasons,
+    components.relevance < 0.35 ? "Low relevance to the claim" : "",
+    components.directness < 0.5 ? "Evidence is indirect" : "",
+    components.specificity < 0.4 ? "Evidence lacks specific claim details" : "",
+    components.repetition >= 0.75 ? "Independent evidence repeats the support" : "",
+    candidate.userCorrectionStatus === "confirmed" ? "Confirmed user correction has priority" : ""
+  ].filter(Boolean);
+  return { candidate: { ...candidate, stance }, stance, components, finalScore, strength, caps, reasons };
+}
+function maxScore(items) {
+  return round2(items.length ? Math.max(...items.map((item) => item.finalScore)) : 0);
+}
+function hasExplicitPattern(candidate) {
+  return /\b(always|usually|often|repeatedly|consistently|tend(?:s)? to)\b/i.test(candidate.quote ?? "");
+}
+function passesUseTypeGate(input, support) {
+  if (input.useType === "direct_fact") return support.some((item) => item.strength === "strong" && item.components.directness >= 0.7);
+  if (input.useType === "pattern") return support.length >= 2 || support.some((item) => hasExplicitPattern(item.candidate) && item.finalScore >= 0.7);
+  if (input.useType === "inference") return support.filter((item) => item.finalScore >= 0.55).length >= 2 && maxScore(support) >= 0.82;
+  return support.some((item) => item.finalScore >= 0.72) && support.some((item) => item.components.recency >= 0.6 || item.candidate.userCorrectionStatus === "confirmed");
+}
+function hasStrongEnoughSupport(useType3, support) {
+  if (support.some((item) => item.strength === "strong")) return true;
+  if (useType3 === "pattern") return support.some((item) => hasExplicitPattern(item.candidate) && item.finalScore >= 0.7);
+  return false;
+}
+function aggregateSupportAndOpposition(input, scoredCandidates) {
+  const scoredEvidence = [...scoredCandidates].sort(byScore);
+  const usableEvidence = scoredEvidence.filter(meaningful);
+  const bestSupportingEvidence = usableEvidence.filter((item) => supportStances.has(item.stance)).sort(byScore);
+  const bestOpposingEvidence = usableEvidence.filter((item) => item.stance === "opposes").sort(byScore);
+  const qualifyingEvidence = usableEvidence.filter((item) => item.stance === "qualifies").sort(byScore);
+  const supportScore = maxScore(bestSupportingEvidence);
+  const oppositionScore = maxScore(bestOpposingEvidence);
+  const qualificationScore = maxScore(qualifyingEvidence);
+  const strongSupport = supportScore >= 0.7;
+  const strongOpposition = oppositionScore >= 0.65;
+  const comparableOpposition = oppositionScore >= Math.max(0.55, supportScore - 0.15);
+  const updateWins = bestSupportingEvidence.some((item) => item.stance === "updates" && item.finalScore >= oppositionScore);
+  const hasConflict = strongSupport && strongOpposition && comparableOpposition && !updateWins;
+  let strength;
+  if (!usableEvidence.length || !bestSupportingEvidence.length) strength = "no_evidence";
+  else if (hasConflict) strength = "conflicting";
+  else if (!passesUseTypeGate(input, bestSupportingEvidence)) strength = "weak";
+  else if (strongOpposition || bestOpposingEvidence.length || qualifyingEvidence.length || updateWins) strength = "mixed";
+  else if (hasStrongEnoughSupport(input.useType, bestSupportingEvidence)) strength = "strong";
+  else strength = "weak";
+  const reasons = [
+    !usableEvidence.length ? "No usable source-backed evidence" : "",
+    hasConflict ? "Comparable source-backed support and opposition remain unresolved" : "",
+    qualifyingEvidence.length ? "Qualifying evidence requires a caveat" : "",
+    updateWins ? "Newer or explicit update evidence changes older evidence" : "",
+    strength === "weak" && input.useType === "pattern" ? "A pattern needs repeated independent evidence or an explicit pattern statement" : "",
+    strength === "weak" && input.useType === "inference" ? "An inference needs multiple explainable supporting sources" : ""
+  ].filter(Boolean);
+  const assessment = {
+    claimText: input.claimText,
+    useType: input.useType,
+    strength,
+    supportScore,
+    oppositionScore,
+    qualificationScore,
+    bestSupportingEvidence,
+    bestOpposingEvidence,
+    qualifyingEvidence,
+    usableEvidence,
+    hasConflict,
+    scoredEvidence,
+    hasWeakEvidenceOnly: usableEvidence.length > 0 && strength === "weak",
+    hasNoEvidence: strength === "no_evidence",
+    explanation: "",
+    reasons,
+    scorerVersion: SCORER_VERSION
+  };
+  assessment.explanation = explainEvidenceScore(assessment);
+  return assessment;
+}
+function scoreEvidenceBundle(input) {
+  const duplicateIds = new Set(input.knownDuplicateCandidateIds ?? []);
+  const oppositionIds = new Set(input.knownOppositionCandidateIds ?? []);
+  const candidates = deduplicateEvidenceCandidates(input.candidates.filter((candidate) => !duplicateIds.has(candidate.id)).map((candidate) => oppositionIds.has(candidate.id) ? { ...candidate, stance: "opposes" } : candidate));
+  const context = {
+    claimText: input.claimText,
+    useType: input.useType,
+    allCandidates: candidates,
+    now: input.now,
+    knownOppositionCandidateIds: input.knownOppositionCandidateIds,
+    requiredSpecificityTerms: input.requiredSpecificityTerms
+  };
+  return aggregateSupportAndOpposition(input, candidates.map((candidate) => scoreEvidenceCandidate(candidate, context)).sort((a, b) => scoreOrder[b.strength] - scoreOrder[a.strength] || byScore(a, b)));
+}
+
+// src/evidence/repository.ts
+var pointerStance = (role) => role === "support" ? "supports" : role === "opposition" ? "opposes" : role === "conditional" ? "qualifies" : role === "neutral" ? "neutral" : "unknown";
+var memoryEvidenceStance = (role) => role === "supports" || role === "source" ? "supports" : role === "contradicts" ? "opposes" : role === "qualifies" ? "qualifies" : "neutral";
+var sourceKindForTarget = (targetType) => {
+  if (targetType === "memory_object" || targetType === "claim") return "memory_object_with_pointers";
+  if (targetType === "summary") return "generated_summary_with_pointers";
+  if (targetType === "graph_edge") return "graph_edge_with_pointers";
+  if (targetType === "graph_node") return "graph_edge_with_pointers";
+  if (targetType === "answer_claim" || targetType === "answer") return "answer_claim_with_pointers";
+  return "raw_transcript_span";
+};
+function getEvidenceCandidatesForTarget(db, targetType, targetId) {
+  const pointers = db.prepare("SELECT * FROM evidence_pointers WHERE target_type=? AND target_id=? ORDER BY created_at,evidence_pointer_id").all(targetType, targetId);
+  const memoryRow = targetType === "memory_object" || targetType === "claim" || targetType === "summary" ? db.prepare("SELECT * FROM memory_objects WHERE id=?").get(targetId) : void 0;
+  const memorySpanIds = memoryRow ? db.prepare(`SELECT span_id FROM memory_object_evidence WHERE memory_id=?
+      UNION SELECT span_id FROM evidence_pointers WHERE target_type IN ('memory_object','claim','summary') AND target_id=?`).all(targetId, targetId) : [];
+  const memory = memoryRow ? getCanonicalMemoryObject(memoryRow, memorySpanIds.map((row) => row.span_id)) : void 0;
+  const memoryMetadata = memory ? { canonicalMemoryStatus: memory.status, duplicateOfId: memory.duplicateOfId, memoryUsableAsEvidence: isUsableAsEvidence(memory) } : {};
+  const pointerCandidates = pointers.flatMap((pointer) => {
+    const resolved = resolveEvidencePointer(db, pointer.evidence_pointer_id);
+    if (!resolved.ok) return [];
+    return [{
+      id: pointer.evidence_pointer_id,
+      evidencePointerId: pointer.evidence_pointer_id,
+      transcriptId: pointer.transcript_id,
+      spanIds: [pointer.span_id],
+      quote: resolved.spanText,
+      sourceKind: sourceKindForTarget(targetType),
+      createdAt: pointer.created_at,
+      turnTimestampStartMs: resolved.source.start_ms,
+      turnTimestampEndMs: resolved.source.end_ms,
+      retrievalScore: pointer.relevance_score ?? pointer.final_score ?? void 0,
+      vectorScore: pointer.semantic_score ?? void 0,
+      keywordScore: pointer.lexical_score ?? void 0,
+      stance: pointerStance(pointer.evidence_role),
+      sourceConfidence: pointer.confidence,
+      provenanceValidated: true,
+      metadata: { ...memoryMetadata, sourcePointerId: pointer.source_pointer_uri }
+    }];
+  });
+  if (!memory) return pointerCandidates;
+  const pointerSpanIds = new Set(pointerCandidates.flatMap((candidate) => candidate.spanIds));
+  const legacyRows = db.prepare(`SELECT e.id,e.span_id,e.role,e.evidence_score,e.created_at,s.transcript_id,s.text,s.start_time_ms,s.end_time_ms
+    FROM memory_object_evidence e JOIN transcript_spans s ON s.id=e.span_id WHERE e.memory_id=? ORDER BY e.created_at,e.id`).all(targetId);
+  const legacyCandidates = legacyRows.filter((row) => !pointerSpanIds.has(row.span_id)).map((row) => ({
+    id: row.id,
+    transcriptId: row.transcript_id,
+    spanIds: [row.span_id],
+    quote: row.text,
+    sourceKind: "memory_object_with_pointers",
+    createdAt: row.created_at,
+    turnTimestampStartMs: row.start_time_ms,
+    turnTimestampEndMs: row.end_time_ms,
+    retrievalScore: row.evidence_score,
+    stance: memoryEvidenceStance(row.role),
+    sourceConfidence: row.evidence_score,
+    provenanceValidated: true,
+    metadata: memoryMetadata
+  }));
+  return [...pointerCandidates, ...legacyCandidates];
+}
+function saveEvidenceScoreRun(db, assessment, options) {
+  const id = options.id ?? createId("esr_");
+  db.transaction(() => {
+    db.prepare(`INSERT INTO evidence_score_runs(
+      id,target_type,target_id,claim_text,use_type,strength,support_score,opposition_score,qualification_score,has_conflict,scorer_version,reasons_json,assessment_json
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+      id,
+      options.targetType,
+      options.targetId ?? null,
+      assessment.claimText,
+      assessment.useType,
+      assessment.strength,
+      assessment.supportScore,
+      assessment.oppositionScore,
+      assessment.qualificationScore,
+      assessment.hasConflict ? 1 : 0,
+      assessment.scorerVersion,
+      JSON.stringify(assessment.reasons),
+      JSON.stringify(assessment)
+    );
+    assessment.scoredEvidence.forEach((item) => {
+      const pointerId = item.candidate.evidencePointerId && db.prepare("SELECT 1 FROM evidence_pointers WHERE evidence_pointer_id=?").get(item.candidate.evidencePointerId) ? item.candidate.evidencePointerId : null;
+      db.prepare(`INSERT INTO evidence_score_items(
+      id,run_id,evidence_pointer_id,candidate_id,stance,final_score,strength,relevance,directness,specificity,source_strength,repetition,
+      recency,correction_weight,confidence,opposition_penalty,caps_json,reasons_json,candidate_json
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+        createId("esi_"),
+        id,
+        pointerId,
+        item.candidate.id,
+        item.stance,
+        item.finalScore,
+        item.strength,
+        item.components.relevance,
+        item.components.directness,
+        item.components.specificity,
+        item.components.sourceStrength,
+        item.components.repetition,
+        item.components.recency,
+        item.components.correctionWeight,
+        item.components.confidence,
+        item.components.oppositionPenalty,
+        JSON.stringify(item.caps),
+        JSON.stringify(item.reasons),
+        JSON.stringify(item.candidate)
+      );
+    });
+  })();
+  return id;
+}
+
+// src/retrieval/embeddingStore.ts
+function validateVector(vector, dimensions) {
+  if (!vector.length || vector.length !== dimensions || vector.some((value) => !Number.isFinite(value))) {
+    throw new ValidationError(`Invalid embedding vector; expected ${dimensions} finite dimensions`);
+  }
+}
+function cosineSimilarity(a, b) {
+  if (!a.length || a.length !== b.length) throw new ValidationError("Vector dimensions must match");
+  let dot = 0, left = 0, right = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    left += a[i] ** 2;
+    right += b[i] ** 2;
+  }
+  if (!left || !right) return 0;
+  return Math.max(0, Math.min(1, (dot / Math.sqrt(left * right) + 1) / 2));
+}
+
+// src/retrieval/filters.ts
+function inList(value, list, insensitive = false) {
+  if (!list?.length) return true;
+  if (value == null) return false;
+  return insensitive ? list.some((item) => item.toLowerCase() === value.toLowerCase()) : list.includes(value);
+}
+function validDate(value) {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+function documentMatchesFilters(row, filters = {}) {
+  if (!inList(row.transcript_id, filters.transcriptIds) || !inList(row.source_id, filters.sourceIds) || !inList(row.speaker_id, filters.speakerIds) || !inList(row.speaker_name, filters.speakerNames, true) || !inList(row.memory_type, filters.memoryTypes) || !inList(row.memory_status, filters.memoryStatuses)) return false;
+  if (filters.minEvidenceScore != null && row.evidence_score < filters.minEvidenceScore) return false;
+  if (filters.includeGenerated === false && row.target_type !== "transcript_span") return false;
+  if (row.target_type === "memory_object" && filters.includeUnsupportedMemory !== true) {
+    if (row.memory_status === "rejected" || row.memory_status === "superseded" || JSON.parse(row.evidence_pointer_ids_json).length === 0 && JSON.parse(row.source_pointer_ids_json).length === 0) return false;
+  }
+  const created = validDate(row.created_at ?? void 0), updated = validDate(row.updated_at ?? void 0);
+  const createdAfter = validDate(filters.createdAfter), createdBefore = validDate(filters.createdBefore);
+  const updatedAfter = validDate(filters.updatedAfter), updatedBefore = validDate(filters.updatedBefore);
+  if (createdAfter != null && (created == null || created < createdAfter)) return false;
+  if (createdBefore != null && (created == null || created > createdBefore)) return false;
+  if (updatedAfter != null && (updated == null || updated < updatedAfter)) return false;
+  if (updatedBefore != null && (updated == null || updated > updatedBefore)) return false;
+  return true;
+}
+function rowToCandidate(row) {
+  return {
+    targetType: row.target_type,
+    targetId: row.target_id,
+    transcriptId: row.transcript_id ?? void 0,
+    sourceId: row.source_id ?? void 0,
+    speakerId: row.speaker_id ?? void 0,
+    speakerName: row.speaker_name ?? void 0,
+    title: row.title ?? void 0,
+    textPreview: row.search_text.slice(0, 500),
+    createdAt: row.created_at ?? void 0,
+    updatedAt: row.updated_at ?? void 0,
+    evidenceScore: row.evidence_score,
+    finalScore: 0,
+    matchReasons: [],
+    evidencePointerIds: JSON.parse(row.evidence_pointer_ids_json),
+    sourcePointerIds: JSON.parse(row.source_pointer_ids_json),
+    supportRole: row.support_role
+  };
+}
+
+// src/retrieval/keywordSearch.ts
+var scopeTypes = {
+  transcript_spans: ["transcript_span"],
+  memory_objects: ["memory_object"],
+  evidence_pointers: ["evidence_pointer"],
+  all: ["transcript_span", "memory_object", "evidence_pointer"]
+};
+function keywordScore(row, query) {
+  const phrase = query.toLowerCase(), title = (row.title ?? "").toLowerCase(), text = row.search_text.toLowerCase();
+  const speaker = (row.speaker_name ?? "").toLowerCase(), topic = (row.topic_text ?? "").toLowerCase();
+  const tokens3 = phrase.match(/[\p{L}\p{N}]+/gu) ?? [];
+  let score2 = 0;
+  const reasons = [];
+  if (title.includes(phrase)) {
+    score2 += 0.65;
+    reasons.push("keyword:title", "keyword:exact_phrase");
+  }
+  if (text.includes(phrase)) {
+    score2 += 0.55;
+    reasons.push(row.target_type === "transcript_span" ? "keyword:span_text" : "keyword:body", "keyword:exact_phrase");
+  }
+  if (speaker.includes(phrase)) {
+    score2 += 0.35;
+    reasons.push("keyword:speaker");
+  }
+  if (topic.includes(phrase)) {
+    score2 += 0.35;
+    reasons.push("keyword:topic");
+  }
+  const matched = tokens3.filter((token) => title.includes(token) || text.includes(token) || speaker.includes(token) || topic.includes(token)).length;
+  if (tokens3.length) score2 += 0.35 * (matched / tokens3.length);
+  return { score: Math.min(1, score2), reasons: [...new Set(reasons)] };
+}
+function keywordSearch(db, query) {
+  const text = query.query.trim();
+  if (!text) return [];
+  const types = scopeTypes[query.scope ?? "all"];
+  const candidateLimit = Math.max(query.keywordLimit ?? query.limit ?? 50, 20) * 10;
+  let rows = [];
+  try {
+    const fts = (text.match(/[\p{L}\p{N}]+/gu) ?? []).map((token) => `"${token.replaceAll('"', '""')}"*`).join(" OR ");
+    if (fts) {
+      const ids = db.prepare("SELECT target_type,target_id FROM retrieval_documents_fts WHERE retrieval_documents_fts MATCH ? LIMIT ?").all(fts, candidateLimit);
+      if (ids.length) {
+        const clauses = ids.map(() => "(target_type=? AND target_id=?)").join(" OR ");
+        rows = db.prepare(`SELECT * FROM retrieval_documents WHERE ${clauses}`).all(...ids.flatMap((id) => [id.target_type, id.target_id]));
+      }
+    }
+  } catch {
+  }
+  if (!rows.length) rows = db.prepare("SELECT * FROM retrieval_documents WHERE lower(search_text) LIKE lower(?) OR lower(COALESCE(title,'')) LIKE lower(?) OR lower(COALESCE(speaker_name,'')) LIKE lower(?) LIMIT ?").all(`%${text}%`, `%${text}%`, `%${text}%`, candidateLimit);
+  return rows.filter((row) => types.includes(row.target_type) && documentMatchesFilters(row, query.filters)).map((row) => {
+    const scored = keywordScore(row, text), candidate = rowToCandidate(row);
+    return { ...candidate, keywordScore: scored.score, finalScore: scored.score, metadataScore: query.filters && Object.keys(query.filters).length ? 1 : 0.5, matchReasons: [...scored.reasons, row.evidence_score === 0.5 ? "evidence:unscored" : `evidence:${row.evidence_score < 0.45 ? "weak" : "scored"}`] };
+  }).filter((item) => (item.keywordScore ?? 0) > 0).sort((a, b) => (b.keywordScore ?? 0) - (a.keywordScore ?? 0)).slice(0, query.keywordLimit ?? query.limit ?? 50);
+}
+
+// src/retrieval/vectorSearch.ts
+var scopeTypes2 = {
+  transcript_spans: ["transcript_span"],
+  memory_objects: ["memory_object"],
+  evidence_pointers: ["evidence_pointer"],
+  all: ["transcript_span", "memory_object", "evidence_pointer"]
+};
+async function vectorSearch(db, query) {
+  const text = query.query.trim(), provider = query.embeddingProvider;
+  if (!text || !provider || provider.dimensions <= 0) return [];
+  const vector = (await provider.embedTexts([text]))[0];
+  validateVector(vector, provider.dimensions);
+  const types = scopeTypes2[query.scope ?? "all"];
+  const embeddings = db.prepare(`SELECT e.*,d.* FROM search_embeddings e JOIN retrieval_documents d
+    ON d.target_type=e.target_type AND d.target_id=e.target_id
+    WHERE e.embedding_provider=? AND e.embedding_model=? AND e.embedding_dim=?`).all(provider.name, provider.model, provider.dimensions);
+  return embeddings.filter((row) => types.includes(row.target_type) && documentMatchesFilters(row, query.filters)).map((row) => {
+    const stored = JSON.parse(row.vector_json);
+    validateVector(stored, provider.dimensions);
+    const score2 = cosineSimilarity(vector, stored), candidate = rowToCandidate(row);
+    return { ...candidate, vectorScore: score2, finalScore: score2, metadataScore: query.filters && Object.keys(query.filters).length ? 1 : 0.5, matchReasons: ["vector:semantic", row.evidence_score === 0.5 ? "evidence:unscored" : `evidence:${row.evidence_score < 0.45 ? "weak" : "scored"}`] };
+  }).sort((a, b) => (b.vectorScore ?? 0) - (a.vectorScore ?? 0)).slice(0, query.vectorLimit ?? query.limit ?? 50);
+}
+
+// src/retrieval/ranking.ts
+var clamp2 = (value) => Math.max(0, Math.min(1, value));
+function recencyScore(timestamp, now2) {
+  if (!timestamp) return 0.5;
+  const time = Date.parse(timestamp), current = now2 == null ? Date.now() : Date.parse(now2);
+  if (!Number.isFinite(time) || !Number.isFinite(current)) return 0.5;
+  const ageDays = Math.max(0, (current - time) / 864e5);
+  return clamp2(1 / (1 + ageDays / 365));
+}
+function rankCandidate(candidate, vectorAvailable, recencyBoost = false, now2) {
+  const vector = candidate.vectorScore ?? 0, keyword = candidate.keywordScore ?? 0;
+  const evidence = candidate.evidenceScore ?? 0.5, metadata = candidate.metadataScore ?? 0.5;
+  const recency = recencyBoost ? recencyScore(candidate.updatedAt ?? candidate.createdAt, now2) : 0.5;
+  const score2 = vectorAvailable ? 0.4 * vector + 0.3 * keyword + 0.15 * evidence + 0.1 * metadata + 0.05 * recency : 0.55 * keyword + 0.25 * evidence + 0.15 * metadata + 0.05 * recency;
+  return { ...candidate, recencyScore: recency, finalScore: clamp2(score2) };
+}
+function mergeCandidates(candidates) {
+  const merged = /* @__PURE__ */ new Map();
+  for (const item of candidates) {
+    const key = `${item.targetType}:${item.targetId}`;
+    const existing = merged.get(key);
+    if (!existing) {
+      merged.set(key, item);
+      continue;
+    }
+    merged.set(key, {
+      ...existing,
+      keywordScore: Math.max(existing.keywordScore ?? 0, item.keywordScore ?? 0),
+      vectorScore: Math.max(existing.vectorScore ?? 0, item.vectorScore ?? 0),
+      evidenceScore: Math.max(existing.evidenceScore ?? 0, item.evidenceScore ?? 0),
+      matchReasons: [.../* @__PURE__ */ new Set([...existing.matchReasons, ...item.matchReasons])],
+      evidencePointerIds: [.../* @__PURE__ */ new Set([...existing.evidencePointerIds, ...item.evidencePointerIds])],
+      sourcePointerIds: [.../* @__PURE__ */ new Set([...existing.sourcePointerIds, ...item.sourcePointerIds])]
+    });
+  }
+  return [...merged.values()];
+}
+function dedupeUnderlyingEvidence(candidates) {
+  const priority = { transcript_span: 3, evidence_pointer: 2, memory_object: 1 };
+  const kept = /* @__PURE__ */ new Map();
+  for (const candidate of candidates.sort((a, b) => b.finalScore - a.finalScore)) {
+    const key = candidate.sourcePointerIds[0] ?? `${candidate.targetType}:${candidate.targetId}`;
+    const existing = kept.get(key);
+    if (!existing || priority[candidate.targetType] > priority[existing.targetType]) {
+      kept.set(key, existing ? {
+        ...candidate,
+        evidencePointerIds: [.../* @__PURE__ */ new Set([...candidate.evidencePointerIds, ...existing.evidencePointerIds])],
+        sourcePointerIds: [.../* @__PURE__ */ new Set([...candidate.sourcePointerIds, ...existing.sourcePointerIds])],
+        matchReasons: [.../* @__PURE__ */ new Set([...candidate.matchReasons, ...existing.matchReasons])]
+      } : candidate);
+    }
+  }
+  return [...kept.values()];
+}
+
+// src/retrieval/hybridSearch.ts
+async function searchRetrieval(db, query) {
+  if (!query.query.trim()) return [];
+  const mode = query.mode ?? "hybrid";
+  const keyword = mode === "vector" ? [] : keywordSearch(db, query);
+  const vector = mode === "keyword" ? [] : await vectorSearch(db, query);
+  const ranked = mergeCandidates([...keyword, ...vector]).map((candidate) => rankCandidate(candidate, vector.length > 0, query.recencyBoost, query.now));
+  const filtered = query.requireEvidencePointers ? ranked.filter((candidate) => candidate.evidencePointerIds.length > 0) : ranked;
+  return dedupeUnderlyingEvidence(filtered).sort((a, b) => b.finalScore - a.finalScore).slice(0, query.finalLimit ?? query.limit ?? 20);
+}
+var searchEvidencePointers = (db, query) => searchRetrieval(db, { ...query, scope: "evidence_pointers" });
+
+// src/ask-ai/dependencies.ts
+var useType = (kind) => kind === "fact" ? "direct_fact" : kind === "pattern" ? "pattern" : kind;
+async function retrieve(db, query) {
+  const results = await searchEvidencePointers(db, {
+    query: query.normalizedQuestion,
+    mode: "hybrid",
+    finalLimit: 50,
+    requireEvidencePointers: true,
+    filters: {
+      transcriptIds: query.transcriptIds.length ? query.transcriptIds : void 0,
+      createdAfter: query.timeRange?.start,
+      createdBefore: query.timeRange?.end
+    }
+  });
+  return results.flatMap((result) => {
+    const pointer = db.prepare("SELECT target_type,target_id FROM evidence_pointers WHERE evidence_pointer_id=?").get(result.targetId);
+    if (!pointer) return [];
+    return getEvidenceCandidatesForTarget(db, pointer.target_type, pointer.target_id).filter((item) => item.evidencePointerId === result.targetId).map((item) => ({ ...item, retrievalScore: result.finalScore, vectorScore: result.vectorScore, keywordScore: result.keywordScore }));
+  });
+}
+function createDatabaseAskAIDependencies(db, options = {}) {
+  return {
+    db,
+    now: options.now,
+    retrieveCandidates: (query) => retrieve(db, query),
+    scoreEvidence: async (question, candidates, query) => scoreEvidenceBundle({
+      claimText: question,
+      candidates,
+      useType: useType(query.requestedClaimKinds[0] ?? "fact"),
+      now: options.now?.().toISOString()
+    }),
+    findConflicts: async (evidence) => createConflictRepository(db, options).listActiveForEvidencePointers(evidence.map((item) => item.evidencePointerId))
+  };
+}
+
+// src/ask-ai/pipeline.ts
+var useType2 = (kind) => kind === "fact" ? "direct_fact" : kind === "pattern" ? "pattern" : kind;
+async function askAI(request, deps) {
+  const query = understandQuestion(request.question, request);
+  const timestamp = deps.now?.() ?? /* @__PURE__ */ new Date();
+  const candidates = await deps.retrieveCandidates(query);
+  const assessment = deps.scoreEvidence ? await deps.scoreEvidence(query.normalizedQuestion, candidates, query) : scoreEvidenceBundle({
+    claimText: query.normalizedQuestion,
+    useType: useType2(query.requestedClaimKinds[0] ?? "fact"),
+    candidates,
+    now: timestamp.toISOString()
+  });
+  const materialized = deps.createEvidencePointers ? await deps.createEvidencePointers(assessment.usableEvidence) : void 0;
+  const selection = selectEvidenceForAnswer(assessment, { maxEvidenceItems: request.maxEvidenceItems, materializedEvidence: materialized });
+  const conflicts = deps.findConflicts ? await deps.findConflicts(selection.evidence) : [];
+  const selectedEvidence = [...new Map([...selection.evidence, ...conflictEvidenceForAnswer(conflicts)].map((item) => [item.evidencePointerId, item])).values()];
+  const citations = buildCitations(selectedEvidence);
+  const selectedConfidence = confidenceWithConflicts(selection.confidence, conflicts);
+  const claims = await generateClaimsFromEvidence(query, selectedEvidence, citations, { confidence: selectedConfidence, llm: deps.llm });
+  const confidence = claims.length ? selectedConfidence : "no_evidence";
+  const usedPointers = new Set(claims.flatMap((claim) => claim.evidencePointerIds));
+  const finalEvidence = selectedEvidence.filter((item) => usedPointers.has(item.evidencePointerId));
+  const finalCitations = citations.filter((item) => usedPointers.has(item.evidencePointerId));
+  const response = {
+    id: createId("ask_"),
+    question: request.question,
+    answerMarkdown: addConflictContext(renderAnswer({ confidence, claims, citations: finalCitations }), conflicts),
+    evidenceConfidence: confidence,
+    claims,
+    citations: finalCitations,
+    evidence: finalEvidence,
+    suggestedFollowups: request.includeSuggestedFollowups === false ? [] : suggestFollowups(confidence, query),
+    notEnoughEvidence: confidence === "no_evidence",
+    createdAt: timestamp.toISOString(),
+    queryUnderstanding: query,
+    conflicts
+  };
+  if (deps.persistAnswer) await deps.persistAnswer(response);
+  else if (deps.db) {
+    deps.db.transaction(() => {
+      response.scoreRunId = saveEvidenceScoreRun(deps.db, assessment, { targetType: "ask_ai", targetId: response.id });
+      persistAskAIResponse(deps.db, response);
+    })();
+  }
+  return response;
+}
+
+// src/ingest/hash.ts
+function computeRawSha256(rawText) {
+  return contentHash(rawText);
+}
+
+// src/ingest/detectTranscriptFormat.ts
+var import_node_path2 = require("node:path");
+var supported = /* @__PURE__ */ new Set(["txt", "md", "srt", "vtt"]);
+function detectTranscriptFormat(filename, _rawText) {
+  const extension = (0, import_node_path2.extname)(filename).slice(1).toLowerCase();
+  if (!supported.has(extension)) {
+    throw new ValidationError(`Unsupported transcript extension: ${extension || "(none)"}`);
+  }
+  return extension;
+}
+
+// src/ingest/parseTimestamps.ts
+var timestampPattern = /^(\d{1,2}:)?(\d{1,2}):(\d{2})([.,]\d{1,3})?$/;
+function parseTimestampToMs(value) {
+  const match = value.trim().match(timestampPattern);
+  if (!match) return null;
+  const hours = match[1] ? Number(match[1].slice(0, -1)) : 0;
+  const minutes = Number(match[2]);
+  const seconds = Number(match[3]);
+  if (minutes > 59 || seconds > 59) return null;
+  const fraction = match[4] ? match[4].slice(1).padEnd(3, "0").slice(0, 3) : "0";
+  return ((hours * 60 + minutes) * 60 + seconds) * 1e3 + Number(fraction);
+}
+function parseTimestampRange(value) {
+  const parts = value.split("-->");
+  if (parts.length !== 2) return null;
+  const startTimeMs = parseTimestampToMs(parts[0]);
+  const endToken = parts[1].trim().split(/\s+/)[0];
+  const endTimeMs = parseTimestampToMs(endToken);
+  return startTimeMs == null || endTimeMs == null ? null : { startTimeMs, endTimeMs };
+}
+
+// src/ingest/offsets.ts
+function getSourceLines(rawText) {
+  const lines = [];
+  let start = 0;
+  let number = 1;
+  for (let index = 0; index < rawText.length; index++) {
+    if (rawText[index] !== "\n" && rawText[index] !== "\r") continue;
+    const contentEnd = index;
+    if (rawText[index] === "\r" && rawText[index + 1] === "\n") index++;
+    const end = index + 1;
+    lines.push({ number, start, contentEnd, end, content: rawText.slice(start, contentEnd) });
+    start = end;
+    number++;
+  }
+  if (start < rawText.length || rawText.length === 0) {
+    lines.push({ number, start, contentEnd: rawText.length, end: rawText.length, content: rawText.slice(start) });
+  }
+  return lines;
+}
+function lineNumberAt(rawText, offset) {
+  let line = 1;
+  for (let index = 0; index < Math.min(offset, rawText.length); index++) {
+    if (rawText[index] === "\n") line++;
+    else if (rawText[index] === "\r") {
+      line++;
+      if (rawText[index + 1] === "\n") index++;
+    }
+  }
+  return line;
+}
+
+// src/ingest/parseSpeakerTurns.ts
+var timestampToken = String.raw`\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?`;
+var prefixedLine = new RegExp(String.raw`^(?:(?:\[(${timestampToken})\]|\((${timestampToken})\)|(${timestampToken}))\s+)?([^:\r\n]{1,100}):(?:\s|$)`);
+var timestampOnlyLine = new RegExp(String.raw`^(?:\[(${timestampToken})\]|\((${timestampToken})\)|(${timestampToken}))\s*`);
+function normalizeSpeaker(value) {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+function marker(line) {
+  const speaker = line.match(prefixedLine);
+  if (speaker) {
+    const speakerLabel = speaker[4].trim();
+    return {
+      speakerLabel,
+      speakerNormalized: normalizeSpeaker(speakerLabel),
+      startTimeMs: parseTimestampToMs(speaker[1] ?? speaker[2] ?? speaker[3] ?? "")
+    };
+  }
+  const timestamp = line.match(timestampOnlyLine);
+  if (timestamp) return { speakerLabel: null, speakerNormalized: null, startTimeMs: parseTimestampToMs(timestamp[1] ?? timestamp[2] ?? timestamp[3]) };
+  return null;
+}
+function makeTurn(lines, details, times) {
+  const first = lines[0], last = lines[lines.length - 1];
+  return {
+    turnIndex: 0,
+    speakerLabel: details?.speakerLabel ?? null,
+    speakerNormalized: details?.speakerNormalized ?? null,
+    startTimeMs: times?.startTimeMs ?? details?.startTimeMs ?? null,
+    endTimeMs: times?.endTimeMs ?? null,
+    startLine: first.number,
+    endLine: last.number,
+    startChar: first.start,
+    endChar: last.contentEnd,
+    rawText: ""
+  };
+}
+function parseCaptions(rawText, lines) {
+  const turns = [];
+  let index = 0;
+  while (index < lines.length) {
+    while (index < lines.length && !lines[index].content.trim()) index++;
+    if (index >= lines.length) break;
+    const block = [];
+    while (index < lines.length && lines[index].content.trim()) block.push(lines[index++]);
+    const timingIndex = block.findIndex((line) => parseTimestampRange(line.content) != null);
+    if (timingIndex < 0 || timingIndex === block.length - 1) continue;
+    const body = block.slice(timingIndex + 1);
+    const turn = makeTurn(body, marker(body[0].content), parseTimestampRange(block[timingIndex].content));
+    turn.rawText = rawText.slice(turn.startChar, turn.endChar);
+    turns.push(turn);
+  }
+  return turns.map((turn, turnIndex) => ({ ...turn, turnIndex }));
+}
+function parsePlain(rawText, lines) {
+  const hasMarkers = lines.some((line) => marker(line.content) != null);
+  const hasParagraphBreaks = lines.some((line) => !line.content.trim());
+  if (!hasMarkers && !hasParagraphBreaks) {
+    return lines.filter((line) => line.content.trim()).map((line, turnIndex) => ({
+      ...makeTurn([line]),
+      turnIndex,
+      rawText: rawText.slice(line.start, line.contentEnd)
+    }));
+  }
+  const groups = [];
+  let current = [];
+  let details = null;
+  const flush = () => {
+    if (current.some((line) => line.content.trim())) groups.push({ lines: current, details });
+    current = [];
+    details = null;
+  };
+  for (const line of lines) {
+    if (!line.content.trim()) {
+      flush();
+      continue;
+    }
+    const lineMarker = marker(line.content);
+    if (hasMarkers && lineMarker) {
+      flush();
+      details = lineMarker;
+      current.push(line);
+      continue;
+    }
+    if (!hasMarkers && current.length === 0) details = null;
+    current.push(line);
+  }
+  flush();
+  return groups.map((group, turnIndex) => {
+    const turn = makeTurn(group.lines, group.details);
+    turn.turnIndex = turnIndex;
+    turn.rawText = rawText.slice(turn.startChar, turn.endChar);
+    return turn;
+  });
+}
+function parseSpeakerTurns(rawText, format) {
+  const lines = getSourceLines(rawText);
+  return format === "srt" || format === "vtt" ? parseCaptions(rawText, lines) : parsePlain(rawText, lines);
+}
+
+// src/ingest/createTranscriptSpans.ts
+var MAX_SPAN_CHARS = 1500;
+function splitPoint(text, start, maxEnd) {
+  const window = text.slice(start, maxEnd);
+  let best = -1;
+  for (const match of window.matchAll(/(?:\r\n|\r|\n)|[.!?](?=\s)/g)) best = match.index + match[0].length;
+  return best >= Math.floor(MAX_SPAN_CHARS * 0.5) ? start + best : maxEnd;
+}
+function createSpansFromTurns(rawText, turns) {
+  const spans = [];
+  for (const turn of turns) {
+    let startChar = turn.startChar;
+    while (startChar < turn.endChar) {
+      const maxEnd = Math.min(startChar + MAX_SPAN_CHARS, turn.endChar);
+      const endChar = maxEnd < turn.endChar ? splitPoint(rawText, startChar, maxEnd) : turn.endChar;
+      const text = rawText.slice(startChar, endChar);
+      if (text.trim()) {
+        spans.push({
+          spanIndex: spans.length,
+          kind: "turn",
+          speakerLabel: turn.speakerLabel,
+          startTimeMs: turn.startTimeMs,
+          endTimeMs: turn.endTimeMs,
+          startLine: lineNumberAt(rawText, startChar),
+          endLine: lineNumberAt(rawText, endChar - 1),
+          startChar,
+          endChar,
+          text
+        });
+      }
+      startChar = endChar;
+    }
+  }
+  return spans;
+}
+
+// src/ingest/importTranscript.ts
+var import_node_crypto5 = require("node:crypto");
+function stableId3(prefix, value, length = 24) {
+  return `${prefix}${(0, import_node_crypto5.createHash)("sha256").update(value).digest("hex").slice(0, length)}`;
+}
+function sourceTypeForDatabase(sourceType) {
+  if (sourceType === "paste" || sourceType === "test") return "pasted_text";
+  return sourceType === "vault_file" ? "external_reference" : "imported_file";
+}
+function insertTurns(db, transcriptId, rawText, turns) {
+  const statement = db.prepare(`INSERT INTO transcript_turns(
+    id,transcript_id,turn_index,speaker_label,speaker_normalized,start_time_ms,end_time_ms,start_line,end_line,start_char,end_char,raw_text
+  ) VALUES (@id,@transcript_id,@turn_index,@speaker_label,@speaker_normalized,@start_time_ms,@end_time_ms,@start_line,@end_line,@start_char,@end_char,@raw_text)`);
+  for (const turn of turns) {
+    if (turn.rawText !== rawText.slice(turn.startChar, turn.endChar)) throw new ValidationError("Turn text does not match its raw transcript offsets");
+    statement.run({
+      id: stableId3("turn_", `${transcriptId}:${turn.turnIndex}:${turn.startChar}:${turn.endChar}`),
+      transcript_id: transcriptId,
+      turn_index: turn.turnIndex,
+      speaker_label: turn.speakerLabel,
+      speaker_normalized: turn.speakerNormalized,
+      start_time_ms: turn.startTimeMs,
+      end_time_ms: turn.endTimeMs,
+      start_line: turn.startLine,
+      end_line: turn.endLine,
+      start_char: turn.startChar,
+      end_char: turn.endChar,
+      raw_text: turn.rawText
+    });
+  }
+}
+function insertSpans(db, transcriptId, sourceId, rawText, spans) {
+  const speakerIds = /* @__PURE__ */ new Map();
+  const speakerInsert = db.prepare(`INSERT OR IGNORE INTO transcript_speakers(id,transcript_id,speaker_label,metadata_json)
+    VALUES (?, ?, ?, '{}')`);
+  const statement = db.prepare(`INSERT INTO transcript_spans(
+    id,transcript_id,source_id,speaker_id,ordinal,span_index,start_char,end_char,start_time_ms,end_time_ms,
+    text_preview,text_hash,created_at,metadata_json,kind,speaker_label,start_line,end_line,text,created_by
+  ) VALUES (
+    @id,@transcript_id,@source_id,@speaker_id,@ordinal,@span_index,@start_char,@end_char,@start_time_ms,@end_time_ms,
+    @text_preview,@text_hash,@created_at,'{}',@kind,@speaker_label,@start_line,@end_line,@text,'deterministic_span_creator'
+  )`);
+  for (const span of spans) {
+    if (span.text !== rawText.slice(span.startChar, span.endChar)) throw new ValidationError("Span text does not match its raw transcript offsets");
+    let speakerId = null;
+    if (span.speakerLabel) {
+      speakerId = speakerIds.get(span.speakerLabel) ?? stableId3("spk_", `${transcriptId}:${span.speakerLabel}`);
+      speakerIds.set(span.speakerLabel, speakerId);
+      speakerInsert.run(speakerId, transcriptId, span.speakerLabel);
+    }
+    statement.run({
+      id: stableId3("sp_", `${transcriptId}:${span.kind}:${span.startChar}:${span.endChar}`),
+      transcript_id: transcriptId,
+      source_id: sourceId,
+      speaker_id: speakerId,
+      ordinal: span.spanIndex,
+      span_index: span.spanIndex,
+      start_char: span.startChar,
+      end_char: span.endChar,
+      start_time_ms: span.startTimeMs,
+      end_time_ms: span.endTimeMs,
+      text_preview: span.text.slice(0, 500),
+      text_hash: contentHash(span.text),
+      created_at: now(),
+      kind: span.kind,
+      speaker_label: span.speakerLabel,
+      start_line: span.startLine,
+      end_line: span.endLine,
+      text: span.text
+    });
+  }
+}
+function importTranscript(db, input) {
+  if (!input.filename.trim()) throw new ValidationError("Transcript filename is required");
+  if (!input.rawText.trim()) throw new ValidationError("Transcript rawText must contain non-whitespace content");
+  const format = detectTranscriptFormat(input.filename, input.rawText);
+  const rawSha256 = computeRawSha256(input.rawText);
+  const existing = db.prepare("SELECT id FROM transcripts WHERE raw_sha256 = ? OR (raw_sha256 IS NULL AND content_hash = ?) ORDER BY imported_at LIMIT 1").get(rawSha256, rawSha256);
+  if (existing) {
+    return {
+      status: "duplicate",
+      transcriptId: existing.id,
+      duplicateOfTranscriptId: existing.id,
+      rawSha256,
+      warning: "Duplicate transcript detected. Existing transcript was reused.",
+      turnsCreated: 0,
+      spansCreated: 0
+    };
+  }
+  const transcriptId = `tr_${rawSha256.slice(0, 24)}`;
+  const sourceId = `src_${rawSha256.slice(0, 24)}`;
+  const sourceType = input.sourceType ?? "upload";
+  const importedAt = input.importedAt ?? now();
+  const turns = parseSpeakerTurns(input.rawText, format);
+  const spans = createSpansFromTurns(input.rawText, turns);
+  if (!turns.length || !spans.length) throw new ValidationError("Transcript did not produce any usable turns or spans");
+  db.transaction(() => {
+    db.prepare(`INSERT OR IGNORE INTO transcript_sources(id,source_type,original_filename,raw_storage_uri,content_hash,byte_length,created_at,metadata_json)
+      VALUES (?,?,?,?,?,?,?,?)`).run(
+      sourceId,
+      sourceTypeForDatabase(sourceType),
+      input.filename,
+      `db://transcripts/${transcriptId}/raw`,
+      rawSha256,
+      Buffer.byteLength(input.rawText),
+      importedAt,
+      json({ ...input.metadata, ingestion_source_type: sourceType })
+    );
+    const storedSourceId = db.prepare("SELECT id FROM transcript_sources WHERE content_hash = ?").get(rawSha256).id;
+    db.prepare(`INSERT INTO transcripts(
+      id,source_id,title,status,content_hash,imported_at,updated_at,metadata_json,raw_sha256,source_filename,source_type,raw_text
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+      transcriptId,
+      storedSourceId,
+      input.filename,
+      "chunked",
+      rawSha256,
+      importedAt,
+      importedAt,
+      json(input.metadata),
+      rawSha256,
+      input.filename,
+      sourceType,
+      input.rawText
+    );
+    insertTurns(db, transcriptId, input.rawText, turns);
+    insertSpans(db, transcriptId, storedSourceId, input.rawText, spans);
+  })();
+  return { status: "imported", transcriptId, rawSha256, turnsCreated: turns.length, spansCreated: spans.length };
+}
+
+// src/obsidian/paths.ts
+function safeName(value, fallback = "Untitled") {
+  const clean = value.replace(/[<>:"/\\|?*\u0000-\u001F]/g, " ").replace(/\s+/g, " ").trim().replace(/[. ]+$/g, "");
+  return (clean || fallback).slice(0, 100);
+}
+var stableNoteName = (label, id) => `${safeName(label)}--${safeName(id)}`;
+var transcriptPath = (title, id) => `Transcripts/${stableNoteName(title, id)}.md`;
+var memoryFolder = (type) => type === "decision" ? "Decisions" : type === "preference" ? "Preferences" : type === "task" ? "Tasks" : type === "question" ? "Questions" : type === "claim" ? "Facts" : "Other";
+var memoryPath = (title, id, type) => `Memories/${memoryFolder(type)}/${stableNoteName(title, id)}.md`;
+var evidencePath = (id) => `Evidence/${safeName(id)}.md`;
+var answerPath = (id) => `Answers/${safeName(id)}.md`;
+var conflictPath = (id) => `Conflicts/${safeName(id)}.md`;
+var entityPath = (kind, label, id) => `${kind === "person" ? "People" : kind === "topic" ? "Topics" : "Decisions"}/${stableNoteName(label, id)}.md`;
+
+// src/obsidian/graphBuilder.ts
+var import_node_crypto6 = require("node:crypto");
+var edgeId = (source, target, type, evidence = "") => `ov_edge_${(0, import_node_crypto6.createHash)("sha256").update(`${source}:${target}:${type}:${evidence}`).digest("hex").slice(0, 24)}`;
+var mapEdgeType = (value) => value === "contradicts" ? "contradicts" : value === "updates" ? "updates" : value === "mentions" ? "mentions" : value === "supports" ? "supports" : value === "derived_from" ? "derived_from" : "about";
+var memoryNodeId = (id) => `memory:${id}`;
+var evidenceNodeId = (id) => `evidence:${id}`;
+var spanNodeId = (id) => `span:${id}`;
+var transcriptNodeId = (id) => `transcript:${id}`;
+function buildObsidianGraph(db) {
+  const nodes = /* @__PURE__ */ new Map(), edges = /* @__PURE__ */ new Map(), warnings = [];
+  const addNode = (node) => nodes.set(node.id, node);
+  const addEdge = (edge) => {
+    const id = edgeId(edge.source, edge.target, edge.type, edge.evidencePointerId);
+    edges.set(id, { id, ...edge });
+  };
+  const transcripts = db.prepare("SELECT id,title FROM transcripts ORDER BY id").all();
+  transcripts.forEach((row) => addNode({ id: transcriptNodeId(row.id), type: "transcript", label: row.title, notePath: transcriptPath(row.title, row.id), transcriptId: row.id }));
+  const memories = db.prepare("SELECT id,type,title,generated_text,confidence,status FROM memory_objects ORDER BY id").all();
+  memories.forEach((row) => addNode({ id: memoryNodeId(row.id), type: row.type === "decision" ? "decision" : row.type === "person" ? "person" : row.type === "topic" ? "topic" : "memory", label: row.title ?? row.generated_text.slice(0, 80), notePath: row.type === "decision" ? entityPath("decision", row.title ?? row.generated_text.slice(0, 80), row.id) : memoryPath(row.title ?? row.generated_text.slice(0, 80), row.id, row.type), confidence: row.confidence, supportStatus: row.status }));
+  const pointers = db.prepare("SELECT * FROM evidence_pointers ORDER BY evidence_pointer_id").all();
+  for (const pointer of pointers) {
+    const id = String(pointer.evidence_pointer_id), resolved = resolveEvidencePointer(db, id);
+    addNode({ id: evidenceNodeId(id), type: "evidence", label: id, notePath: evidencePath(id), evidenceUri: String(pointer.pointer_uri), transcriptId: String(pointer.transcript_id), spanId: String(pointer.span_id), confidence: Number(pointer.confidence), supportStatus: String(pointer.evidence_strength) });
+    if (!resolved.ok) {
+      warnings.push(`Broken evidence pointer ${id}: ${resolved.reason}`);
+      continue;
+    }
+    const spanId = String(pointer.span_id), transcriptId = String(pointer.transcript_id);
+    addNode({ id: spanNodeId(spanId), type: "span", label: spanId, sourceUri: String(pointer.source_pointer_uri), transcriptId, spanId });
+    addEdge({ source: spanNodeId(spanId), target: transcriptNodeId(transcriptId), type: "belongs_to" });
+    addEdge({ source: evidenceNodeId(id), target: spanNodeId(spanId), type: "derived_from", evidencePointerId: id, confidence: Number(pointer.confidence) });
+    const targetType = String(pointer.target_type), targetId = String(pointer.target_id);
+    const target = targetType === "memory_object" || targetType === "claim" || targetType === "summary" ? memoryNodeId(targetId) : targetType === "answer" ? `answer:${targetId}` : targetType === "answer_claim" ? `claim:${targetId}` : `graph:${targetId}`;
+    if (targetType === "answer") addNode({ id: target, type: "answer", label: targetId, notePath: answerPath(targetId) });
+    if (targetType === "answer_claim") {
+      const claim = db.prepare("SELECT claim_text,support_status FROM answer_claims WHERE answer_claim_id=?").get(targetId);
+      if (claim) addNode({ id: target, type: "claim", label: claim.claim_text, supportStatus: claim.support_status });
+    }
+    if (targetType === "graph_node" || targetType === "graph_edge") {
+      const object = targetType === "graph_node" ? db.prepare("SELECT label FROM graph_nodes WHERE id=?").get(targetId) : db.prepare("SELECT edge_type label FROM graph_edges WHERE id=?").get(targetId);
+      if (object) addNode({ id: target, type: "memory", label: object.label, metadata: { graphTargetType: targetType } });
+    }
+    if (nodes.has(target)) addEdge({ source: target, target: evidenceNodeId(id), type: targetType === "answer_claim" || targetType === "answer" ? "cites" : "derived_from", evidencePointerId: id, confidence: Number(pointer.confidence) });
+  }
+  const answers = db.prepare("SELECT id,question_text,answer_status FROM ai_answers ORDER BY id").all();
+  answers.forEach((row) => addNode({ id: `answer:${row.id}`, type: "answer", label: row.question_text, notePath: answerPath(row.id), supportStatus: row.answer_status }));
+  const claims = db.prepare("SELECT * FROM answer_claims ORDER BY answer_claim_id").all();
+  claims.forEach((row) => {
+    const pointer = db.prepare("SELECT evidence_pointer_id FROM evidence_pointers WHERE target_type='answer_claim' AND target_id=? ORDER BY evidence_pointer_id LIMIT 1").get(row.answer_claim_id);
+    addNode({ id: `claim:${row.answer_claim_id}`, type: "claim", label: String(row.claim_text), supportStatus: String(row.support_status) });
+    addEdge({ source: `claim:${row.answer_claim_id}`, target: `answer:${row.answer_id}`, type: "answered_by", evidencePointerId: pointer?.evidence_pointer_id });
+  });
+  const conflicts = db.prepare("SELECT * FROM conflict_assessments ORDER BY id").all();
+  conflicts.forEach((row) => {
+    const id = String(row.id), conflictNode = `conflict:${id}`;
+    addNode({ id: conflictNode, type: "conflict", label: String(row.summary), notePath: conflictPath(id), confidence: Number(row.confidence), supportStatus: String(row.status) });
+    for (const side of ["left", "right"]) {
+      const type = String(row[`${side}_target_type`]), targetId = String(row[`${side}_target_id`]);
+      const target = type === "memory_object" || type === "claim" || type === "summary" ? memoryNodeId(targetId) : type === "answer_claim" ? `claim:${targetId}` : type === "evidence_pointer" ? evidenceNodeId(targetId) : `graph:${targetId}`;
+      const pointer = db.prepare("SELECT evidence_pointer_id FROM conflict_evidence_links WHERE conflict_assessment_id=? AND side=? AND provenance_validated=1 ORDER BY evidence_pointer_id LIMIT 1").get(id, side);
+      if (nodes.has(target)) addEdge({ source: conflictNode, target, type: String(row.kind) === "temporal_update" ? "updates" : "contradicts", confidence: Number(row.confidence), evidencePointerId: pointer?.evidence_pointer_id, metadata: { side } });
+    }
+  });
+  const graphNodes = db.prepare("SELECT * FROM graph_nodes ORDER BY id").all();
+  graphNodes.forEach((row) => {
+    const type = row.node_type === "entity" ? "person" : row.node_type === "topic" ? "topic" : row.node_type === "memory_object" ? "memory" : row.node_type === "transcript" ? "transcript" : "span";
+    const id = `graph:${row.id}`;
+    addNode({ id, type, label: String(row.label), notePath: type === "person" || type === "topic" ? entityPath(type, String(row.label), String(row.ref_id)) : void 0, metadata: { refId: row.ref_id } });
+  });
+  const graphEdges = db.prepare("SELECT * FROM graph_edges ORDER BY id").all();
+  for (const row of graphEdges) {
+    let pointerId;
+    if (row.evidence_bundle_id) {
+      const evidence = db.prepare("SELECT metadata_json FROM evidence_items WHERE bundle_id=? ORDER BY id LIMIT 1").get(row.evidence_bundle_id);
+      try {
+        pointerId = evidence ? JSON.parse(evidence.metadata_json).evidence_pointer_id : void 0;
+      } catch {
+        pointerId = void 0;
+      }
+    }
+    if (row.source_type === "source_backed" && !pointerId) {
+      warnings.push(`Source-backed graph edge ${row.id} lacks an evidence pointer view link.`);
+      continue;
+    }
+    addEdge({ source: `graph:${row.from_node_id}`, target: `graph:${row.to_node_id}`, type: mapEdgeType(String(row.edge_type)), evidencePointerId: pointerId, confidence: Number(row.confidence), metadata: { sourceType: row.source_type, status: row.status, generatedWithoutEvidence: row.source_type === "inferred" } });
+  }
+  return { graph: { nodes: [...nodes.values()].sort((a, b) => a.id.localeCompare(b.id)), edges: [...edges.values()].sort((a, b) => a.id.localeCompare(b.id)) }, warnings };
+}
+
+// src/obsidian/services/ObsidianAppApi.ts
+function createObsidianAppApi(db, vault, health) {
+  const api = createSqliteFrontendApi(db, { health });
+  return {
+    ...api,
+    async uploadVaultFile(file) {
+      const rawText = await vault.read(file);
+      validateTranscriptUpload({ filename: file.name, rawText });
+      return api.uploadTranscript({ filename: file.name, rawText });
+    }
+  };
+}
+
+// src/frontend/sqliteApi.ts
+var trust = (value) => {
+  const state = String(value ?? "no_evidence");
+  return ["strong", "mixed", "weak", "conflicting", "no_evidence", "broken", "needs_review", "rejected", "superseded"].includes(state) ? state : "weak";
+};
+var preview = (value, length = 180) => {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  return text.length <= length ? text : `${text.slice(0, length - 3)}...`;
+};
+var evidenceRole = (value) => value === "support" ? "supporting" : value === "opposition" ? "opposing" : "context";
+function validateTranscriptUpload(input) {
+  if (!/\.(txt|md|srt|vtt)$/i.test(input.filename)) throw new Error("Unsupported transcript type. Use .txt, .md, .srt, or .vtt.");
+  if (!input.rawText.trim()) throw new Error("Select a non-empty transcript file.");
+}
+function transcriptList(db) {
+  return db.prepare(`SELECT t.id,t.title,t.status,t.imported_at,t.source_type,COUNT(DISTINCT s.id) span_count,COUNT(DISTINCT s.speaker_id) speaker_count
+    FROM transcripts t LEFT JOIN transcript_spans s ON s.transcript_id=t.id
+    GROUP BY t.id ORDER BY t.imported_at DESC,t.id`).all().map((row) => ({
+    id: String(row.id),
+    title: String(row.title),
+    sourceType: String(row.source_type),
+    status: String(row.status),
+    createdAt: String(row.imported_at),
+    importedAt: String(row.imported_at),
+    spanCount: Number(row.span_count),
+    speakerCount: Number(row.speaker_count),
+    processingStatus: row.status === "failed" ? "failed" : row.status === "imported" ? "processing" : "ready"
+  }));
+}
+function brokenEvidence(db, id, reason) {
+  const row = db.prepare(`SELECT p.*,t.title transcript_title FROM evidence_pointers p
+    LEFT JOIN transcripts t ON t.id=p.transcript_id WHERE p.evidence_pointer_id=?`).get(id);
+  if (!row) {
+    return {
+      id,
+      pointerUri: `mv://evidence/${id}`,
+      sourcePointerUri: "",
+      targetType: "unknown",
+      targetId: "",
+      role: "unclear",
+      strength: "broken",
+      confidence: 0,
+      finalScore: null,
+      quotePreview: "",
+      transcriptId: "",
+      transcriptTitle: "Unavailable",
+      spanId: "",
+      spanText: "",
+      rawText: "",
+      brokenReason: reason
+    };
+  }
+  return {
+    id,
+    pointerUri: String(row.pointer_uri),
+    sourcePointerUri: String(row.source_pointer_uri),
+    targetType: String(row.target_type),
+    targetId: String(row.target_id),
+    role: evidenceRole(String(row.evidence_role)),
+    strength: "broken",
+    confidence: Number(row.confidence),
+    finalScore: row.final_score == null ? null : Number(row.final_score),
+    quotePreview: String(row.quote_preview),
+    transcriptId: String(row.transcript_id),
+    transcriptTitle: String(row.transcript_title ?? row.transcript_id),
+    spanId: String(row.span_id),
+    spanText: "",
+    rawText: "",
+    brokenReason: reason
+  };
+}
+function evidenceView(db, id) {
+  const resolved = resolveEvidencePointer(db, id);
+  if (!resolved.ok) return brokenEvidence(db, id, resolved.reason);
+  const title = db.prepare("SELECT title FROM transcripts WHERE id=?").get(resolved.evidence.transcript_id);
+  return {
+    id: resolved.evidence.evidence_pointer_id,
+    pointerUri: resolved.evidence.pointer_uri,
+    sourcePointerUri: resolved.evidence.source_pointer_uri,
+    targetType: resolved.evidence.target_type,
+    targetId: resolved.evidence.target_id,
+    role: evidenceRole(resolved.evidence.evidence_role),
+    strength: trust(resolved.evidence.evidence_strength),
+    confidence: resolved.evidence.confidence,
+    finalScore: resolved.evidence.final_score,
+    quotePreview: resolved.evidence.quote_preview,
+    transcriptId: resolved.evidence.transcript_id,
+    transcriptTitle: title?.title ?? resolved.evidence.transcript_id,
+    spanId: resolved.evidence.span_id,
+    spanText: resolved.spanText,
+    rawText: resolved.rawText,
+    brokenReason: null
+  };
+}
+function reviewItems(db) {
+  const items = [];
+  const pointers = db.prepare("SELECT evidence_pointer_id,evidence_strength,target_type,target_id,quote_preview,transcript_id,created_at FROM evidence_pointers ORDER BY created_at,evidence_pointer_id").all();
+  for (const pointer of pointers) {
+    const resolved = resolveEvidencePointer(db, pointer.evidence_pointer_id);
+    if (!resolved.ok) {
+      items.push({
+        id: `broken:${pointer.evidence_pointer_id}`,
+        type: "broken_pointer",
+        title: "Broken evidence pointer",
+        detail: `${pointer.evidence_pointer_id}: ${resolved.reason}`,
+        targetType: pointer.target_type,
+        targetId: pointer.target_id,
+        trustState: "broken",
+        href: routeHref.evidence(pointer.evidence_pointer_id),
+        createdAt: pointer.created_at,
+        severity: "high",
+        status: "open",
+        relatedTranscriptIds: [pointer.transcript_id],
+        relatedEvidenceIds: [pointer.evidence_pointer_id]
+      });
+    } else if (pointer.evidence_strength === "weak" || pointer.evidence_strength === "unknown") {
+      items.push({
+        id: `weak:${pointer.evidence_pointer_id}`,
+        type: "weak_evidence",
+        title: "Weak evidence",
+        detail: preview(pointer.quote_preview),
+        targetType: pointer.target_type,
+        targetId: pointer.target_id,
+        trustState: "weak",
+        href: routeHref.evidence(pointer.evidence_pointer_id),
+        createdAt: pointer.created_at,
+        severity: "medium",
+        status: "open",
+        relatedTranscriptIds: [resolved.evidence.transcript_id],
+        relatedEvidenceIds: [pointer.evidence_pointer_id]
+      });
+    }
+  }
+  for (const memory of createMemoryObjectsRepo(db).listCanonicalMemoryObjects()) {
+    if (memory.status === "needs_review" || memory.status === "weak") {
+      const row = db.prepare("SELECT created_at FROM memory_objects WHERE id=?").get(memory.id);
+      const transcriptIds = db.prepare(`SELECT DISTINCT s.transcript_id FROM transcript_spans s
+        WHERE s.id IN (SELECT span_id FROM memory_object_evidence WHERE memory_id=?) ORDER BY s.transcript_id`).all(memory.id).map((item) => item.transcript_id);
+      items.push({
+        id: `memory:${memory.id}`,
+        type: "memory_needs_review",
+        title: memory.title || memory.body,
+        detail: `${memory.status}; ${memory.evidenceSpanIds.length} evidence span(s)`,
+        targetType: "memory_object",
+        targetId: memory.id,
+        trustState: memory.status,
+        href: routeHref.memory(memory.id),
+        createdAt: row.created_at,
+        severity: "medium",
+        status: "open",
+        relatedTranscriptIds: transcriptIds,
+        relatedEvidenceIds: []
+      });
+    }
+  }
+  const conflictRepo = createConflictRepository(db);
+  const conflicts = db.prepare("SELECT id FROM conflict_assessments ORDER BY created_at,id").all().map(({ id }) => conflictRepo.get(id)).filter((item) => item != null);
+  for (const conflict of conflicts) {
+    if (conflict.status === "resolved" || conflict.status === "dismissed" || conflict.status === "superseded") continue;
+    items.push({
+      id: `conflict:${conflict.id}`,
+      type: "conflict",
+      title: conflict.summary,
+      detail: conflict.explanation,
+      targetType: conflict.leftTargetType,
+      targetId: conflict.leftTargetId,
+      trustState: "conflicting",
+      href: routeHref.review(`conflict:${conflict.id}`),
+      createdAt: conflict.createdAt,
+      severity: "high",
+      status: "open",
+      relatedTranscriptIds: [...new Set(conflict.evidenceLinks.flatMap((link) => link.transcriptId ? [link.transcriptId] : []))],
+      relatedEvidenceIds: conflict.evidenceLinks.map((link) => link.evidencePointerId)
+    });
+  }
+  for (const row of db.prepare("SELECT id,target_type,target_id,reason,created_at FROM user_corrections ORDER BY created_at,id").all()) {
+    items.push({
+      id: `correction:${String(row.id)}`,
+      type: "user_correction",
+      title: "User correction received",
+      detail: String(row.reason ?? "Awaiting review or reprocessing"),
+      targetType: String(row.target_type),
+      targetId: String(row.target_id),
+      trustState: "needs_review",
+      href: routeHref.review(`correction:${String(row.id)}`),
+      createdAt: String(row.created_at),
+      severity: "low",
+      status: "open",
+      relatedTranscriptIds: [],
+      relatedEvidenceIds: []
+    });
+  }
+  return items.sort((a, b) => a.id.localeCompare(b.id));
+}
+function normalizeCorrectionTarget(db, input) {
+  if (["memory_object", "graph_edge", "speaker", "answer", "span", "transcript"].includes(input.targetType)) {
+    return { targetType: input.targetType, targetId: input.targetId };
+  }
+  if (input.targetType === "answer_claim") {
+    const row = db.prepare("SELECT answer_id FROM answer_claims WHERE answer_claim_id=?").get(input.targetId);
+    if (row) return { targetType: "answer", targetId: row.answer_id };
+  }
+  if (input.targetType === "citation") {
+    const row = db.prepare("SELECT answer_id FROM citation_links WHERE citation_link_id=?").get(input.targetId);
+    if (row?.answer_id) return { targetType: "answer", targetId: row.answer_id };
+  }
+  if (input.targetType === "evidence") {
+    const row = db.prepare("SELECT target_type,target_id FROM evidence_pointers WHERE evidence_pointer_id=?").get(input.targetId);
+    if (row && ["memory_object", "graph_edge", "answer"].includes(row.target_type)) return { targetType: row.target_type, targetId: row.target_id };
+    if (row?.target_type === "answer_claim") return normalizeCorrectionTarget(db, { ...input, targetType: "answer_claim", targetId: row.target_id });
+    if (row?.target_type === "graph_node") return normalizeCorrectionTarget(db, { ...input, targetType: "graph_node", targetId: row.target_id });
+  }
+  if (input.targetType === "graph_node") {
+    const row = db.prepare("SELECT node_type,ref_id FROM graph_nodes WHERE id=?").get(input.targetId);
+    if (row?.node_type === "memory_object") return { targetType: "memory_object", targetId: row.ref_id };
+    if (row?.node_type === "transcript") return { targetType: "transcript", targetId: row.ref_id };
+    if (row?.node_type === "span") return { targetType: "span", targetId: row.ref_id };
+  }
+  throw new Error(`Correction target ${input.targetType}:${input.targetId} has no supported append-only owner`);
+}
+function createSqliteFrontendApi(db, options = {}) {
+  return {
+    async getDashboard() {
+      const answers = db.prepare("SELECT id,question,evidence_confidence,created_at FROM ask_ai_runs ORDER BY created_at DESC,id LIMIT 8").all();
+      const review = reviewItems(db);
+      return {
+        totalTranscriptCount: transcriptList(db).length,
+        transcripts: transcriptList(db).slice(0, 10),
+        recentAnswers: answers.map((row) => ({ id: String(row.id), question: String(row.question), confidence: trust(row.evidence_confidence), createdAt: String(row.created_at) })),
+        reviewCount: review.length,
+        weakCount: review.filter((item) => item.trustState === "weak" || item.trustState === "needs_review").length,
+        conflictCount: review.filter((item) => item.trustState === "conflicting").length,
+        brokenCount: review.filter((item) => item.trustState === "broken").length,
+        health: options.health
+      };
+    },
+    async listTranscripts() {
+      return transcriptList(db);
+    },
+    async uploadTranscript(input) {
+      validateTranscriptUpload(input);
+      const result = importTranscript(db, { filename: input.filename, rawText: input.rawText, sourceType: "upload" });
+      return { transcriptId: result.transcriptId, status: result.status, warning: result.warning };
+    },
+    async getTranscript(id) {
+      const row = db.prepare("SELECT id,title,status,imported_at,raw_text,source_type FROM transcripts WHERE id=?").get(id);
+      if (!row) return null;
+      const spans = db.prepare(`SELECT s.id,s.ordinal,s.start_time_ms,s.end_time_ms,s.start_char,s.end_char,s.text,
+        COALESCE(s.speaker_label,sp.display_name,sp.speaker_label) speaker
+        FROM transcript_spans s LEFT JOIN transcript_speakers sp ON sp.id=s.speaker_id
+        WHERE s.transcript_id=? ORDER BY s.ordinal,s.id`).all(id);
+      return {
+        id,
+        title: String(row.title),
+        sourceType: String(row.source_type),
+        status: String(row.status),
+        createdAt: String(row.imported_at),
+        importedAt: String(row.imported_at),
+        rawText: String(row.raw_text),
+        immutable: true,
+        speakerCount: new Set(spans.map((span) => span.speaker).filter(Boolean)).size,
+        processingStatus: row.status === "failed" ? "failed" : row.status === "imported" ? "processing" : "ready",
+        spanCount: spans.length,
+        spans: spans.map((span) => ({
+          id: String(span.id),
+          transcriptId: id,
+          ordinal: Number(span.ordinal),
+          speaker: span.speaker == null ? null : String(span.speaker),
+          startTimeMs: span.start_time_ms == null ? null : Number(span.start_time_ms),
+          startChar: Number(span.start_char),
+          endTimeMs: span.end_time_ms == null ? null : Number(span.end_time_ms),
+          endChar: Number(span.end_char),
+          text: String(span.text)
+        }))
+      };
+    },
+    async ask(question, askOptions) {
+      return askAI({ question, transcriptIds: askOptions?.transcriptIds }, createDatabaseAskAIDependencies(db, options));
+    },
+    async askAI(question, askOptions) {
+      return askAI({ question, transcriptIds: askOptions?.transcriptIds }, createDatabaseAskAIDependencies(db, options));
+    },
+    async getAnswer(id) {
+      try {
+        const answer = getAskAIResponse(db, id);
+        return { ...answer, brokenCitationIds: answer.citations.filter((citation) => !resolveEvidencePointer(db, citation.evidencePointerId).ok).map((citation) => citation.id) };
+      } catch {
+        return null;
+      }
+    },
+    async getEvidence(id) {
+      return evidenceView(db, id);
+    },
+    async getMemory(id) {
+      const memory = createMemoryObjectsRepo(db).getCanonicalMemoryObject(id);
+      if (!memory) return null;
+      const pointers = db.prepare(`SELECT evidence_pointer_id FROM evidence_pointers
+        WHERE target_type IN ('memory_object','claim','summary') AND target_id=? ORDER BY evidence_pointer_id`).all(id);
+      return {
+        memory,
+        trustState: isStrongMemoryObject(memory) ? "strong" : trust(memory.status),
+        evidence: pointers.map((pointer) => evidenceView(db, pointer.evidence_pointer_id)),
+        conflicts: createConflictRepository(db).listConflictsForTarget("memory_object", id)
+      };
+    },
+    async getMemoryObject(id) {
+      return this.getMemory(id);
+    },
+    async getGraph(graphOptions) {
+      const built = buildObsidianGraph(db);
+      if (!graphOptions) return built;
+      const query = graphOptions.query?.toLowerCase(), types = graphOptions.nodeTypes, limit = Math.min(graphOptions.limit ?? 100, 100);
+      const nodes = built.graph.nodes.filter((node) => (!query || node.label.toLowerCase().includes(query)) && (!types?.length || types.includes(node.type))).slice(0, limit);
+      const ids = new Set(nodes.map((node) => node.id));
+      return { ...built, graph: { nodes, edges: built.graph.edges.filter((edge) => ids.has(edge.source) || ids.has(edge.target)).slice(0, limit) } };
+    },
+    async search(query, filters) {
+      if (!query.trim()) return [];
+      const like = `%${query.trim()}%`;
+      const results = [];
+      for (const row of db.prepare("SELECT id,title,raw_text FROM transcripts WHERE title LIKE ? OR raw_text LIKE ? ORDER BY imported_at DESC LIMIT 20").all(like, like)) {
+        results.push({ type: "transcript", id: String(row.id), title: String(row.title), preview: preview(row.raw_text), href: routeHref.transcript(String(row.id)) });
+      }
+      for (const row of db.prepare("SELECT id,transcript_id,text FROM transcript_spans WHERE text LIKE ? ORDER BY transcript_id,ordinal LIMIT 30").all(like)) {
+        results.push({ type: "span", id: String(row.id), title: `Transcript span ${String(row.id)}`, preview: preview(row.text), href: routeHref.transcript(String(row.transcript_id), String(row.id)) });
+      }
+      for (const memory of createMemoryObjectsRepo(db).listCanonicalMemoryObjects().filter((item) => `${item.title} ${item.body}`.toLowerCase().includes(query.toLowerCase())).slice(0, 20)) {
+        results.push({ type: "memory_object", id: memory.id, title: memory.title || memory.type, preview: preview(memory.body), href: routeHref.memory(memory.id), trustState: isStrongMemoryObject(memory) ? "strong" : trust(memory.status) });
+      }
+      for (const row of db.prepare("SELECT id,question,answer_markdown,evidence_confidence FROM ask_ai_runs WHERE question LIKE ? OR answer_markdown LIKE ? ORDER BY created_at DESC LIMIT 20").all(like, like)) {
+        results.push({ type: "answer", id: String(row.id), title: String(row.question), preview: preview(row.answer_markdown), href: routeHref.answer(String(row.id)), trustState: trust(row.evidence_confidence) });
+      }
+      for (const row of db.prepare("SELECT evidence_pointer_id,quote_preview,evidence_strength FROM evidence_pointers WHERE quote_preview LIKE ? ORDER BY created_at DESC LIMIT 30").all(like)) {
+        results.push({
+          type: "evidence",
+          id: String(row.evidence_pointer_id),
+          title: `Evidence ${String(row.evidence_pointer_id)}`,
+          preview: preview(row.quote_preview),
+          href: routeHref.evidence(String(row.evidence_pointer_id)),
+          trustState: trust(row.evidence_strength)
+        });
+      }
+      return results.filter((item) => (!filters?.evidenceStrength || item.trustState === filters.evidenceStrength) && (!filters?.type || filters.type === "all" || filters.type === "transcripts" && (item.type === "transcript" || item.type === "span") || filters.type === "memory" && item.type === "memory_object" || filters.type === "answers" && item.type === "answer" || filters.type === "evidence" && item.type === "evidence"));
+    },
+    async searchVault(query, filters) {
+      const results = await this.search(query, filters);
+      return {
+        transcripts: results.filter((item) => item.type === "transcript" || item.type === "span"),
+        memoryObjects: results.filter((item) => item.type === "memory_object"),
+        answers: results.filter((item) => item.type === "answer"),
+        evidence: results.filter((item) => item.type === "evidence")
+      };
+    },
+    async listReviewItems(filter) {
+      return reviewItems(db).filter((item) => (!filter?.type || item.type === filter.type) && (!filter?.status || item.status === filter.status));
+    },
+    async getReviewItem(id) {
+      return reviewItems(db).find((item) => item.id === id) ?? null;
+    },
+    async submitCorrection(input) {
+      const target = normalizeCorrectionTarget(db, input);
+      const correction = createCorrectionsRepo(db).createCorrection({
+        target_type: target.targetType,
+        target_id: target.targetId,
+        correction_type: "edit",
+        new_value: { correction_text: input.correctionText },
+        reason: input.reason ?? null,
+        metadata: { submitted_from: "frontend_review_queue", append_only: true, requested_target_type: input.targetType, requested_target_id: input.targetId }
+      });
+      return { correctionId: correction.id, status: "received" };
+    }
+  };
+}
+
+// src/frontend/render.ts
+var section = (title, body) => `<section><h2>${escapeHtml(title)}</h2>${body}</section>`;
+var links = (items) => items.map((item) => `<a href="${escapeHtml(item.href)}">${escapeHtml(item.label)}</a>`).join(" ");
+var correctionForm = (targetType, targetId) => ["memory_object", "answer_claim", "citation", "graph_node", "graph_edge", "evidence", "speaker", "answer", "span", "transcript"].includes(targetType) ? `<form data-action="correction"><input type="hidden" name="targetType" value="${escapeHtml(targetType)}"><input type="hidden" name="targetId" value="${escapeHtml(targetId)}">
+      <label>Append-only correction <textarea name="correctionText" required></textarea></label><label>Reason <input name="reason"></label>
+      <button type="submit">Submit correction</button></form><div data-form-result></div>` : `<p class="trust-warning">This target type does not yet have a backend correction record type. Use its owning memory, answer, or graph edge.</p>`;
+function evidenceCard(evidence) {
+  const clickback = evidence.brokenReason ? `<p class="error">Pointer resolution failed: ${escapeHtml(evidence.brokenReason)}</p>` : `<a class="transcript-clickback" href="${escapeHtml(routeHref.transcript(evidence.transcriptId, evidence.spanId))}">Open exact transcript span</a>`;
+  return `<article class="evidence-card" data-evidence-id="${escapeHtml(evidence.id)}">
+    <header>${trustBadge(evidence.strength)} <strong>${escapeHtml(evidence.role)}</strong> <span>${score(evidence.finalScore ?? evidence.confidence)}</span></header>
+    <blockquote>${escapeHtml(evidence.quotePreview || evidence.spanText)}</blockquote>
+    <p>${escapeHtml(evidence.transcriptTitle)} \xB7 span ${escapeHtml(evidence.spanId)}</p><button type="button" data-copy-quote="${escapeHtml(evidence.quotePreview || evidence.spanText)}">Copy quote</button>
+    ${links([{ href: routeHref.evidence(evidence.id), label: "Evidence details" }])} ${clickback}
+  </article>`;
+}
+function answerView(answer) {
+  const hasTraceableAnswer = answer.claims.length > 0 && answer.citations.length > 0 && answer.evidence.length > 0;
+  const confidence = hasTraceableAnswer ? answer.evidenceConfidence : "no_evidence";
+  const brokenWarning = answer.brokenCitationIds?.length ? `<aside class="trust-warning">${trustBadge("broken")} ${answer.brokenCitationIds.length} citation pointer(s) no longer resolve.</aside>` : "";
+  const warning = confidence === "weak" || confidence === "no_evidence" ? `<aside class="trust-warning">${trustBadge(confidence)} This answer must not be treated as strong truth.</aside>` : confidence === "conflicting" ? `<aside class="trust-warning">${trustBadge("conflicting")} Supporting and opposing evidence are both preserved below.</aside>` : "";
+  const citations = new Map(answer.citations.map((citation) => [citation.id, citation]));
+  const claims = answer.claims.map((claim) => `<article class="answer-claim" data-support-status="${escapeHtml(claim.supportStatus)}">
+    <p>${escapeHtml(claim.text)}</p>
+    <footer>${trustBadge(claim.supportStatus === "supported" ? "strong" : claim.supportStatus === "conflicting" ? "conflicting" : claim.supportStatus === "weakly_supported" ? "weak" : "no_evidence")}
+      ${claim.citationIds.map((id) => {
+    const citation = citations.get(id);
+    return citation ? `<span class="citation-preview"><a class="citation-link" href="${escapeHtml(routeHref.evidence(citation.evidencePointerId))}" title="${escapeHtml(citation.quotePreview)}">${escapeHtml(citation.label)}</a><small>${escapeHtml(citation.quotePreview)}</small>${correctionForm("citation", citation.id)}</span>` : "";
+  }).join(" ")}
+    </footer>
+    ${correctionForm("answer_claim", claim.id)}
+  </article>`).join("");
+  const evidence = answer.evidence.map((item) => `<article class="evidence-card">
+    ${trustBadge(item.evidenceConfidence)} <strong>${escapeHtml(item.stance === "opposes" ? "Opposing/conflicting evidence" : item.stance === "supports" ? "Supporting evidence" : item.stance)}</strong>
+    <blockquote>${escapeHtml(item.quotePreview)}</blockquote>
+    <p>${escapeHtml(item.scoringExplanation)}</p>
+    <a href="${escapeHtml(routeHref.evidence(item.evidencePointerId))}">Inspect evidence and transcript source</a>
+    ${correctionForm("evidence", item.evidencePointerId)}
+  </article>`).join("");
+  const conflict = answer.conflicts.map((item) => `<article class="conflict-card">${trustBadge("conflicting")}<h3>${escapeHtml(item.summary)}</h3><p>${escapeHtml(item.explanation)}</p></article>`).join("");
+  return `${brokenWarning}${warning}<article class="answer"><h2>Generated answer</h2><pre>${escapeHtml(answer.answerMarkdown)}</pre></article>
+    ${section("Claims and citations", claims || emptyState("No supported claims", "The answer correctly refused to invent claims."))}
+    ${section("Evidence", evidence || emptyState("No evidence", "No transcript-backed evidence was available."))}
+    ${conflict ? section("Conflicts", conflict) : ""}${section("Submit a correction", correctionForm("answer", answer.id))}`;
+}
+function transcriptView(transcript, selectedSpanId) {
+  const selectedIndex = selectedSpanId ? transcript.spans.findIndex((span) => span.id === selectedSpanId) : -1;
+  const start = selectedIndex >= 0 ? Math.max(0, selectedIndex - 20) : 0;
+  const visibleSpans = transcript.spans.slice(start, start + 100);
+  const spans = visibleSpans.map((span) => `<article id="span-${escapeHtml(span.id)}" class="transcript-span${span.id === selectedSpanId ? " selected-span" : ""}" data-span-id="${escapeHtml(span.id)}">
+    <header><strong>${escapeHtml(span.speaker ?? "Unknown speaker")}</strong> <span>${span.startTimeMs == null ? "" : `${Math.round(span.startTimeMs / 1e3)}s`}</span></header>
+    <pre>${escapeHtml(span.text)}</pre><button type="button" data-copy-quote="${escapeHtml(span.text)}">Copy quote</button><small>Raw offsets ${span.startChar}-${span.endChar}</small>
+  </article>`).join("");
+  const missing = selectedSpanId && !transcript.spans.some((span) => span.id === selectedSpanId) ? `<aside class="trust-warning">${trustBadge("broken")} Requested span ${escapeHtml(selectedSpanId)} was not found.</aside>` : "";
+  return `<aside class="immutable-notice">Raw transcript source is immutable. Generated text and corrections are stored separately.</aside>${missing}
+    <p>${escapeHtml(transcript.status)} \xB7 ${transcript.spanCount} spans \xB7 showing ${visibleSpans.length} \xB7 imported ${escapeHtml(transcript.importedAt)}</p>
+    <div class="transcript-viewer" data-selected-span="${escapeHtml(selectedSpanId ?? "")}">${spans}</div>`;
+}
+function memoryView(view) {
+  const memory = view.memory;
+  const warning = view.trustState === "strong" ? "" : `<aside class="trust-warning">${trustBadge(view.trustState)} This memory is not independent strong truth.</aside>`;
+  return `${warning}<article class="memory-object">
+    <p>${trustBadge(view.trustState)} ${escapeHtml(memory.type)} \xB7 confidence ${score(memory.confidence)} (${escapeHtml(memory.confidenceLabel)})</p>
+    <h2>${escapeHtml(memory.title || memory.type)}</h2><p>${escapeHtml(memory.body)}</p>
+    <dl><dt>Canonical status</dt><dd>${escapeHtml(memory.status)}</dd><dt>Evidence spans</dt><dd>${memory.evidenceSpanIds.length}</dd><dt>User corrected</dt><dd>${memory.userCorrected ? "yes" : "no"}</dd><dt>Duplicate of</dt><dd>${escapeHtml(memory.duplicateOfId ?? "none")}</dd></dl>
+  </article>${section("Evidence", view.evidence.map(evidenceCard).join("") || emptyState("No linked evidence pointers", "This memory cannot be treated as strong."))}
+  ${view.conflicts.length ? section("Conflicts", view.conflicts.map((item) => `<article>${trustBadge("conflicting")} <strong>${escapeHtml(item.summary)}</strong><p>${escapeHtml(item.explanation)}</p></article>`).join("")) : ""}
+  ${section("Submit a correction", correctionForm("memory_object", memory.id))}`;
+}
+function reviewCard(item) {
+  return `<article class="review-card">${trustBadge(item.trustState)}<h3><a href="${escapeHtml(item.href)}">${escapeHtml(item.title)}</a></h3>
+    <p>${escapeHtml(item.detail)}</p><small>${escapeHtml(item.severity)} severity \xB7 ${escapeHtml(item.status)} \xB7 ${escapeHtml(item.type)} \xB7 ${escapeHtml(item.targetType)}:${escapeHtml(item.targetId)}</small>
+    <a href="${escapeHtml(routeHref.review(item.id))}">Review and correct</a></article>`;
+}
+function searchCard(item) {
+  return `<article class="search-result">${item.trustState ? trustBadge(item.trustState) : ""}<h3><a href="${escapeHtml(item.href)}">${escapeHtml(item.title)}</a></h3>
+    <p>${escapeHtml(item.preview)}</p><small>${escapeHtml(item.type)}</small></article>`;
+}
+function graphNodeLink(nodeId) {
+  const [kind, id] = nodeId.split(":", 2);
+  if (!id) return null;
+  return kind === "memory" ? routeHref.memory(id) : kind === "transcript" ? routeHref.transcript(id) : kind === "evidence" ? routeHref.evidence(id) : null;
+}
+function healthView(health) {
+  const status = health.status === "ready" ? trustBadge("strong", "database connected") : health.status === "unsupported" ? trustBadge("no_evidence", "desktop only") : health.status === "error" ? trustBadge("broken", "startup failed") : trustBadge("needs_review", "initializing");
+  return section("Database health", `<article class="database-health">${status}<dl>
+    <dt>SQLite storage</dt><dd>${health.realSqliteStorage ? "real local SQLite" : "not connected"}</dd>
+    <dt>Migration status</dt><dd>${escapeHtml(health.migrationStatus)}</dd>
+    <dt>Packaged migrations</dt><dd>${health.packagedMigrationCount}</dd>
+    <dt>Applied migrations</dt><dd>${health.appliedMigrationCount}</dd>
+    <dt>Database location</dt><dd>${escapeHtml(health.databasePath ?? "unavailable")}</dd>
+    <dt>Last initialization error</dt><dd>${escapeHtml(health.lastInitializationError ?? "none")}</dd>
+  </dl></article>`);
+}
+async function renderPage(context) {
+  const { api, route } = context;
+  switch (route.id) {
+    case "dashboard": {
+      const view = await api.getDashboard();
+      const firstRun = view.health?.firstRun && view.health.status === "ready" ? `<aside class="immutable-notice"><strong>Transcript Memory Vault is ready.</strong> Upload a transcript to begin. Imported raw transcript snapshots are immutable and stored in local SQLite at ${escapeHtml(view.health.databasePath)}.</aside>` : "";
+      const startupProblem = view.health && view.health.status !== "ready" ? `<aside class="trust-warning">${view.health.status === "unsupported" ? trustBadge("no_evidence", "desktop only") : trustBadge("broken", "startup unavailable")} ${escapeHtml(view.health.lastInitializationError ?? "Database initialization has not completed.")}</aside>` : "";
+      const body = `${firstRun}${startupProblem}<div class="metric-grid"><span>${view.totalTranscriptCount} total transcripts</span><a href="${routeHref.reviewQueue()}">${view.reviewCount} review items</a><span>${view.weakCount} weak/review</span><span>${view.conflictCount} conflicts</span><span>${view.brokenCount} broken pointers</span></div>
+        ${view.health ? healthView(view.health) : ""}
+        ${section("Quick actions", links([{ href: routeHref.upload(), label: "Upload transcript" }, { href: routeHref.ask(), label: "Ask AI" }, { href: routeHref.search(), label: "Search vault" }, { href: routeHref.graph(), label: "Open graph" }, { href: routeHref.reviewQueue(), label: "Review queue" }]))}
+        ${section("Transcripts", view.transcripts.map((item) => `<article><a href="${escapeHtml(routeHref.transcript(item.id))}">${escapeHtml(item.title)}</a> \xB7 ${item.spanCount} spans</article>`).join("") || emptyState("No transcripts", "Upload a transcript to begin.", { href: routeHref.upload(), label: "Upload transcript" }))}
+        ${section("Recent Ask AI answers", view.recentAnswers.map((item) => `<article>${trustBadge(item.confidence)} <a href="${escapeHtml(routeHref.answer(item.id))}">${escapeHtml(item.question)}</a></article>`).join("") || emptyState("No answers", "Ask a question after adding evidence.", { href: routeHref.ask(), label: "Ask AI" }))}`;
+      return { title: "Dashboard", html: appShell("Dashboard", body) };
+    }
+    case "upload":
+      return { title: "Upload transcript", html: appShell("Upload transcript", `<aside class="immutable-notice">Uploads become immutable raw transcript sources. Re-uploading identical content reuses the existing transcript.</aside>
+        <form data-action="upload"><label>Transcript file (.txt, .md, .srt, .vtt) <input name="file" type="file" accept=".txt,.md,.srt,.vtt" required></label>
+        <p data-file-status>No file selected.</p><input name="filename" type="hidden"><textarea name="rawText" hidden></textarea>
+        <button type="submit">Import transcript</button></form><p data-loading-message hidden>Importing immutable transcript source...</p><div data-form-result></div>`) };
+    case "transcript": {
+      const view = await api.getTranscript(route.params.id);
+      return { title: view?.title ?? "Transcript not found", html: appShell(view?.title ?? "Transcript not found", view ? transcriptView(view, route.query.get("span") ?? void 0) : emptyState("Transcript not found", "The requested immutable source is unavailable.")) };
+    }
+    case "ask": {
+      const transcripts = (await api.listTranscripts()).slice(0, 100);
+      return { title: "Ask AI", html: appShell("Ask AI", `<aside class="immutable-notice">Ask AI retrieves and scores evidence before answering. Weak or conflicting evidence remains visibly labeled.</aside>
+        <form data-action="ask"><label>Question <textarea name="question" required></textarea></label>
+        <label>Optional transcript filter <select name="transcriptIds" multiple>${transcripts.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.title)}</option>`).join("")}</select></label>
+        <button type="submit">Retrieve, score, and answer</button></form>
+        <p data-loading-message hidden>Retrieving and scoring evidence before answer synthesis...</p><div data-form-result></div>`) };
+    }
+    case "answer": {
+      const answer = await api.getAnswer(route.params.id);
+      return { title: answer?.question ?? "Answer not found", html: appShell(answer?.question ?? "Answer not found", answer ? answerView(answer) : emptyState("Answer not found", "The requested Ask AI run is unavailable.")) };
+    }
+    case "evidence": {
+      const evidence = await api.getEvidence(route.params.id);
+      const body = `${evidence.brokenReason ? `<aside class="trust-warning">${trustBadge("broken")} This pointer cannot be trusted until repaired.</aside>` : ""}
+        ${evidenceCard(evidence)}${section("Resolved transcript span", evidence.brokenReason ? emptyState("Resolution failed", evidence.brokenReason) : `<blockquote>${escapeHtml(evidence.spanText)}</blockquote><a href="${escapeHtml(routeHref.transcript(evidence.transcriptId, evidence.spanId))}">Open highlighted source span</a>`)}
+        ${section("Submit a correction", correctionForm("evidence", evidence.id))}`;
+      return { title: `Evidence ${evidence.id}`, html: appShell(`Evidence ${evidence.id}`, body) };
+    }
+    case "memory": {
+      const view = await api.getMemory(route.params.id);
+      return { title: view?.memory.title || "Memory object", html: appShell(view?.memory.title || "Memory object", view ? memoryView(view) : emptyState("Memory not found", "The requested canonical memory object is unavailable.")) };
+    }
+    case "graph": {
+      const { graph, warnings } = await api.getGraph();
+      const query = (route.query.get("q") ?? "").toLowerCase(), type = route.query.get("type") ?? "all";
+      const limit = Math.min(Math.max(Number(route.query.get("limit") ?? 100) || 100, 1), 100);
+      const visibleNodes = graph.nodes.filter((node) => (!query || node.label.toLowerCase().includes(query)) && (type === "all" || node.type === type)).slice(0, limit);
+      const ids = new Set(visibleNodes.map((node) => node.id));
+      const visibleEdges = graph.edges.filter((edge) => ids.has(edge.source) || ids.has(edge.target)).slice(0, limit);
+      const nodes = visibleNodes.map((node) => `<li tabindex="0"><a href="${routeHref.graph(`?selectedNode=${encodeURIComponent(node.id)}`)}"><strong>${escapeHtml(node.label)}</strong></a> <small>${escapeHtml(node.type)}</small> ${node.supportStatus ? `<span class="support-status">${escapeHtml(node.supportStatus)}</span>` : ""}</li>`).join("");
+      const edges = visibleEdges.map((edge) => `<li tabindex="0">${edge.type === "contradicts" || edge.type === "updates" ? trustBadge("conflicting", edge.type) : ""} <a href="${routeHref.graph(`?selectedEdge=${encodeURIComponent(edge.id)}`)}">${escapeHtml(edge.source)} \u2192 ${escapeHtml(edge.target)} <strong>${escapeHtml(edge.type)}</strong></a> ${edge.evidencePointerId ? `<a href="${escapeHtml(routeHref.evidence(edge.evidencePointerId))}">evidence</a>` : `<span>${trustBadge("needs_review", "inferred / no evidence link")}</span>`}</li>`).join("");
+      const selectedNode = graph.nodes.find((node) => node.id === route.query.get("selectedNode"));
+      const selectedEdge = graph.edges.find((edge) => edge.id === route.query.get("selectedEdge"));
+      const details = selectedNode ? section("Selected node", `<article><h3>${escapeHtml(selectedNode.label)}</h3><p>${escapeHtml(selectedNode.type)} \xB7 ${escapeHtml(selectedNode.supportStatus ?? "no status")} \xB7 confidence ${score(selectedNode.confidence)}</p><p>${graph.edges.filter((edge) => (edge.source === selectedNode.id || edge.target === selectedNode.id) && edge.evidencePointerId).length} evidence-linked edge(s)</p>${graphNodeLink(selectedNode.id) ? `<a href="${escapeHtml(graphNodeLink(selectedNode.id))}">Open related item</a>` : ""}</article>`) : selectedEdge ? section("Selected edge", `<article>${selectedEdge.type === "contradicts" || selectedEdge.type === "updates" ? trustBadge("conflicting", selectedEdge.type) : ""}<p>${escapeHtml(selectedEdge.source)} \u2192 ${escapeHtml(selectedEdge.target)}</p><p>${escapeHtml(selectedEdge.type)} \xB7 confidence ${score(selectedEdge.confidence)} \xB7 ${selectedEdge.evidencePointerId ? "1 evidence link" : "0 evidence links"}</p>${selectedEdge.evidencePointerId ? `<a href="${escapeHtml(routeHref.evidence(selectedEdge.evidencePointerId))}">Open linked evidence</a>` : ""}</article>`) : "";
+      return { title: "Graph", html: appShell("Graph", `<form data-action="filter" data-view="graph"><label>Filter graph <input name="q" value="${escapeHtml(query)}"></label><label>Node type <input name="type" value="${escapeHtml(type)}"></label><label>Limit (max 100) <input name="limit" type="number" min="1" max="100" value="${limit}"></label><button type="submit">Apply</button></form>
+        <p>Showing ${visibleNodes.length} of ${graph.nodes.length} nodes and ${visibleEdges.length} edges.</p>${warnings.length ? `<aside class="trust-warning">${warnings.map(escapeHtml).join("<br>")}</aside>` : ""}${details}${section("Nodes", `<ul>${nodes}</ul>`)}${section("Edges", `<ul>${edges}</ul>`)}`) };
+    }
+    case "search": {
+      const query = route.query.get("q") ?? "";
+      const results = await api.search(query);
+      const filter = route.query.get("type") ?? "all", strength = route.query.get("strength") ?? "all";
+      const filtered = results.filter((item) => (filter === "all" || filter === "evidence" && item.type === "evidence" || item.type === filter || filter === "memory" && item.type === "memory_object" || filter === "answers" && item.type === "answer" || filter === "transcripts" && (item.type === "transcript" || item.type === "span")) && (strength === "all" || item.trustState === strength));
+      const groups = [...new Set(filtered.map((item) => item.type))].map((group) => section(group.replaceAll("_", " "), filtered.filter((item) => item.type === group).map(searchCard).join(""))).join("");
+      return { title: "Search", html: appShell("Search", `<aside class="immutable-notice">Search finds candidate evidence; evidence scores decide how much to trust it.</aside><form data-action="filter" data-view="search"><label>Search transcripts, spans, memory, answers, and evidence <input name="q" value="${escapeHtml(query)}"></label><label>Type <select name="type"><option>${escapeHtml(filter)}</option><option>all</option><option>transcripts</option><option>memory</option><option>answers</option><option>evidence</option></select></label><label>Evidence strength <select name="strength"><option>${escapeHtml(strength)}</option><option>all</option><option>strong</option><option>mixed</option><option>weak</option><option>conflicting</option><option>broken</option></select></label><button type="submit">Search</button></form>
+        ${query ? section(`${filtered.length} results`, groups || emptyState("No results", "No source-backed content matched.")) : emptyState("Search the vault", "Enter a phrase to search structured SQLite content.")}`) };
+    }
+    case "review": {
+      const items = await api.listReviewItems(), type = route.query.get("type") ?? "all", status = route.query.get("status") ?? "open";
+      const filtered = items.filter((item) => (type === "all" || item.type === type) && (status === "all" || item.status === status));
+      return { title: "Review queue", html: appShell("Review queue", `<form data-action="filter" data-view="review"><label>Item type <input name="type" value="${escapeHtml(type)}"></label><label>Status <select name="status"><option>${escapeHtml(status)}</option><option>open</option><option>resolved</option><option>dismissed</option><option>all</option></select></label><button type="submit">Filter items</button></form>${filtered.map(reviewCard).join("") || emptyState("Review queue is clear", "No weak, broken, conflicting, or review-only items were found.")}`) };
+    }
+    case "review_detail": {
+      const item = await api.getReviewItem(route.params.id);
+      const form = item ? correctionForm(item.targetType, item.targetId) : "";
+      const related = item ? `${item.relatedTranscriptIds.length ? section("Linked transcripts", item.relatedTranscriptIds.map((id) => `<a href="${escapeHtml(routeHref.transcript(id))}">${escapeHtml(id)}</a>`).join(" ")) : ""}${item.relatedEvidenceIds.length ? section("Linked evidence", item.relatedEvidenceIds.map((id) => `<a href="${escapeHtml(routeHref.evidence(id))}">${escapeHtml(id)}</a>`).join(" ")) : ""}` : "";
+      return { title: item?.title ?? "Review item not found", html: appShell(item?.title ?? "Review item not found", item ? `${reviewCard(item)}${related}<aside class="immutable-notice">Resolution is read-only here. Corrections are appended as separate records; raw source text is never edited.</aside>${form}` : emptyState("Review item not found", "This item may already have been resolved.")) };
+    }
+    default:
+      return { title: "Not found", html: appShell("Not found", emptyState("Page not found", "The requested frontend route does not exist.", { href: "/", label: "Dashboard" })) };
+  }
+}
+
+// src/frontend/app.ts
+async function renderRoute(api, url) {
+  try {
+    return (await renderPage({ api, route: matchRoute(url) })).html;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error("Transcript Memory Vault UI render failed", error);
+    return appShell("Unable to load view", `<section class="trust-warning"><h2>Transcript Memory Vault could not load this view</h2><p>${escapeHtml(detail)}</p><p>The plugin did not continue as if unavailable data were trustworthy. Open the dashboard or plugin settings for database health details.</p></section>`);
+  }
+}
+async function mountObsidianUi(root, api, navigation, initialTarget) {
+  const render = async (target) => {
+    root.innerHTML = await renderRoute(api, target);
+    const span = new URL(target).searchParams.get("span");
+    if (span) document.getElementById(`span-${span}`)?.scrollIntoView({ block: "center" });
+  };
+  root.addEventListener("click", (event) => {
+    const copy = event.target.closest("[data-copy-quote]");
+    if (copy) {
+      void navigator.clipboard?.writeText(copy.dataset.copyQuote ?? "");
+      copy.textContent = "Quote copied";
+      return;
+    }
+    const anchor = event.target.closest("a");
+    if (!anchor || !anchor.href.startsWith("mv://")) return;
+    event.preventDefault();
+    void navigateInternal(navigation, anchor.href);
+  });
+  root.addEventListener("change", (event) => {
+    const input = event.target;
+    if (input.name !== "file" || !input.files?.[0]) return;
+    const file = input.files[0];
+    const form = input.form;
+    const status = form?.querySelector("[data-file-status]") ?? form?.parentElement?.querySelector("[data-file-status]");
+    if (status) status.textContent = `${file.name} \xB7 ${file.size} bytes`;
+    void file.text().then((text) => {
+      const filename = form?.elements.namedItem("filename");
+      const rawText = form?.elements.namedItem("rawText");
+      if (filename) filename.value = file.name;
+      if (rawText) rawText.value = text;
+    });
+  });
+  root.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const form = event.target;
+    const data = new FormData(form);
+    const result = form.parentElement?.querySelector("[data-form-result]");
+    const loading = form.parentElement?.querySelector("[data-loading-message]");
+    const action = form.dataset.action;
+    void (async () => {
+      try {
+        if (loading) loading.hidden = false;
+        if (action === "upload") {
+          const imported = await api.uploadTranscript({ filename: String(data.get("filename") ?? ""), rawText: String(data.get("rawText") ?? "") });
+          if (result) {
+            result.innerHTML = `${imported.status === "duplicate" ? "<strong>Duplicate transcript:</strong> existing immutable source reused." : "<strong>Transcript imported successfully.</strong>"}
+              <a href="${escapeHtml(routeHref.transcript(imported.transcriptId))}">Open transcript</a> <a href="${routeHref.dashboard()}">Dashboard</a>`;
+          }
+        } else if (action === "ask") {
+          const answer = await api.ask(String(data.get("question") ?? ""), { transcriptIds: data.getAll("transcriptIds").map(String) });
+          await navigation.openAnswer(answer.id);
+        } else if (action === "correction") {
+          const correction = await api.submitCorrection({
+            targetType: String(data.get("targetType")),
+            targetId: String(data.get("targetId")),
+            correctionText: String(data.get("correctionText") ?? ""),
+            reason: String(data.get("reason") ?? "") || void 0
+          });
+          if (result) result.innerHTML = `Correction appended: <code>${escapeHtml(correction.correctionId)}</code>`;
+        } else if (action === "filter") {
+          const view = form.dataset.view ?? "dashboard";
+          await render(`mv://${view}?${new URLSearchParams(data)}`);
+        }
+      } catch (error) {
+        if (result) result.textContent = error instanceof Error ? error.message : String(error);
+      } finally {
+        if (loading) loading.hidden = true;
+      }
+    })();
+  });
+  await render(initialTarget);
+}
+
+// src/obsidian/TranscriptMemoryItemView.ts
+var TranscriptMemoryItemView = class extends import_obsidian3.ItemView {
+  constructor(leaf, type, getApi, vaultNavigation) {
+    super(leaf);
+    this.type = type;
+    this.getApi = getApi;
+    this.vaultNavigation = vaultNavigation;
+  }
+  type;
+  getApi;
+  vaultNavigation;
+  state = {};
+  getViewType() {
+    return this.type;
+  }
+  getDisplayText() {
+    return viewTitle(this.type);
+  }
+  getIcon() {
+    return "database";
+  }
+  getState() {
+    return this.state;
+  }
+  async setState(state) {
+    this.state = state;
+    await this.render();
+  }
+  async onOpen() {
+    await this.render();
+  }
+  async onClose() {
+    this.contentEl.empty();
+  }
+  async render() {
+    this.contentEl.empty();
+    this.contentEl.addClass("transcript-memory-plugin");
+    try {
+      await mountObsidianUi(this.contentEl, this.getApi(), this.vaultNavigation, this.state.target ?? defaultTarget(this.type));
+    } catch (error) {
+      console.error("Transcript Memory Vault view load failed", error);
+      this.contentEl.empty();
+      this.contentEl.createEl("h2", { text: "Transcript Memory Vault could not load this view" });
+      this.contentEl.createEl("p", { text: error instanceof Error ? error.message : String(error) });
+      this.contentEl.createEl("p", { text: "The plugin did not continue as if the database were trustworthy. Open the dashboard or plugin settings for database health details." });
+    }
+  }
+};
+
+// src/obsidian/startup.ts
+var DESKTOP_ONLY_MESSAGE = "Transcript Memory Vault is desktop-only right now because it uses local SQLite storage.";
+var initialPluginHealth = () => ({
+  status: "initializing",
+  databaseConnected: false,
+  migrationStatus: "pending",
+  packagedMigrationCount: PACKAGED_MIGRATION_COUNT,
+  appliedMigrationCount: 0,
+  databasePath: null,
+  realSqliteStorage: false,
+  firstRun: false,
+  lastInitializationError: null
+});
+function startupSupport(input) {
+  return input.isDesktopApp && input.hasLocalFilesystem ? { supported: true } : { supported: false, message: DESKTOP_ONLY_MESSAGE };
+}
+var unavailable = (health) => {
+  throw new Error(health.lastInitializationError ?? DESKTOP_ONLY_MESSAGE);
+};
+function createUnavailableFrontendApi(getHealth) {
+  return {
+    async getDashboard() {
+      return {
+        totalTranscriptCount: 0,
+        transcripts: [],
+        recentAnswers: [],
+        reviewCount: 0,
+        weakCount: 0,
+        conflictCount: 0,
+        brokenCount: 0,
+        health: getHealth()
+      };
+    },
+    async listTranscripts() {
+      return [];
+    },
+    async uploadTranscript() {
+      return unavailable(getHealth());
+    },
+    async getTranscript() {
+      return unavailable(getHealth());
+    },
+    async ask() {
+      return unavailable(getHealth());
+    },
+    async askAI() {
+      return unavailable(getHealth());
+    },
+    async getAnswer() {
+      return unavailable(getHealth());
+    },
+    async getEvidence() {
+      return unavailable(getHealth());
+    },
+    async getMemory() {
+      return unavailable(getHealth());
+    },
+    async getMemoryObject() {
+      return unavailable(getHealth());
+    },
+    async getGraph() {
+      return unavailable(getHealth());
+    },
+    async search() {
+      return unavailable(getHealth());
+    },
+    async searchVault() {
+      return unavailable(getHealth());
+    },
+    async listReviewItems() {
+      return unavailable(getHealth());
+    },
+    async getReviewItem() {
+      return unavailable(getHealth());
+    },
+    async submitCorrection() {
+      return unavailable(getHealth());
+    }
+  };
+}
+function readableStartupError(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+// src/obsidian/Plugin.ts
+var TranscriptMemoryVaultPlugin = class extends import_obsidian4.Plugin {
+  db = null;
+  health = initialPluginHealth();
+  api = createUnavailableFrontendApi(() => this.health);
+  async onload() {
+    const navigation = createObsidianNavigation(this.app);
+    for (const type of Object.values(OBSIDIAN_VIEW_TYPES)) {
+      this.registerView(type, (leaf) => new TranscriptMemoryItemView(leaf, type, () => this.api, navigation));
+    }
+    for (const command of OBSIDIAN_COMMANDS) {
+      this.addCommand({ id: command.id, name: command.name, callback: () => void navigationForView(navigation, command.viewType) });
+    }
+    this.addRibbonIcon(OBSIDIAN_RIBBON.icon, OBSIDIAN_RIBBON.title, () => void navigation.openDashboard());
+    this.addSettingTab(new TranscriptMemorySettingsTab(this.app, this, () => this.health, navigation));
+    const adapter = this.app.vault.adapter;
+    const fileSystemAdapter = adapter instanceof import_obsidian4.FileSystemAdapter ? adapter : null;
+    const support = startupSupport({ isDesktopApp: import_obsidian4.Platform.isDesktopApp, hasLocalFilesystem: fileSystemAdapter != null });
+    if (!support.supported) {
+      this.health = { ...this.health, status: "unsupported", lastInitializationError: support.message };
+      new import_obsidian4.Notice(DESKTOP_ONLY_MESSAGE);
+      console.error("Transcript Memory Vault unsupported environment:", support.message);
+      return;
+    }
+    const pluginDirectory = (0, import_node_path3.join)(fileSystemAdapter.getBasePath(), this.app.vault.configDir, "plugins", this.manifest.id);
+    const databasePath = (0, import_node_path3.join)(pluginDirectory, "transcript-memory.sqlite");
+    this.health = { ...this.health, databasePath };
+    try {
+      (0, import_node_fs2.mkdirSync)(pluginDirectory, { recursive: true });
+      const migrationPackage = validateMigrationPackage((0, import_node_path3.join)(pluginDirectory, "migrations"));
+      if (!migrationPackage.ok) throw new Error(`Missing packaged migrations: ${migrationPackage.missing.join(", ")}`);
+      const firstRun = !(0, import_node_fs2.existsSync)(databasePath);
+      this.db = openDatabase(databasePath);
+      const appliedMigrationCount = this.db.prepare("SELECT COUNT(*) count FROM schema_migrations").get().count;
+      this.health = {
+        ...this.health,
+        status: "ready",
+        databaseConnected: true,
+        migrationStatus: "current",
+        appliedMigrationCount,
+        realSqliteStorage: true,
+        firstRun,
+        lastInitializationError: null
+      };
+      this.api = createObsidianAppApi(this.db, this.app.vault, this.health);
+      if (firstRun) new import_obsidian4.Notice("Transcript Memory Vault is ready. Upload a transcript to begin.");
+    } catch (error) {
+      this.db?.close();
+      this.db = null;
+      const message = readableStartupError(error);
+      this.health = { ...this.health, status: "error", databaseConnected: false, migrationStatus: "failed", realSqliteStorage: false, lastInitializationError: message };
+      this.api = createUnavailableFrontendApi(() => this.health);
+      new import_obsidian4.Notice(`Transcript Memory Vault could not initialize: ${message}`);
+      console.error("Transcript Memory Vault initialization failed", error);
+    }
+  }
+  onunload() {
+    for (const type of Object.values(OBSIDIAN_VIEW_TYPES)) this.app.workspace.detachLeavesOfType(type);
+    this.db?.close();
+    this.db = null;
+    this.api = createUnavailableFrontendApi(() => this.health);
+  }
+};
+function navigationForView(navigation, viewType) {
+  if (viewType === OBSIDIAN_VIEW_TYPES.upload) return navigation.openUpload();
+  if (viewType === OBSIDIAN_VIEW_TYPES.ask) return navigation.openAskAI();
+  if (viewType === OBSIDIAN_VIEW_TYPES.search) return navigation.openSearch();
+  if (viewType === OBSIDIAN_VIEW_TYPES.graph) return navigation.openGraph();
+  if (viewType === OBSIDIAN_VIEW_TYPES.review) return navigation.openReviewQueue();
+  return navigation.openDashboard();
+}

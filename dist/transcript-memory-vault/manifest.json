@@ -1,0 +1,9 @@
+{
+  "id": "transcript-memory-vault",
+  "name": "Transcript Memory Vault",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Evidence-grounded transcript memory, Ask AI, graph, search, and review views backed by SQLite.",
+  "author": "Interview Intelligence Vault",
+  "isDesktopOnly": true
+}

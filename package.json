@@ -1,0 +1,22 @@
+{
+  "name": "interview-intelligence-vault",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node esbuild.mjs --production",
+    "build:dev": "node esbuild.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.4.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^24.10.1",
+    "esbuild": "^0.28.1",
+    "obsidian": "^1.13.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.15"
+  }
+}
