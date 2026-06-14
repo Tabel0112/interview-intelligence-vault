@@ -1534,7 +1534,9 @@ var import_obsidian = require("obsidian");
 
 // src/obsidian/settings.ts
 var LLM_PROVIDER_OPTIONS = ["none", "anthropic", "openai"];
-var EMBEDDING_PROVIDER_OPTIONS = ["deterministic-test", "noop", "anthropic", "openai"];
+var EMBEDDING_PROVIDER_OPTIONS = ["deterministic-test", "noop", "openai"];
+var EXTERNAL_EMBEDDING_PROVIDERS = ["openai"];
+var isExternalEmbeddingProvider = (providerId) => EXTERNAL_EMBEDDING_PROVIDERS.includes(providerId);
 var DEFAULT_SETTINGS = {
   schemaVersion: 1,
   mode: "local",
@@ -1548,6 +1550,28 @@ var normalizeMode = (value) => value === "external" ? "external" : "local";
 var normalizeSelection = (value, fallback) => {
   const record = isRecord(value) ? value : {};
   return { provider: asString(record.provider, fallback.provider), model: asString(record.model, fallback.model) };
+};
+var positiveInt = (value) => {
+  const n = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
+  return Number.isInteger(n) && n > 0 ? n : void 0;
+};
+var positiveNumber = (value) => {
+  const n = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
+  return Number.isFinite(n) && n > 0 ? n : void 0;
+};
+var normalizeEmbeddingSelection = (value, fallback) => {
+  const record = isRecord(value) ? value : {};
+  const result = {
+    provider: asString(record.provider, fallback.provider),
+    model: asString(record.model, fallback.model)
+  };
+  const dimensions = positiveInt(record.dimensions);
+  if (dimensions !== void 0) result.dimensions = dimensions;
+  const baseUrl = typeof record.baseUrl === "string" && record.baseUrl.trim().length > 0 ? record.baseUrl.trim() : void 0;
+  if (baseUrl !== void 0) result.baseUrl = baseUrl;
+  const timeoutMs = positiveNumber(record.timeoutMs);
+  if (timeoutMs !== void 0) result.timeoutMs = timeoutMs;
+  return result;
 };
 var normalizeApiKeys = (value) => {
   if (!isRecord(value)) return {};
@@ -1563,7 +1587,7 @@ function normalizeSettings(raw) {
     schemaVersion: 1,
     mode: normalizeMode(record.mode),
     llm: normalizeSelection(record.llm, DEFAULT_SETTINGS.llm),
-    embedding: normalizeSelection(record.embedding, DEFAULT_SETTINGS.embedding),
+    embedding: normalizeEmbeddingSelection(record.embedding, DEFAULT_SETTINGS.embedding),
     apiKeys: normalizeApiKeys(record.apiKeys)
   };
 }
@@ -1608,7 +1632,7 @@ var TranscriptMemorySettingsTab = class extends import_obsidian.PluginSettingTab
     this.containerEl.createEl("h2", { text: "Transcript Memory Vault" });
     this.containerEl.createEl("h3", { text: "AI providers" });
     const warning = this.containerEl.createEl("p", {
-      text: "API keys are stored in this plugin's local data file (data.json) as plain text. If your vault is synced, the key may sync with it. No external network calls are made yet \u2014 the app runs in local deterministic mode regardless of these settings."
+      text: "API keys are stored in this plugin's local data file (data.json) as plain text. If your vault is synced, the key may sync with it. These settings configure providers, but live indexing/retrieval does not use an external provider yet."
     });
     warning.addClass("setting-item-description");
     new import_obsidian.Setting(this.containerEl).setName("Mode").setDesc("Local deterministic runs fully offline and is the default. External providers are recorded but not active yet.").addDropdown(
@@ -1632,6 +1656,7 @@ var TranscriptMemorySettingsTab = class extends import_obsidian.PluginSettingTab
       for (const option of EMBEDDING_PROVIDER_OPTIONS) dropdown.addOption(option, option);
       dropdown.setValue(settings.embedding.provider).onChange(async (value) => {
         await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, provider: value } });
+        this.display();
       });
     });
     new import_obsidian.Setting(this.containerEl).setName("Embedding model").setDesc("Model identifier placeholder.").addText(
@@ -1639,22 +1664,61 @@ var TranscriptMemorySettingsTab = class extends import_obsidian.PluginSettingTab
         await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, model: value } });
       })
     );
-    const providerId = settings.llm.provider;
-    const keyStatus = redactApiKey(settings.apiKeys[providerId]);
-    new import_obsidian.Setting(this.containerEl).setName("API key").setDesc(
-      providerId === "none" ? "Select an LLM provider to set its API key." : `Stored for "${providerId}": ${keyStatus}. Type a new key to replace it; leave blank to keep the existing one.`
+    const embeddingProviderId = settings.embedding.provider;
+    const embeddingIsExternal = isExternalEmbeddingProvider(embeddingProviderId);
+    new import_obsidian.Setting(this.containerEl).setName("Embedding dimensions").setDesc("Required for an external embedding provider: the vector length the model returns.").addText(
+      (text) => text.setPlaceholder("e.g. 1536").setValue(settings.embedding.dimensions != null ? String(settings.embedding.dimensions) : "").onChange(async (value) => {
+        const parsed = Number(value.trim());
+        const dimensions = Number.isInteger(parsed) && parsed > 0 ? parsed : void 0;
+        await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, dimensions } });
+      })
+    );
+    new import_obsidian.Setting(this.containerEl).setName("Embedding base URL").setDesc("Optional. Override the OpenAI-compatible endpoint for the external embedding provider.").addText(
+      (text) => text.setPlaceholder("https://api.openai.com/v1").setValue(settings.embedding.baseUrl ?? "").onChange(async (value) => {
+        const baseUrl = value.trim().length > 0 ? value.trim() : void 0;
+        await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, baseUrl } });
+      })
+    );
+    new import_obsidian.Setting(this.containerEl).setName("Embedding request timeout (ms)").setDesc("Optional. Applied only to the external embedding HTTP transport.").addText(
+      (text) => text.setPlaceholder("e.g. 30000").setValue(settings.embedding.timeoutMs != null ? String(settings.embedding.timeoutMs) : "").onChange(async (value) => {
+        const parsed = Number(value.trim());
+        const timeoutMs = Number.isFinite(parsed) && parsed > 0 ? parsed : void 0;
+        await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, timeoutMs } });
+      })
+    );
+    new import_obsidian.Setting(this.containerEl).setName("Embedding API key").setDesc(
+      embeddingIsExternal ? `Stored for "${embeddingProviderId}": ${redactApiKey(settings.apiKeys[embeddingProviderId])}. Type a new key to replace it; leave blank to keep the existing one.` : "The selected embedding provider runs locally and needs no API key."
     ).addText((text) => {
       text.inputEl.type = "password";
       text.setPlaceholder("Enter API key").onChange(async (value) => {
-        if (providerId === "none") return;
+        if (!embeddingIsExternal) return;
         const trimmed = value.trim();
         if (!trimmed) return;
-        await this.onSave(setApiKey(this.getSettings(), providerId, trimmed));
+        await this.onSave(setApiKey(this.getSettings(), embeddingProviderId, trimmed));
       });
     }).addButton(
       (button) => button.setButtonText("Clear").onClick(async () => {
-        if (providerId === "none") return;
-        await this.onSave(setApiKey(this.getSettings(), providerId, ""));
+        if (!embeddingIsExternal) return;
+        await this.onSave(setApiKey(this.getSettings(), embeddingProviderId, ""));
+        this.display();
+      })
+    );
+    const llmProviderId = settings.llm.provider;
+    const llmKeyStatus = redactApiKey(settings.apiKeys[llmProviderId]);
+    new import_obsidian.Setting(this.containerEl).setName("LLM API key").setDesc(
+      llmProviderId === "none" ? "Select an LLM provider to set its API key." : `Stored for "${llmProviderId}": ${llmKeyStatus}. Type a new key to replace it; leave blank to keep the existing one.`
+    ).addText((text) => {
+      text.inputEl.type = "password";
+      text.setPlaceholder("Enter API key").onChange(async (value) => {
+        if (llmProviderId === "none") return;
+        const trimmed = value.trim();
+        if (!trimmed) return;
+        await this.onSave(setApiKey(this.getSettings(), llmProviderId, trimmed));
+      });
+    }).addButton(
+      (button) => button.setButtonText("Clear").onClick(async () => {
+        if (llmProviderId === "none") return;
+        await this.onSave(setApiKey(this.getSettings(), llmProviderId, ""));
         this.display();
       })
     );

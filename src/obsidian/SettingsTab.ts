@@ -2,7 +2,8 @@ import { PluginSettingTab, Setting, type App, type Plugin } from "obsidian";
 import type { ObsidianNavigation } from "../frontend/index.js";
 import type { PluginHealth } from "./startup.js";
 import {
-  EMBEDDING_PROVIDER_OPTIONS, LLM_PROVIDER_OPTIONS, redactApiKey, setApiKey, type TranscriptMemorySettings,
+  EMBEDDING_PROVIDER_OPTIONS, isExternalEmbeddingProvider, LLM_PROVIDER_OPTIONS, redactApiKey, setApiKey,
+  type TranscriptMemorySettings,
 } from "./settings.js";
 
 export class TranscriptMemorySettingsTab extends PluginSettingTab {
@@ -25,7 +26,7 @@ export class TranscriptMemorySettingsTab extends PluginSettingTab {
 
     this.containerEl.createEl("h3", { text: "AI providers" });
     const warning = this.containerEl.createEl("p", {
-      text: "API keys are stored in this plugin's local data file (data.json) as plain text. If your vault is synced, the key may sync with it. No external network calls are made yet — the app runs in local deterministic mode regardless of these settings.",
+      text: "API keys are stored in this plugin's local data file (data.json) as plain text. If your vault is synced, the key may sync with it. These settings configure providers, but live indexing/retrieval does not use an external provider yet.",
     });
     warning.addClass("setting-item-description");
 
@@ -69,6 +70,7 @@ export class TranscriptMemorySettingsTab extends PluginSettingTab {
         for (const option of EMBEDDING_PROVIDER_OPTIONS) dropdown.addOption(option, option);
         dropdown.setValue(settings.embedding.provider).onChange(async (value) => {
           await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, provider: value } });
+          this.display();
         });
       });
 
@@ -81,29 +83,89 @@ export class TranscriptMemorySettingsTab extends PluginSettingTab {
         }),
       );
 
-    const providerId = settings.llm.provider;
-    const keyStatus = redactApiKey(settings.apiKeys[providerId]);
+    const embeddingProviderId = settings.embedding.provider;
+    const embeddingIsExternal = isExternalEmbeddingProvider(embeddingProviderId);
+
     new Setting(this.containerEl)
-      .setName("API key")
+      .setName("Embedding dimensions")
+      .setDesc("Required for an external embedding provider: the vector length the model returns.")
+      .addText((text) =>
+        text.setPlaceholder("e.g. 1536").setValue(settings.embedding.dimensions != null ? String(settings.embedding.dimensions) : "").onChange(async (value) => {
+          const parsed = Number(value.trim());
+          const dimensions = Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+          await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, dimensions } });
+        }),
+      );
+
+    new Setting(this.containerEl)
+      .setName("Embedding base URL")
+      .setDesc("Optional. Override the OpenAI-compatible endpoint for the external embedding provider.")
+      .addText((text) =>
+        text.setPlaceholder("https://api.openai.com/v1").setValue(settings.embedding.baseUrl ?? "").onChange(async (value) => {
+          const baseUrl = value.trim().length > 0 ? value.trim() : undefined;
+          await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, baseUrl } });
+        }),
+      );
+
+    new Setting(this.containerEl)
+      .setName("Embedding request timeout (ms)")
+      .setDesc("Optional. Applied only to the external embedding HTTP transport.")
+      .addText((text) =>
+        text.setPlaceholder("e.g. 30000").setValue(settings.embedding.timeoutMs != null ? String(settings.embedding.timeoutMs) : "").onChange(async (value) => {
+          const parsed = Number(value.trim());
+          const timeoutMs = Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+          await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, timeoutMs } });
+        }),
+      );
+
+    new Setting(this.containerEl)
+      .setName("Embedding API key")
       .setDesc(
-        providerId === "none"
-          ? "Select an LLM provider to set its API key."
-          : `Stored for "${providerId}": ${keyStatus}. Type a new key to replace it; leave blank to keep the existing one.`,
+        embeddingIsExternal
+          ? `Stored for "${embeddingProviderId}": ${redactApiKey(settings.apiKeys[embeddingProviderId])}. Type a new key to replace it; leave blank to keep the existing one.`
+          : "The selected embedding provider runs locally and needs no API key.",
       )
       .addText((text) => {
         text.inputEl.type = "password";
         // Never prefill the input with the stored secret; only accept new values.
         text.setPlaceholder("Enter API key").onChange(async (value) => {
-          if (providerId === "none") return;
+          if (!embeddingIsExternal) return;
           const trimmed = value.trim();
           if (!trimmed) return;
-          await this.onSave(setApiKey(this.getSettings(), providerId, trimmed));
+          await this.onSave(setApiKey(this.getSettings(), embeddingProviderId, trimmed));
         });
       })
       .addButton((button) =>
         button.setButtonText("Clear").onClick(async () => {
-          if (providerId === "none") return;
-          await this.onSave(setApiKey(this.getSettings(), providerId, ""));
+          if (!embeddingIsExternal) return;
+          await this.onSave(setApiKey(this.getSettings(), embeddingProviderId, ""));
+          this.display();
+        }),
+      );
+
+    const llmProviderId = settings.llm.provider;
+    const llmKeyStatus = redactApiKey(settings.apiKeys[llmProviderId]);
+    new Setting(this.containerEl)
+      .setName("LLM API key")
+      .setDesc(
+        llmProviderId === "none"
+          ? "Select an LLM provider to set its API key."
+          : `Stored for "${llmProviderId}": ${llmKeyStatus}. Type a new key to replace it; leave blank to keep the existing one.`,
+      )
+      .addText((text) => {
+        text.inputEl.type = "password";
+        // Never prefill the input with the stored secret; only accept new values.
+        text.setPlaceholder("Enter API key").onChange(async (value) => {
+          if (llmProviderId === "none") return;
+          const trimmed = value.trim();
+          if (!trimmed) return;
+          await this.onSave(setApiKey(this.getSettings(), llmProviderId, trimmed));
+        });
+      })
+      .addButton((button) =>
+        button.setButtonText("Clear").onClick(async () => {
+          if (llmProviderId === "none") return;
+          await this.onSave(setApiKey(this.getSettings(), llmProviderId, ""));
           this.display();
         }),
       );

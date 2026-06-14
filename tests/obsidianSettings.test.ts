@@ -43,6 +43,39 @@ describe("transcript memory settings foundation", () => {
     expect(normalizeSettings({ mode: "totally-bogus" }).mode).toBe("local");
   });
 
+  it("normalizes external embedding fields and drops invalid dimensions/baseUrl/timeoutMs", () => {
+    const valid = normalizeSettings({
+      mode: "external",
+      embedding: { provider: "openai", model: "text-embedding-3-small", dimensions: 1536, baseUrl: "https://api.test/v1", timeoutMs: 30000 },
+    });
+    expect(valid.embedding).toEqual({ provider: "openai", model: "text-embedding-3-small", dimensions: 1536, baseUrl: "https://api.test/v1", timeoutMs: 30000 });
+
+    const invalid = normalizeSettings({
+      embedding: { provider: "openai", model: "m", dimensions: -5, baseUrl: "   ", timeoutMs: "abc" },
+    });
+    expect(invalid.embedding).toEqual({ provider: "openai", model: "m" }); // invalid optional fields dropped
+  });
+
+  it("round-trips a fully-populated external embedding selection", () => {
+    const settings: TranscriptMemorySettings = {
+      schemaVersion: 1,
+      mode: "external",
+      llm: { provider: "none", model: "" },
+      embedding: { provider: "openai", model: "text-embedding-3-small", dimensions: 1536, baseUrl: "https://api.test/v1", timeoutMs: 30000 },
+      apiKeys: { openai: SECRET },
+    };
+    expect(normalizeSettings(JSON.parse(JSON.stringify(settings)))).toEqual(settings);
+  });
+
+  it("stores and redacts an embedding-provider API key keyed by provider id", () => {
+    const settings = setApiKey({ ...DEFAULT_SETTINGS, mode: "external", embedding: { provider: "openai", model: "m", dimensions: 8 } }, "openai", SECRET);
+    expect(settings.apiKeys.openai).toBe(SECRET);
+    expect(redactApiKey(settings.apiKeys.openai)).toBe("configured");
+    expect(settingsHealthSummary(settings).apiKeyConfigured).toBe(true);
+    expect(JSON.stringify(settingsHealthSummary(settings))).not.toContain(SECRET);
+    expect(JSON.stringify(redactSettingsForLog(settings))).not.toContain(SECRET);
+  });
+
   it("round-trips a fully-populated settings object", () => {
     const settings: TranscriptMemorySettings = {
       schemaVersion: 1,

@@ -16,18 +16,31 @@ export interface ProviderSelection {
   model: string;
 }
 
+/** Embedding selection plus optional external-provider configuration (used only in external mode). */
+export interface EmbeddingSelection extends ProviderSelection {
+  dimensions?: number;
+  baseUrl?: string;
+  timeoutMs?: number;
+}
+
 export interface TranscriptMemorySettings {
   schemaVersion: 1;
-  /** "local" = fully offline deterministic mode (default). "external" is recorded but inert until wired. */
+  /** "local" = fully offline deterministic mode (default). */
   mode: ProviderMode;
   llm: ProviderSelection;
-  embedding: ProviderSelection;
+  embedding: EmbeddingSelection;
   /** providerId -> secret. Kept isolated so it can later move to a keychain in one place. */
   apiKeys: Record<string, string>;
 }
 
 export const LLM_PROVIDER_OPTIONS = ["none", "anthropic", "openai"] as const;
-export const EMBEDDING_PROVIDER_OPTIONS = ["deterministic-test", "noop", "anthropic", "openai"] as const;
+// Only providers the external embedding adapter actually supports (OpenAI-compatible) are offered.
+export const EMBEDDING_PROVIDER_OPTIONS = ["deterministic-test", "noop", "openai"] as const;
+
+/** Embedding provider ids that require an external (network) call and an API key. */
+export const EXTERNAL_EMBEDDING_PROVIDERS = ["openai"] as const;
+export const isExternalEmbeddingProvider = (providerId: string): boolean =>
+  (EXTERNAL_EMBEDDING_PROVIDERS as readonly string[]).includes(providerId);
 
 export const DEFAULT_SETTINGS: TranscriptMemorySettings = {
   schemaVersion: 1,
@@ -52,6 +65,30 @@ const normalizeSelection = (value: unknown, fallback: ProviderSelection): Provid
   return { provider: asString(record.provider, fallback.provider), model: asString(record.model, fallback.model) };
 };
 
+const positiveInt = (value: unknown): number | undefined => {
+  const n = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
+  return Number.isInteger(n) && n > 0 ? n : undefined;
+};
+const positiveNumber = (value: unknown): number | undefined => {
+  const n = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+};
+
+const normalizeEmbeddingSelection = (value: unknown, fallback: ProviderSelection): EmbeddingSelection => {
+  const record = isRecord(value) ? value : {};
+  const result: EmbeddingSelection = {
+    provider: asString(record.provider, fallback.provider),
+    model: asString(record.model, fallback.model),
+  };
+  const dimensions = positiveInt(record.dimensions);
+  if (dimensions !== undefined) result.dimensions = dimensions;
+  const baseUrl = typeof record.baseUrl === "string" && record.baseUrl.trim().length > 0 ? record.baseUrl.trim() : undefined;
+  if (baseUrl !== undefined) result.baseUrl = baseUrl;
+  const timeoutMs = positiveNumber(record.timeoutMs);
+  if (timeoutMs !== undefined) result.timeoutMs = timeoutMs;
+  return result;
+};
+
 const normalizeApiKeys = (value: unknown): Record<string, string> => {
   if (!isRecord(value)) return {};
   const result: Record<string, string> = {};
@@ -72,7 +109,7 @@ export function normalizeSettings(raw: unknown): TranscriptMemorySettings {
     schemaVersion: 1,
     mode: normalizeMode(record.mode),
     llm: normalizeSelection(record.llm, DEFAULT_SETTINGS.llm),
-    embedding: normalizeSelection(record.embedding, DEFAULT_SETTINGS.embedding),
+    embedding: normalizeEmbeddingSelection(record.embedding, DEFAULT_SETTINGS.embedding),
     apiKeys: normalizeApiKeys(record.apiKeys),
   };
 }
