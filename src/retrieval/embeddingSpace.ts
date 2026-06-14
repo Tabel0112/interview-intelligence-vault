@@ -7,6 +7,7 @@
 
 import { ValidationError } from "../db/errors.js";
 import { DeterministicTestEmbeddingProvider, NoopEmbeddingProvider, type EmbeddingProvider } from "./embeddingProvider.js";
+import { createExternalEmbeddingProvider, type ExternalEmbeddingConfig } from "./externalEmbeddingProvider.js";
 
 export interface EmbeddingSpace {
   provider: string; // EmbeddingProvider.name
@@ -54,8 +55,21 @@ export interface EmbeddingProviderResolution {
 
 export function resolveEmbeddingProvider(
   id: string = DEFAULT_EMBEDDING_PROVIDER_ID,
-  options?: { dimensions?: number },
+  options?: { dimensions?: number; external?: ExternalEmbeddingConfig },
 ): EmbeddingProviderResolution {
+  // External provider is used ONLY when explicitly configured with a non-blank API key.
+  if (options?.external) {
+    const external = options.external;
+    if (external.apiKey && external.apiKey.trim().length > 0) {
+      return { provider: createExternalEmbeddingProvider(external), requestedId: external.provider, usedFallback: false };
+    }
+    return {
+      provider: new DeterministicTestEmbeddingProvider(options?.dimensions),
+      requestedId: external.provider,
+      usedFallback: true,
+      reason: `Embedding provider "${external.provider}" has no API key configured; using local deterministic ${TOKEN_HASH_MODEL}.`,
+    };
+  }
   if (id === "noop" || id === "disabled") {
     return { provider: new NoopEmbeddingProvider(), requestedId: id, usedFallback: false };
   }
