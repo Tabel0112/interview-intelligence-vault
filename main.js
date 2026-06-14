@@ -1531,19 +1531,137 @@ function nativeBindingLoadError(resolution, error) {
 
 // src/obsidian/SettingsTab.ts
 var import_obsidian = require("obsidian");
+
+// src/obsidian/settings.ts
+var LLM_PROVIDER_OPTIONS = ["none", "anthropic", "openai"];
+var EMBEDDING_PROVIDER_OPTIONS = ["deterministic-test", "noop", "anthropic", "openai"];
+var DEFAULT_SETTINGS = {
+  schemaVersion: 1,
+  mode: "local",
+  llm: { provider: "none", model: "" },
+  embedding: { provider: "deterministic-test", model: "token-hash-v1" },
+  apiKeys: {}
+};
+var isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+var asString = (value, fallback) => typeof value === "string" ? value : fallback;
+var normalizeMode = (value) => value === "external" ? "external" : "local";
+var normalizeSelection = (value, fallback) => {
+  const record = isRecord(value) ? value : {};
+  return { provider: asString(record.provider, fallback.provider), model: asString(record.model, fallback.model) };
+};
+var normalizeApiKeys = (value) => {
+  if (!isRecord(value)) return {};
+  const result = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (typeof raw === "string" && raw.trim().length > 0) result[key] = raw;
+  }
+  return result;
+};
+function normalizeSettings(raw) {
+  const record = isRecord(raw) ? raw : {};
+  return {
+    schemaVersion: 1,
+    mode: normalizeMode(record.mode),
+    llm: normalizeSelection(record.llm, DEFAULT_SETTINGS.llm),
+    embedding: normalizeSelection(record.embedding, DEFAULT_SETTINGS.embedding),
+    apiKeys: normalizeApiKeys(record.apiKeys)
+  };
+}
+function setApiKey(settings, providerId, key) {
+  const apiKeys = { ...settings.apiKeys };
+  const trimmed = key.trim();
+  if (trimmed) apiKeys[providerId] = trimmed;
+  else delete apiKeys[providerId];
+  return { ...settings, apiKeys };
+}
+function redactApiKey(key) {
+  return key && key.trim().length > 0 ? "configured" : "not set";
+}
+function settingsHealthSummary(settings) {
+  return {
+    providerMode: settings.mode,
+    llmProvider: settings.llm.provider,
+    llmModel: settings.llm.model,
+    embeddingProvider: settings.embedding.provider,
+    embeddingModel: settings.embedding.model,
+    apiKeyConfigured: Object.values(settings.apiKeys).some((value) => value.trim().length > 0)
+  };
+}
+
+// src/obsidian/SettingsTab.ts
 var TranscriptMemorySettingsTab = class extends import_obsidian.PluginSettingTab {
-  constructor(app, plugin, getHealth, navigation) {
+  constructor(app, plugin, getHealth, navigation, getSettings, onSave) {
     super(app, plugin);
     this.getHealth = getHealth;
     this.navigation = navigation;
+    this.getSettings = getSettings;
+    this.onSave = onSave;
   }
   getHealth;
   navigation;
+  getSettings;
+  onSave;
   display() {
     const health = this.getHealth();
+    const settings = this.getSettings();
     this.containerEl.empty();
     this.containerEl.createEl("h2", { text: "Transcript Memory Vault" });
+    this.containerEl.createEl("h3", { text: "AI providers" });
+    const warning = this.containerEl.createEl("p", {
+      text: "API keys are stored in this plugin's local data file (data.json) as plain text. If your vault is synced, the key may sync with it. No external network calls are made yet \u2014 the app runs in local deterministic mode regardless of these settings."
+    });
+    warning.addClass("setting-item-description");
+    new import_obsidian.Setting(this.containerEl).setName("Mode").setDesc("Local deterministic runs fully offline and is the default. External providers are recorded but not active yet.").addDropdown(
+      (dropdown) => dropdown.addOption("local", "Local deterministic (default)").addOption("external", "External providers (not active yet)").setValue(settings.mode).onChange(async (value) => {
+        await this.onSave({ ...this.getSettings(), mode: value === "external" ? "external" : "local" });
+      })
+    );
+    new import_obsidian.Setting(this.containerEl).setName("LLM provider").setDesc("For future Ask AI synthesis. Not called yet.").addDropdown((dropdown) => {
+      for (const option of LLM_PROVIDER_OPTIONS) dropdown.addOption(option, option);
+      dropdown.setValue(settings.llm.provider).onChange(async (value) => {
+        await this.onSave({ ...this.getSettings(), llm: { ...this.getSettings().llm, provider: value } });
+        this.display();
+      });
+    });
+    new import_obsidian.Setting(this.containerEl).setName("LLM model").setDesc("Model identifier placeholder.").addText(
+      (text) => text.setPlaceholder("e.g. claude-...").setValue(settings.llm.model).onChange(async (value) => {
+        await this.onSave({ ...this.getSettings(), llm: { ...this.getSettings().llm, model: value } });
+      })
+    );
+    new import_obsidian.Setting(this.containerEl).setName("Embedding provider").setDesc("For future semantic retrieval. The deterministic test provider is the default.").addDropdown((dropdown) => {
+      for (const option of EMBEDDING_PROVIDER_OPTIONS) dropdown.addOption(option, option);
+      dropdown.setValue(settings.embedding.provider).onChange(async (value) => {
+        await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, provider: value } });
+      });
+    });
+    new import_obsidian.Setting(this.containerEl).setName("Embedding model").setDesc("Model identifier placeholder.").addText(
+      (text) => text.setPlaceholder("token-hash-v1").setValue(settings.embedding.model).onChange(async (value) => {
+        await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, model: value } });
+      })
+    );
+    const providerId = settings.llm.provider;
+    const keyStatus = redactApiKey(settings.apiKeys[providerId]);
+    new import_obsidian.Setting(this.containerEl).setName("API key").setDesc(
+      providerId === "none" ? "Select an LLM provider to set its API key." : `Stored for "${providerId}": ${keyStatus}. Type a new key to replace it; leave blank to keep the existing one.`
+    ).addText((text) => {
+      text.inputEl.type = "password";
+      text.setPlaceholder("Enter API key").onChange(async (value) => {
+        if (providerId === "none") return;
+        const trimmed = value.trim();
+        if (!trimmed) return;
+        await this.onSave(setApiKey(this.getSettings(), providerId, trimmed));
+      });
+    }).addButton(
+      (button) => button.setButtonText("Clear").onClick(async () => {
+        if (providerId === "none") return;
+        await this.onSave(setApiKey(this.getSettings(), providerId, ""));
+        this.display();
+      })
+    );
+    this.containerEl.createEl("h3", { text: "Status" });
     new import_obsidian.Setting(this.containerEl).setName("Plugin status").setDesc(health.status);
+    new import_obsidian.Setting(this.containerEl).setName("Provider mode").setDesc(health.providerMode ?? settings.mode);
+    new import_obsidian.Setting(this.containerEl).setName("API key").setDesc(health.apiKeyConfigured ? "configured" : "not configured");
     new import_obsidian.Setting(this.containerEl).setName("Database location").setDesc(health.databasePath ?? "Unavailable");
     new import_obsidian.Setting(this.containerEl).setName("SQLite storage").setDesc(health.realSqliteStorage ? "Connected to real local SQLite storage" : "Not connected");
     new import_obsidian.Setting(this.containerEl).setName("Migration status").setDesc(`${health.migrationStatus}: ${health.appliedMigrationCount}/${health.packagedMigrationCount} applied`);
@@ -4470,7 +4588,8 @@ var initialPluginHealth = () => ({
   firstRun: false,
   lastInitializationError: null,
   nativeBindingTarget: null,
-  packagedNativeTargets: []
+  packagedNativeTargets: [],
+  ...settingsHealthSummary(DEFAULT_SETTINGS)
 });
 function startupSupport(input) {
   return input.isDesktopApp && input.hasLocalFilesystem ? { supported: true } : { supported: false, message: DESKTOP_ONLY_MESSAGE };
@@ -4546,9 +4665,11 @@ function readableStartupError(error) {
 // src/obsidian/Plugin.ts
 var TranscriptMemoryVaultPlugin = class extends import_obsidian4.Plugin {
   db = null;
+  pluginSettings = DEFAULT_SETTINGS;
   health = initialPluginHealth();
   api = createUnavailableFrontendApi(() => this.health);
   async onload() {
+    await this.loadSettings();
     const navigation = createObsidianNavigation(this.app);
     for (const type of Object.values(OBSIDIAN_VIEW_TYPES)) {
       this.registerView(type, (leaf) => new TranscriptMemoryItemView(leaf, type, () => this.api, navigation));
@@ -4557,7 +4678,7 @@ var TranscriptMemoryVaultPlugin = class extends import_obsidian4.Plugin {
       this.addCommand({ id: command.id, name: command.name, callback: () => void navigationForView(navigation, command.viewType) });
     }
     this.addRibbonIcon(OBSIDIAN_RIBBON.icon, OBSIDIAN_RIBBON.title, () => void navigation.openDashboard());
-    this.addSettingTab(new TranscriptMemorySettingsTab(this.app, this, () => this.health, navigation));
+    this.addSettingTab(new TranscriptMemorySettingsTab(this.app, this, () => this.health, navigation, () => this.pluginSettings, (next) => this.saveSettings(next)));
     const adapter = this.app.vault.adapter;
     const fileSystemAdapter = adapter instanceof import_obsidian4.FileSystemAdapter ? adapter : null;
     const support = startupSupport({ isDesktopApp: import_obsidian4.Platform.isDesktopApp, hasLocalFilesystem: fileSystemAdapter != null });
@@ -4622,6 +4743,20 @@ var TranscriptMemoryVaultPlugin = class extends import_obsidian4.Plugin {
     this.db?.close();
     this.db = null;
     this.api = createUnavailableFrontendApi(() => this.health);
+  }
+  async loadSettings() {
+    try {
+      this.pluginSettings = normalizeSettings(await this.loadData());
+    } catch (error) {
+      this.pluginSettings = DEFAULT_SETTINGS;
+      console.error("Transcript Memory Vault settings could not be loaded; using local deterministic defaults.");
+    }
+    this.health = { ...this.health, ...settingsHealthSummary(this.pluginSettings) };
+  }
+  async saveSettings(next) {
+    this.pluginSettings = normalizeSettings(next);
+    await this.saveData(this.pluginSettings);
+    this.health = { ...this.health, ...settingsHealthSummary(this.pluginSettings) };
   }
 };
 function navigationForView(navigation, viewType) {

@@ -11,13 +11,16 @@ import { TranscriptMemoryItemView } from "./TranscriptMemoryItemView.js";
 import { createObsidianAppApi } from "./services/ObsidianAppApi.js";
 import { OBSIDIAN_COMMANDS, OBSIDIAN_RIBBON, OBSIDIAN_VIEW_TYPES, type TranscriptMemoryViewType } from "./pluginTypes.js";
 import { createUnavailableFrontendApi, DESKTOP_ONLY_MESSAGE, initialPluginHealth, readableStartupError, startupSupport, type PluginHealth } from "./startup.js";
+import { DEFAULT_SETTINGS, normalizeSettings, settingsHealthSummary, type TranscriptMemorySettings } from "./settings.js";
 
 export default class TranscriptMemoryVaultPlugin extends Plugin {
   private db: SqliteDatabase | null = null;
+  private pluginSettings: TranscriptMemorySettings = DEFAULT_SETTINGS;
   private health: PluginHealth = initialPluginHealth();
   private api: FrontendApi = createUnavailableFrontendApi(() => this.health);
 
   async onload(): Promise<void> {
+    await this.loadSettings();
     const navigation = createObsidianNavigation(this.app);
     for (const type of Object.values(OBSIDIAN_VIEW_TYPES)) {
       this.registerView(type, (leaf) => new TranscriptMemoryItemView(leaf, type as TranscriptMemoryViewType, () => this.api, navigation));
@@ -26,7 +29,7 @@ export default class TranscriptMemoryVaultPlugin extends Plugin {
       this.addCommand({ id: command.id, name: command.name, callback: () => void navigationForView(navigation, command.viewType) });
     }
     this.addRibbonIcon(OBSIDIAN_RIBBON.icon, OBSIDIAN_RIBBON.title, () => void navigation.openDashboard());
-    this.addSettingTab(new TranscriptMemorySettingsTab(this.app, this, () => this.health, navigation));
+    this.addSettingTab(new TranscriptMemorySettingsTab(this.app, this, () => this.health, navigation, () => this.pluginSettings, (next) => this.saveSettings(next)));
 
     const adapter = this.app.vault.adapter;
     const fileSystemAdapter = adapter instanceof FileSystemAdapter ? adapter : null;
@@ -85,6 +88,23 @@ export default class TranscriptMemoryVaultPlugin extends Plugin {
     this.db?.close();
     this.db = null;
     this.api = createUnavailableFrontendApi(() => this.health);
+  }
+
+  private async loadSettings(): Promise<void> {
+    try {
+      this.pluginSettings = normalizeSettings(await this.loadData());
+    } catch (error) {
+      // A corrupt/unreadable settings file must never block startup; fall back to deterministic defaults.
+      this.pluginSettings = DEFAULT_SETTINGS;
+      console.error("Transcript Memory Vault settings could not be loaded; using local deterministic defaults.");
+    }
+    this.health = { ...this.health, ...settingsHealthSummary(this.pluginSettings) };
+  }
+
+  async saveSettings(next: TranscriptMemorySettings): Promise<void> {
+    this.pluginSettings = normalizeSettings(next);
+    await this.saveData(this.pluginSettings);
+    this.health = { ...this.health, ...settingsHealthSummary(this.pluginSettings) };
   }
 }
 

@@ -1,5 +1,6 @@
 import type { FrontendApi } from "../frontend/index.js";
 import { PACKAGED_MIGRATION_COUNT } from "../db/migrations/index.js";
+import { DEFAULT_SETTINGS, settingsHealthSummary, type ProviderMode } from "./settings.js";
 
 export const DESKTOP_ONLY_MESSAGE = "Transcript Memory Vault is desktop-only right now because it uses local SQLite storage.";
 
@@ -18,6 +19,13 @@ export interface PluginHealth {
   lastInitializationError: string | null;
   nativeBindingTarget: string | null;
   packagedNativeTargets: string[];
+  // Non-secret provider/settings summary. Never contains API key material.
+  providerMode?: ProviderMode;
+  llmProvider?: string;
+  llmModel?: string;
+  embeddingProvider?: string;
+  embeddingModel?: string;
+  apiKeyConfigured?: boolean;
 }
 
 export const initialPluginHealth = (): PluginHealth => ({
@@ -32,6 +40,7 @@ export const initialPluginHealth = (): PluginHealth => ({
   lastInitializationError: null,
   nativeBindingTarget: null,
   packagedNativeTargets: [],
+  ...settingsHealthSummary(DEFAULT_SETTINGS),
 });
 
 export function startupSupport(input: { isDesktopApp: boolean; hasLocalFilesystem: boolean }): { supported: true } | { supported: false; message: string } {
