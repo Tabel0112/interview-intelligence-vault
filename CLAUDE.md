@@ -26,6 +26,21 @@ Do not treat generated Markdown, summaries, graph files, or AI answers as source
 12. Do not remove warnings unless the underlying evidence/provenance issue is actually fixed.
 13. Do not weaken tests to make changes pass.
 
+## Current MVP Gap Rules
+
+The intended MVP includes **real external LLM grounded synthesis** and **real semantic embedding-model vectors**. The current deterministic Ask AI claim generation and the `token-hash-v1` embedding vectors are **fallback / test / local-only modes** — not the complete MVP. See `docs/APP_SPEC.md` (architecture contract) and `docs/MVP_GAP_ANALYSIS.md` (gap status) for the authoritative current / intended-MVP / future breakdown; keep both updated when these facts change.
+
+1. Do not present deterministic Ask AI or `token-hash-v1` vectors as the finished MVP, or describe token-hash vectors as semantic. They are fallback/local/test modes only.
+2. Real external providers (LLM or embedding) are used **only when explicitly configured with a valid API key**; otherwise the app falls back to local deterministic mode. Missing/invalid keys must be handled safely — typed errors, no crash, and never silent vector-space corruption.
+3. Never mix vectors across providers/models/dimensions. Compare only within one `(provider, model, dimensions)` space; changing provider/model is a new space and requires reindexing.
+4. No external model may be enabled before its grounding check exists: claim↔evidence **entailment** verification for Ask AI synthesis, and structured-output shape validation + fallback for extraction. Citation/provenance enforcement alone is **not** entailment.
+5. The deterministic pipeline is **not yet wired end-to-end in the live app**: the live upload path stops at ingestion (no extraction, provenance pointers, or retrieval indexing), and `rebuildRetrievalIndex` has no live caller (only tests). Do not assume freshly uploaded data is searchable, or that Ask AI returns grounded answers, in the wired app until this is fixed.
+6. API keys must never be logged, persisted into vault data, or surfaced in errors, health, or generated Markdown. Obsidian has no secret store — plugin `data.json` is plaintext and may sync — so key storage is a deliberate decision, not a given.
+7. Tests must always run in deterministic local mode with mock/injected providers. No real network calls in tests, ever.
+8. Never make a network call inside a SQLite transaction.
+9. Hermes personalization is presentation/ranking only and is currently **not invoked in the live frontend Ask AI path** (it lives only in the orchestration `answerSynthesisAgent`). Do not rely on it running there, and never let it change evidence scores, truth status, conflict status, provenance, or warnings.
+10. Add real providers only behind the existing injection seams (`EmbeddingProvider`, `AskAILanguageModel`) so that swapping in a mock reproduces today's deterministic behavior.
+
 ## Existing Implemented Areas
 
 The project already includes these major layers:
