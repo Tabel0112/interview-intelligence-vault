@@ -1,4 +1,4 @@
-import { askAI, createDatabaseAskAIDependencies, getAskAIResponse } from "../ask-ai/index.js";
+import { askAI, createDatabaseAskAIDependencies, getAskAIResponse, type AskAILanguageModel, type SynthesisInfo } from "../ask-ai/index.js";
 import { createConflictRepository } from "../conflicts/index.js";
 import type { SqliteDatabase } from "../db/connection.js";
 import { createCorrectionsRepo } from "../db/repositories/correctionsRepo.js";
@@ -163,7 +163,10 @@ function normalizeCorrectionTarget(db: SqliteDatabase, input: Parameters<Fronten
   throw new Error(`Correction target ${input.targetType}:${input.targetId} has no supported append-only owner`);
 }
 
-export function createSqliteFrontendApi(db: SqliteDatabase, options: { now?: () => Date; health?: PluginHealth } = {}): FrontendApi {
+export function createSqliteFrontendApi(
+  db: SqliteDatabase,
+  options: { now?: () => Date; health?: PluginHealth; getSynthesis?: () => { llm?: AskAILanguageModel; info: SynthesisInfo } | undefined } = {},
+): FrontendApi {
   return {
     async getDashboard(): Promise<DashboardView> {
       const answers = db.prepare("SELECT id,question,evidence_confidence,created_at FROM ask_ai_runs ORDER BY created_at DESC,id LIMIT 8").all() as Row[];
@@ -203,8 +206,14 @@ export function createSqliteFrontendApi(db: SqliteDatabase, options: { now?: () 
         })),
       };
     },
-    async ask(question, askOptions) { return askAI({ question, transcriptIds: askOptions?.transcriptIds }, createDatabaseAskAIDependencies(db, options)); },
-    async askAI(question, askOptions) { return askAI({ question, transcriptIds: askOptions?.transcriptIds }, createDatabaseAskAIDependencies(db, options)); },
+    async ask(question, askOptions) {
+      const synth = options.getSynthesis?.();
+      return askAI({ question, transcriptIds: askOptions?.transcriptIds }, createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, synthesisInfo: synth?.info }));
+    },
+    async askAI(question, askOptions) {
+      const synth = options.getSynthesis?.();
+      return askAI({ question, transcriptIds: askOptions?.transcriptIds }, createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, synthesisInfo: synth?.info }));
+    },
     async getAnswer(id) {
       try {
         const answer = getAskAIResponse(db, id);

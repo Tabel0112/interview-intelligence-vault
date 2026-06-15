@@ -76,6 +76,29 @@ export interface AskAICitation {
   clickbackUri: string;
 }
 
+/** Non-secret description of how the answer's claims were synthesized. No keys/prompts/provider objects. */
+export type SynthesisActualMode = "external_llm" | "deterministic" | "conflict";
+
+/** Configured synthesis intent, supplied by the wiring layer (non-secret). */
+export interface SynthesisInfo {
+  /** Whether an external LLM was configured for synthesis ("external_llm") or local mode ("deterministic"). */
+  mode: "external_llm" | "deterministic";
+  provider?: string; // provider id only, e.g. "openai" or "local-deterministic"
+  model?: string; // model id only
+  /** Resolution-level fallback: settings asked for external but were incomplete (no key/model). */
+  usedFallback?: boolean;
+}
+
+/** Runtime-accurate synthesis result persisted with the answer (non-secret). */
+export interface AnswerSynthesis {
+  mode: SynthesisActualMode;
+  provider?: string;
+  model?: string;
+  /** True when an external LLM was configured but the actual path was deterministic (resolution or runtime fallback). */
+  usedFallback: boolean;
+  reason?: string;
+}
+
 export interface AskAIResponse {
   id: string;
   question: string;
@@ -90,6 +113,7 @@ export interface AskAIResponse {
   queryUnderstanding: QueryUnderstanding;
   conflicts: ConflictAssessment[];
   scoreRunId?: string;
+  synthesis?: AnswerSynthesis;
 }
 
 export interface AskAILanguageModel {
@@ -103,6 +127,8 @@ export interface AskAIDependencies {
   findConflicts?: (evidence: AskAIEvidenceItem[]) => Promise<ConflictAssessment[]>;
   persistAnswer?: (answer: AskAIResponse) => Promise<void>;
   llm?: AskAILanguageModel;
+  /** Non-secret configured-synthesis summary, recorded with the answer. */
+  synthesisInfo?: SynthesisInfo;
   now?: () => Date;
   db?: SqliteDatabase;
 }

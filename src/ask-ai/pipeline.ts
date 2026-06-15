@@ -8,10 +8,25 @@ import { suggestFollowups } from "./followups.js";
 import { persistAskAIResponse } from "./repository.js";
 import { renderAnswer } from "./answerRendering.js";
 import { understandQuestion } from "./queryUnderstanding.js";
-import type { AskAIDependencies, AskAIRequest, AskAIResponse, ClaimKind, QueryUnderstanding } from "./types.js";
+import type { AnswerSynthesis, AskAIDependencies, AskAIRequest, AskAIResponse, ClaimKind, QueryUnderstanding } from "./types.js";
 
 const useType = (kind: ClaimKind): EvidenceUseType =>
   kind === "fact" ? "direct_fact" : kind === "pattern" ? "pattern" : kind;
+
+/** Build the non-secret, runtime-accurate synthesis record. No keys/prompts/provider objects. */
+function resolveAnswerSynthesis(deps: AskAIDependencies, actualMode: "llm" | "deterministic" | "conflict"): AnswerSynthesis {
+  const configured = deps.synthesisInfo ?? { mode: deps.llm ? "external_llm" : "deterministic" };
+  const mode: AnswerSynthesis["mode"] = actualMode === "llm" ? "external_llm" : actualMode;
+  // Runtime fallback: an external LLM was available but the deterministic path was actually taken.
+  const runtimeFallback = deps.llm != null && actualMode === "deterministic";
+  const usedFallback = Boolean(configured.usedFallback) || runtimeFallback;
+  const reason = runtimeFallback
+    ? `Configured external LLM "${configured.provider ?? "external"}" did not produce grounded claims; used deterministic synthesis.`
+    : configured.usedFallback
+      ? "External LLM was selected but not fully configured; used deterministic synthesis."
+      : undefined;
+  return { mode, provider: configured.provider, model: configured.model, usedFallback, reason };
+}
 
 export async function askAI(request: AskAIRequest, deps: AskAIDependencies): Promise<AskAIResponse> {
   const query = understandQuestion(request.question, request);
@@ -29,7 +44,10 @@ export async function askAI(request: AskAIRequest, deps: AskAIDependencies): Pro
   const selectedEvidence = [...new Map([...selection.evidence, ...conflictEvidenceForAnswer(conflicts)].map((item) => [item.evidencePointerId, item])).values()];
   const citations = buildCitations(selectedEvidence);
   const selectedConfidence = confidenceWithConflicts(selection.confidence, conflicts);
-  const claims = await generateClaimsFromEvidence(query, selectedEvidence, citations, { confidence: selectedConfidence, llm: deps.llm });
+  let actualMode: "llm" | "deterministic" | "conflict" = "deterministic";
+  const claims = await generateClaimsFromEvidence(query, selectedEvidence, citations, {
+    confidence: selectedConfidence, llm: deps.llm, onSynthesis: (mode) => { actualMode = mode; },
+  });
   const confidence = claims.length ? selectedConfidence : "no_evidence";
   const usedPointers = new Set(claims.flatMap((claim) => claim.evidencePointerIds));
   const finalEvidence = selectedEvidence.filter((item) => usedPointers.has(item.evidencePointerId));
@@ -40,6 +58,7 @@ export async function askAI(request: AskAIRequest, deps: AskAIDependencies): Pro
     evidenceConfidence: confidence, claims, citations: finalCitations, evidence: finalEvidence,
     suggestedFollowups: request.includeSuggestedFollowups === false ? [] : suggestFollowups(confidence, query),
     notEnoughEvidence: confidence === "no_evidence", createdAt: timestamp.toISOString(), queryUnderstanding: query, conflicts,
+    synthesis: resolveAnswerSynthesis(deps, actualMode),
   };
   if (deps.persistAnswer) await deps.persistAnswer(response);
   else if (deps.db) {

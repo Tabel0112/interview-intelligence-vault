@@ -814,7 +814,7 @@ __export(main_exports, {
 module.exports = __toCommonJS(main_exports);
 
 // src/obsidian/Plugin.ts
-var import_obsidian5 = require("obsidian");
+var import_obsidian6 = require("obsidian");
 var import_node_fs3 = require("node:fs");
 var import_node_path4 = require("node:path");
 
@@ -1624,473 +1624,6 @@ function settingsHealthSummary(settings) {
   };
 }
 
-// src/llm/errors.ts
-var LlmError = class extends Error {
-  context;
-  constructor(message, context, options) {
-    super(message, options);
-    this.name = new.target.name;
-    this.context = context;
-  }
-};
-var LlmTimeoutError = class extends LlmError {
-};
-var LlmCancelledError = class extends LlmError {
-};
-var LlmAuthError = class extends LlmError {
-};
-var LlmRateLimitError = class extends LlmError {
-};
-var LlmProviderError = class extends LlmError {
-};
-var LlmResponseFormatError = class extends LlmError {
-};
-
-// src/llm/redaction.ts
-var REDACTED = "[redacted]";
-function redactSecret(text, secret) {
-  if (!secret || !secret.trim()) return text;
-  return text.split(secret).join(REDACTED);
-}
-
-// src/llm/timeout.ts
-async function runWithTimeout(operation, options = {}) {
-  const context = { provider: options.provider, model: options.model };
-  if (options.signal?.aborted) throw new LlmCancelledError("LLM request was cancelled", context);
-  const controller = new AbortController();
-  const onExternalAbort = () => controller.abort();
-  options.signal?.addEventListener("abort", onExternalAbort, { once: true });
-  let timedOut = false;
-  let timer;
-  const timeout = options.timeoutMs != null ? new Promise((_resolve, reject) => {
-    timer = setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-      reject(new LlmTimeoutError(`LLM request timed out after ${options.timeoutMs}ms`, context));
-    }, options.timeoutMs);
-  }) : null;
-  try {
-    return await (timeout ? Promise.race([operation(controller.signal), timeout]) : operation(controller.signal));
-  } catch (error) {
-    if (timedOut) throw error instanceof LlmTimeoutError ? error : new LlmTimeoutError(`LLM request timed out after ${options.timeoutMs}ms`, context);
-    if (options.signal?.aborted) throw new LlmCancelledError("LLM request was cancelled", context);
-    throw error;
-  } finally {
-    if (timer) clearTimeout(timer);
-    options.signal?.removeEventListener("abort", onExternalAbort);
-  }
-}
-
-// src/llm/externalLlmProvider.ts
-var DEFAULT_BASE_URL = "https://api.openai.com/v1";
-function createHttpLlmTransport(fetchImpl = globalThis.fetch) {
-  return async (request) => {
-    const response = await fetchImpl(request.url, {
-      method: request.method,
-      headers: request.headers,
-      body: request.body,
-      signal: request.signal
-    });
-    let body = null;
-    try {
-      body = await response.json();
-    } catch {
-      try {
-        body = await response.text();
-      } catch {
-        body = null;
-      }
-    }
-    return { status: response.status, body };
-  };
-}
-var asTokenCount = (value) => typeof value === "number" && Number.isFinite(value) ? value : void 0;
-var ExternalLlmProvider = class {
-  id;
-  model;
-  isLocal = false;
-  #apiKey;
-  #baseUrl;
-  #transport;
-  #timeoutMs;
-  constructor(config) {
-    if (!config.apiKey || !config.apiKey.trim()) {
-      throw new LlmAuthError("External LLM provider requires a non-blank API key", { provider: config.id, model: config.model });
-    }
-    this.id = config.id;
-    this.model = config.model;
-    this.#apiKey = config.apiKey.trim();
-    this.#baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
-    this.#transport = config.transport ?? createHttpLlmTransport();
-    this.#timeoutMs = config.timeoutMs;
-  }
-  async complete(request, options) {
-    const messages = [];
-    if (request.system) messages.push({ role: "system", content: request.system });
-    messages.push({ role: "user", content: request.prompt });
-    const payload = { model: this.model, messages };
-    if (request.maxOutputTokens != null) payload.max_tokens = request.maxOutputTokens;
-    if (request.responseFormat === "json") payload.response_format = { type: "json_object" };
-    const body = JSON.stringify(payload);
-    let response;
-    try {
-      response = await runWithTimeout(
-        (signal) => this.#transport({
-          url: `${this.#baseUrl}/chat/completions`,
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.#apiKey}` },
-          body,
-          signal
-        }),
-        { timeoutMs: options?.timeoutMs ?? this.#timeoutMs, signal: options?.signal, provider: this.id, model: this.model }
-      );
-    } catch (error) {
-      if (error instanceof LlmError) throw error;
-      const detail = redactSecret(error instanceof Error ? error.message : String(error), this.#apiKey);
-      throw new LlmProviderError(`LLM request failed: ${detail}`, { provider: this.id, model: this.model });
-    }
-    if (response.status === 401 || response.status === 403) {
-      throw new LlmAuthError("LLM provider rejected the API key", { provider: this.id, model: this.model });
-    }
-    if (response.status === 429) {
-      throw new LlmRateLimitError("LLM provider rate limit exceeded", { provider: this.id, model: this.model });
-    }
-    if (response.status < 200 || response.status >= 300) {
-      throw new LlmProviderError(`LLM provider returned status ${response.status}`, { provider: this.id, model: this.model });
-    }
-    const choice = response.body?.choices?.[0];
-    const content = choice?.message?.content;
-    if (typeof content !== "string") {
-      throw new LlmResponseFormatError("LLM response did not contain a text completion", { provider: this.id, model: this.model });
-    }
-    const finishReason = choice?.finish_reason === "length" ? "length" : "stop";
-    const usageRaw = response.body.usage;
-    const inputTokens = asTokenCount(usageRaw?.prompt_tokens);
-    const outputTokens = asTokenCount(usageRaw?.completion_tokens);
-    const usage = inputTokens !== void 0 || outputTokens !== void 0 ? { inputTokens, outputTokens } : void 0;
-    return { provider: this.id, model: this.model, text: content, finishReason, usage };
-  }
-};
-
-// src/llm/localDeterministicProvider.ts
-var LocalDeterministicLlmProvider = class {
-  constructor(model = "local-deterministic-v1") {
-    this.model = model;
-  }
-  model;
-  id = "local-deterministic";
-  isLocal = true;
-  // Resolves instantly with no I/O, so signal/timeout are accepted (interface parity) but unused.
-  async complete(request, _options) {
-    const text = request.responseFormat === "json" ? JSON.stringify({ echo: request.prompt, system: request.system ?? null }) : `[local-deterministic] ${request.prompt.trim()}`;
-    return { provider: this.id, model: this.model, text, finishReason: "stop" };
-  }
-};
-
-// src/obsidian/llmSettings.ts
-function externalLlmConfigFromSettings(settings) {
-  if (settings.mode !== "external") return null;
-  const { provider, model, baseUrl, timeoutMs } = settings.llm;
-  if (!isExternalLlmProvider(provider)) return null;
-  if (!model || !model.trim()) return null;
-  const apiKey = settings.apiKeys[provider];
-  if (!apiKey || !apiKey.trim()) return null;
-  const config = { id: provider, model: model.trim(), apiKey: apiKey.trim() };
-  if (baseUrl) config.baseUrl = baseUrl;
-  if (typeof timeoutMs === "number" && timeoutMs > 0) config.timeoutMs = timeoutMs;
-  return config;
-}
-function resolveLlmProviderFromSettings(settings, options = {}) {
-  const external = externalLlmConfigFromSettings(settings);
-  if (external) {
-    const config = options.transport ? { ...external, transport: options.transport } : external;
-    return { provider: new ExternalLlmProvider(config), requestedId: external.id, usedFallback: false };
-  }
-  if (settings.mode === "external" && isExternalLlmProvider(settings.llm.provider)) {
-    return {
-      provider: new LocalDeterministicLlmProvider(),
-      requestedId: settings.llm.provider,
-      usedFallback: true,
-      reason: `External LLM provider "${settings.llm.provider}" is not fully configured (needs a model and a non-blank API key); using the local deterministic LLM provider.`
-    };
-  }
-  return {
-    provider: new LocalDeterministicLlmProvider(),
-    requestedId: settings.llm.provider || "local-deterministic",
-    usedFallback: false
-  };
-}
-function llmResolutionSummary(resolution) {
-  return {
-    requestedId: resolution.requestedId,
-    providerId: resolution.provider.id,
-    model: resolution.provider.model,
-    isLocal: resolution.provider.isLocal,
-    usedFallback: resolution.usedFallback,
-    reason: resolution.reason
-  };
-}
-
-// src/obsidian/SettingsTab.ts
-var TranscriptMemorySettingsTab = class extends import_obsidian.PluginSettingTab {
-  constructor(app, plugin, getHealth, navigation, getSettings, onSave) {
-    super(app, plugin);
-    this.getHealth = getHealth;
-    this.navigation = navigation;
-    this.getSettings = getSettings;
-    this.onSave = onSave;
-  }
-  getHealth;
-  navigation;
-  getSettings;
-  onSave;
-  display() {
-    const health = this.getHealth();
-    const settings = this.getSettings();
-    this.containerEl.empty();
-    this.containerEl.createEl("h2", { text: "Transcript Memory Vault" });
-    this.containerEl.createEl("h3", { text: "AI providers" });
-    const warning = this.containerEl.createEl("p", {
-      text: `API keys are stored in this plugin's local data file (data.json) as plain text. If your vault is synced, the key may sync with it. Run the "Rebuild Embedding Index" command to (re)build the index with the configured provider \u2014 that command is the only action that may make a network call.`
-    });
-    warning.addClass("setting-item-description");
-    new import_obsidian.Setting(this.containerEl).setName("Mode").setDesc("Local deterministic runs fully offline and is the default. External providers are recorded but not active yet.").addDropdown(
-      (dropdown) => dropdown.addOption("local", "Local deterministic (default)").addOption("external", "External providers (not active yet)").setValue(settings.mode).onChange(async (value) => {
-        await this.onSave({ ...this.getSettings(), mode: value === "external" ? "external" : "local" });
-      })
-    );
-    new import_obsidian.Setting(this.containerEl).setName("LLM provider").setDesc("For future Ask AI synthesis. Not called yet.").addDropdown((dropdown) => {
-      for (const option of LLM_PROVIDER_OPTIONS) dropdown.addOption(option, option);
-      dropdown.setValue(settings.llm.provider).onChange(async (value) => {
-        await this.onSave({ ...this.getSettings(), llm: { ...this.getSettings().llm, provider: value } });
-        this.display();
-      });
-    });
-    new import_obsidian.Setting(this.containerEl).setName("LLM model").setDesc("Model identifier. Required for an external provider.").addText(
-      (text) => text.setPlaceholder("e.g. gpt-4o-mini").setValue(settings.llm.model).onChange(async (value) => {
-        await this.onSave({ ...this.getSettings(), llm: { ...this.getSettings().llm, model: value } });
-      })
-    );
-    new import_obsidian.Setting(this.containerEl).setName("LLM base URL").setDesc("Optional. Override the OpenAI-compatible endpoint for the external LLM provider.").addText(
-      (text) => text.setPlaceholder("https://api.openai.com/v1").setValue(settings.llm.baseUrl ?? "").onChange(async (value) => {
-        const baseUrl = value.trim().length > 0 ? value.trim() : void 0;
-        await this.onSave({ ...this.getSettings(), llm: { ...this.getSettings().llm, baseUrl } });
-      })
-    );
-    new import_obsidian.Setting(this.containerEl).setName("LLM request timeout (ms)").setDesc("Optional. Applied to the external LLM provider; the local provider ignores it.").addText(
-      (text) => text.setPlaceholder("e.g. 30000").setValue(settings.llm.timeoutMs != null ? String(settings.llm.timeoutMs) : "").onChange(async (value) => {
-        const parsed = Number(value.trim());
-        const timeoutMs = Number.isFinite(parsed) && parsed > 0 ? parsed : void 0;
-        await this.onSave({ ...this.getSettings(), llm: { ...this.getSettings().llm, timeoutMs } });
-      })
-    );
-    new import_obsidian.Setting(this.containerEl).setName("Embedding provider").setDesc("For future semantic retrieval. The deterministic test provider is the default.").addDropdown((dropdown) => {
-      for (const option of EMBEDDING_PROVIDER_OPTIONS) dropdown.addOption(option, option);
-      dropdown.setValue(settings.embedding.provider).onChange(async (value) => {
-        await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, provider: value } });
-        this.display();
-      });
-    });
-    new import_obsidian.Setting(this.containerEl).setName("Embedding model").setDesc("Model identifier placeholder.").addText(
-      (text) => text.setPlaceholder("token-hash-v1").setValue(settings.embedding.model).onChange(async (value) => {
-        await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, model: value } });
-      })
-    );
-    const embeddingProviderId = settings.embedding.provider;
-    const embeddingIsExternal = isExternalEmbeddingProvider(embeddingProviderId);
-    new import_obsidian.Setting(this.containerEl).setName("Embedding dimensions").setDesc("Required for an external embedding provider: the vector length the model returns.").addText(
-      (text) => text.setPlaceholder("e.g. 1536").setValue(settings.embedding.dimensions != null ? String(settings.embedding.dimensions) : "").onChange(async (value) => {
-        const parsed = Number(value.trim());
-        const dimensions = Number.isInteger(parsed) && parsed > 0 ? parsed : void 0;
-        await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, dimensions } });
-      })
-    );
-    new import_obsidian.Setting(this.containerEl).setName("Embedding base URL").setDesc("Optional. Override the OpenAI-compatible endpoint for the external embedding provider.").addText(
-      (text) => text.setPlaceholder("https://api.openai.com/v1").setValue(settings.embedding.baseUrl ?? "").onChange(async (value) => {
-        const baseUrl = value.trim().length > 0 ? value.trim() : void 0;
-        await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, baseUrl } });
-      })
-    );
-    new import_obsidian.Setting(this.containerEl).setName("Embedding request timeout (ms)").setDesc("Optional. Applied only to the external embedding HTTP transport.").addText(
-      (text) => text.setPlaceholder("e.g. 30000").setValue(settings.embedding.timeoutMs != null ? String(settings.embedding.timeoutMs) : "").onChange(async (value) => {
-        const parsed = Number(value.trim());
-        const timeoutMs = Number.isFinite(parsed) && parsed > 0 ? parsed : void 0;
-        await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, timeoutMs } });
-      })
-    );
-    new import_obsidian.Setting(this.containerEl).setName("Embedding API key").setDesc(
-      embeddingIsExternal ? `Stored for "${embeddingProviderId}": ${redactApiKey(settings.apiKeys[embeddingProviderId])}. Type a new key to replace it; leave blank to keep the existing one.` : "The selected embedding provider runs locally and needs no API key."
-    ).addText((text) => {
-      text.inputEl.type = "password";
-      text.setPlaceholder("Enter API key").onChange(async (value) => {
-        if (!embeddingIsExternal) return;
-        const trimmed = value.trim();
-        if (!trimmed) return;
-        await this.onSave(setApiKey(this.getSettings(), embeddingProviderId, trimmed));
-      });
-    }).addButton(
-      (button) => button.setButtonText("Clear").onClick(async () => {
-        if (!embeddingIsExternal) return;
-        await this.onSave(setApiKey(this.getSettings(), embeddingProviderId, ""));
-        this.display();
-      })
-    );
-    const llmProviderId = settings.llm.provider;
-    const llmKeyStatus = redactApiKey(settings.apiKeys[llmProviderId]);
-    new import_obsidian.Setting(this.containerEl).setName("LLM API key").setDesc(
-      llmProviderId === "none" ? "Select an LLM provider to set its API key." : `Stored for "${llmProviderId}": ${llmKeyStatus}. Type a new key to replace it; leave blank to keep the existing one.`
-    ).addText((text) => {
-      text.inputEl.type = "password";
-      text.setPlaceholder("Enter API key").onChange(async (value) => {
-        if (llmProviderId === "none") return;
-        const trimmed = value.trim();
-        if (!trimmed) return;
-        await this.onSave(setApiKey(this.getSettings(), llmProviderId, trimmed));
-      });
-    }).addButton(
-      (button) => button.setButtonText("Clear").onClick(async () => {
-        if (llmProviderId === "none") return;
-        await this.onSave(setApiKey(this.getSettings(), llmProviderId, ""));
-        this.display();
-      })
-    );
-    this.containerEl.createEl("h3", { text: "Status" });
-    new import_obsidian.Setting(this.containerEl).setName("Plugin status").setDesc(health.status);
-    new import_obsidian.Setting(this.containerEl).setName("Provider mode").setDesc(health.providerMode ?? settings.mode);
-    new import_obsidian.Setting(this.containerEl).setName("API key").setDesc(health.apiKeyConfigured ? "configured" : "not configured");
-    const llmStatus = llmResolutionSummary(resolveLlmProviderFromSettings(settings));
-    new import_obsidian.Setting(this.containerEl).setName("LLM provider").setDesc(
-      llmStatus.usedFallback ? `Using local deterministic LLM (fallback). ${llmStatus.reason ?? ""}`.trim() : `${llmStatus.providerId}${llmStatus.model ? ` / ${llmStatus.model}` : ""}${llmStatus.isLocal ? " (local deterministic)" : " (external)"}`
-    );
-    new import_obsidian.Setting(this.containerEl).setName("Embedding index").setDesc(
-      health.reindexNeeded === void 0 ? "Status unavailable until the database is ready." : health.reindexNeeded ? `Reindex needed \u2014 run the "Rebuild Embedding Index" command. ${health.reindexSummary ?? ""}`.trim() : `Up to date. ${health.reindexSummary ?? ""}`.trim()
-    );
-    if (health.embeddingUsedFallback) {
-      new import_obsidian.Setting(this.containerEl).setName("Embedding fallback").setDesc("The configured external embedding provider is not fully set up; using local token-hash-v1.");
-    }
-    new import_obsidian.Setting(this.containerEl).setName("Database location").setDesc(health.databasePath ?? "Unavailable");
-    new import_obsidian.Setting(this.containerEl).setName("SQLite storage").setDesc(health.realSqliteStorage ? "Connected to real local SQLite storage" : "Not connected");
-    new import_obsidian.Setting(this.containerEl).setName("Migration status").setDesc(`${health.migrationStatus}: ${health.appliedMigrationCount}/${health.packagedMigrationCount} applied`);
-    new import_obsidian.Setting(this.containerEl).setName("Last initialization error").setDesc(health.lastInitializationError ?? "None");
-    new import_obsidian.Setting(this.containerEl).setName("Native binding target").setDesc(health.nativeBindingTarget ?? "Unresolved");
-    new import_obsidian.Setting(this.containerEl).setName("Packaged native targets").setDesc(health.packagedNativeTargets.join(", ") || "None");
-    new import_obsidian.Setting(this.containerEl).setName("Dashboard").addButton((button) => button.setButtonText("Open dashboard").onClick(() => void this.navigation.openDashboard()));
-  }
-};
-
-// src/obsidian/TranscriptMemoryItemView.ts
-var import_obsidian3 = require("obsidian");
-
-// src/frontend/router.ts
-var patterns = [
-  { id: "dashboard", pattern: /^\/(?:dashboard\/?)?$/ },
-  { id: "upload", pattern: /^\/upload\/?$/ },
-  { id: "transcript", pattern: /^\/transcripts\/([^/]+)\/?$/, names: ["id"] },
-  { id: "ask", pattern: /^\/ask\/?$/ },
-  { id: "answer", pattern: /^\/answers\/([^/]+)\/?$/, names: ["id"] },
-  { id: "evidence", pattern: /^\/evidence\/([^/]+)\/?$/, names: ["id"] },
-  { id: "memory", pattern: /^\/memory\/([^/]+)\/?$/, names: ["id"] },
-  { id: "graph", pattern: /^\/graph\/?$/ },
-  { id: "search", pattern: /^\/search\/?$/ },
-  { id: "review", pattern: /^\/review\/?$/ },
-  { id: "review_detail", pattern: /^\/review\/([^/]+)\/?$/, names: ["id"] }
-];
-function matchRoute(input) {
-  const internal = input.startsWith("mv://") ? new URL(input) : null;
-  const inputPath = internal ? `/${internal.host}${internal.pathname}${internal.search}` : input;
-  const url = new URL(inputPath, "http://vault.local");
-  for (const route of patterns) {
-    const match = route.pattern.exec(url.pathname);
-    if (!match) continue;
-    return {
-      id: route.id,
-      path: url.pathname,
-      params: Object.fromEntries((route.names ?? []).map((name, index) => [name, decodeURIComponent(match[index + 1])])),
-      query: url.searchParams
-    };
-  }
-  return { id: "not_found", path: url.pathname, params: {}, query: url.searchParams };
-}
-var routeHref = {
-  dashboard: () => "mv://dashboard",
-  upload: () => "mv://upload",
-  ask: () => "mv://ask",
-  graph: (query = "") => `mv://graph${query}`,
-  search: (query = "") => `mv://search${query}`,
-  reviewQueue: (query = "") => `mv://review${query}`,
-  transcript: (id, spanId) => `mv://transcripts/${encodeURIComponent(id)}${spanId ? `?span=${encodeURIComponent(spanId)}` : ""}`,
-  answer: (id) => `mv://answers/${encodeURIComponent(id)}`,
-  evidence: (id) => `mv://evidence/${encodeURIComponent(id)}`,
-  memory: (id) => `mv://memory/${encodeURIComponent(id)}`,
-  review: (id) => `mv://review/${encodeURIComponent(id)}`
-};
-
-// src/frontend/navigation.ts
-async function navigateInternal(navigation, target) {
-  const route = matchRoute(target);
-  switch (route.id) {
-    case "dashboard":
-      return navigation.openDashboard();
-    case "upload":
-      return navigation.openUpload();
-    case "transcript":
-      return navigation.openTranscript(route.params.id, { spanId: route.query.get("span") ?? void 0 });
-    case "ask":
-      return navigation.openAskAI();
-    case "answer":
-      return navigation.openAnswer(route.params.id);
-    case "evidence":
-      return navigation.openEvidence(route.params.id);
-    case "memory":
-      return navigation.openMemoryObject(route.params.id);
-    case "graph":
-      return navigation.openGraph({
-        selectedNodeId: route.query.get("selectedNode") ?? void 0,
-        selectedEdgeId: route.query.get("selectedEdge") ?? void 0,
-        query: route.query.get("q") ?? void 0
-      });
-    case "search":
-      return navigation.openSearch(route.query.get("q") ?? void 0);
-    case "review_detail":
-      return navigation.openReviewQueue({ reviewItemId: route.params.id });
-    case "review":
-      return navigation.openReviewQueue();
-    default:
-      throw new Error(`Unsupported internal navigation target: ${target}`);
-  }
-}
-
-// src/frontend/html.ts
-function escapeHtml(value) {
-  return String(value ?? "").replace(/[&<>"']/g, (character) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;"
-  })[character]);
-}
-function trustBadge(state, label = state.replaceAll("_", " ")) {
-  return `<span class="trust-badge trust-${escapeHtml(state)}" data-trust-state="${escapeHtml(state)}">${escapeHtml(label)}</span>`;
-}
-function score(value) {
-  return value == null ? "not scored" : `${Math.round(value * 100)}%`;
-}
-function emptyState(title, detail, action) {
-  return `<div class="empty-state"><h3>${escapeHtml(title)}</h3><p>${escapeHtml(detail)}</p>${action ? routeButton(action.href, action.label) : ""}</div>`;
-}
-function routeButton(target, label, className = "route-action") {
-  return `<button type="button" class="${escapeHtml(className)}" data-route="${escapeHtml(target)}">${escapeHtml(label)}</button>`;
-}
-function appShell(title, body) {
-  return `<div class="transcript-memory-vault vault-app">
-    <header class="app-header">${routeButton("mv://dashboard", "Interview Intelligence Vault", "route-action brand")}<nav aria-label="Primary">
-      ${routeButton("mv://upload", "Upload")}${routeButton("mv://ask", "Ask AI")}${routeButton("mv://search", "Search")}${routeButton("mv://graph", "Graph")}${routeButton("mv://review", "Review")}
-    </nav></header>
-    <main><header class="page-header"><h1>${escapeHtml(title)}</h1></header>${body}</main>
-  </div>`;
-}
-
 // src/ask-ai/queryUnderstanding.ts
 var unique = (values) => [...new Set(values.filter(Boolean))];
 function understandQuestion(question, options = {}) {
@@ -2198,15 +1731,24 @@ async function generateClaimsFromEvidence(query, evidence, citations, options) {
   const deterministicClaims = () => kinds.map((kind) => ({ kind, text: defaultClaimText(kind, evidence), evidencePointerIds: evidence.map((item) => item.evidencePointerId) }));
   let proposed;
   if (options.confidence === "conflicting") {
+    options.onSynthesis?.("conflict");
     proposed = conflictEvidence.map((item) => ({ kind: kinds[0] ?? "fact", text: defaultClaimText(kinds[0] ?? "fact", [item]), evidencePointerIds: [item.evidencePointerId] }));
   } else if (options.llm) {
     try {
       const llmClaims = await options.llm.generateClaims({ query, evidence });
-      proposed = llmClaims.length ? llmClaims : deterministicClaims();
+      if (llmClaims.length) {
+        options.onSynthesis?.("llm");
+        proposed = llmClaims;
+      } else {
+        options.onSynthesis?.("deterministic");
+        proposed = deterministicClaims();
+      }
     } catch {
+      options.onSynthesis?.("deterministic");
       proposed = deterministicClaims();
     }
   } else {
+    options.onSynthesis?.("deterministic");
     proposed = deterministicClaims();
   }
   return proposed.flatMap((claim, index) => {
@@ -2226,6 +1768,84 @@ async function generateClaimsFromEvidence(query, evidence, citations, options) {
     if (!citationIds.length) return [];
     return [{ id: stableId(`${index}:${kind}:${claim.text}:${pointers.join(",")}`), kind, text: claim.text.trim(), supportStatus: status, evidencePointerIds: pointers, citationIds, explanation }];
   });
+}
+
+// src/ask-ai/llmSynthesis.ts
+var LlmSynthesisError = class extends Error {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "LlmSynthesisError";
+  }
+};
+var CLAIM_KINDS = ["fact", "pattern", "inference", "recommendation"];
+var normalizeForMatch = (value) => value.toLowerCase().replace(/\s+/g, " ").trim();
+function buildSynthesisPrompt(query, evidence) {
+  const items = evidence.map((item, index) => `${index + 1}. pointerId: ${item.evidencePointerId}
+   quote: ${item.quotePreview}`).join("\n");
+  const system = [
+    "You answer questions strictly from the transcript evidence provided.",
+    "Use ONLY the listed evidence; never use outside knowledge or invent facts.",
+    "Cite evidence by its exact pointerId. Each claim must include a supportingQuote copied verbatim from one of the quotes you cite.",
+    "If the evidence does not support an answer, return an empty claims array. Respond with JSON only."
+  ].join(" ");
+  const prompt = [
+    `Question: ${query.originalQuestion}`,
+    "",
+    "Evidence:",
+    items,
+    "",
+    'Return JSON of the form: {"claims":[{"kind":"fact|pattern|inference|recommendation","text":"...","evidencePointerIds":["<pointerId>"],"supportingQuote":"<verbatim substring of a cited quote>","explanation":"<optional>"}]}'
+  ].join("\n");
+  return { system, prompt };
+}
+function parseAndGroundClaims(rawText, evidence) {
+  let parsed;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch {
+    throw new LlmSynthesisError("LLM synthesis output was not valid JSON");
+  }
+  if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.claims)) {
+    throw new LlmSynthesisError("LLM synthesis output did not contain a claims array");
+  }
+  const snippetByPointer = new Map(evidence.map((item) => [item.evidencePointerId, normalizeForMatch(item.quotePreview)]));
+  const grounded = [];
+  for (const raw of parsed.claims) {
+    if (!raw || typeof raw !== "object") continue;
+    const candidate = raw;
+    const kind = candidate.kind;
+    if (typeof kind !== "string" || !CLAIM_KINDS.includes(kind)) continue;
+    const text = candidate.text;
+    if (typeof text !== "string" || !text.trim()) continue;
+    const ids = candidate.evidencePointerIds;
+    if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string")) continue;
+    const pointerIds = [...new Set(ids)].filter((id) => snippetByPointer.has(id));
+    if (!pointerIds.length) continue;
+    const quote2 = candidate.supportingQuote;
+    if (typeof quote2 !== "string" || !quote2.trim()) continue;
+    const needle = normalizeForMatch(quote2);
+    const anchored = needle.length > 0 && pointerIds.some((id) => snippetByPointer.get(id)?.includes(needle));
+    if (!anchored) continue;
+    const explanation = typeof candidate.explanation === "string" ? candidate.explanation : void 0;
+    grounded.push({ kind, text: text.trim(), evidencePointerIds: pointerIds, explanation });
+  }
+  return grounded;
+}
+function createLlmAskAILanguageModel(provider, options = {}) {
+  return {
+    async generateClaims({ query, evidence }) {
+      const { system, prompt } = buildSynthesisPrompt(query, evidence);
+      const requestOptions = {};
+      if (options.timeoutMs != null) requestOptions.timeoutMs = options.timeoutMs;
+      let text;
+      try {
+        text = (await provider.complete({ system, prompt, responseFormat: "json" }, requestOptions)).text;
+      } catch {
+        throw new LlmSynthesisError("LLM synthesis request failed");
+      }
+      return parseAndGroundClaims(text, evidence);
+    }
+  };
 }
 
 // src/ask-ai/citations.ts
@@ -2950,7 +2570,9 @@ function persistAskAIResponse(db, response) {
       evidence_bundle_id: bundle.id,
       confidence: answerConfidence(response.evidenceConfidence),
       answer_status: answerStatus(response.evidenceConfidence),
-      metadata: { ask_ai: true, score_run_id: response.scoreRunId ?? null }
+      // Only non-secret synthesis metadata is recorded: actual mode, provider id, model id, usedFallback, reason.
+      model_name: response.synthesis?.model ?? null,
+      metadata: { ask_ai: true, score_run_id: response.scoreRunId ?? null, synthesis: response.synthesis ?? null }
     });
     const selected = new Map(response.evidence.map((item) => [item.evidencePointerId, item]));
     response.claims.forEach((claim, index) => {
@@ -3028,6 +2650,14 @@ function getAskAIResponse(db, id) {
     quotePreview: String(item.quote_preview),
     clickbackUri: `mv://evidence/${String(item.evidence_pointer_id)}`
   }));
+  const answerMeta = db.prepare("SELECT metadata_json FROM ai_answers WHERE id=?").get(run.answer_id);
+  let synthesis;
+  try {
+    const parsedMeta = answerMeta?.metadata_json ? JSON.parse(answerMeta.metadata_json) : null;
+    synthesis = parsedMeta?.synthesis ?? void 0;
+  } catch {
+    synthesis = void 0;
+  }
   return {
     id,
     question: String(run.question),
@@ -3064,7 +2694,8 @@ function getAskAIResponse(db, id) {
     }),
     citations,
     suggestedFollowups: followups.map((item) => item.text),
-    conflicts
+    conflicts,
+    synthesis
   };
 }
 
@@ -3503,12 +3134,12 @@ var EmbeddingProviderError = class extends EmbeddingError {
 };
 var EmbeddingResponseError = class extends EmbeddingError {
 };
-var REDACTED2 = "[redacted]";
-function redactSecret2(text, secret) {
+var REDACTED = "[redacted]";
+function redactSecret(text, secret) {
   if (!secret || !secret.trim()) return text;
-  return text.split(secret).join(REDACTED2);
+  return text.split(secret).join(REDACTED);
 }
-var DEFAULT_BASE_URL2 = "https://api.openai.com/v1";
+var DEFAULT_BASE_URL = "https://api.openai.com/v1";
 function createHttpEmbeddingTransport(fetchImpl = globalThis.fetch) {
   return async (request) => {
     const controller = new AbortController();
@@ -3562,7 +3193,7 @@ var ExternalEmbeddingProvider = class {
     this.model = config.model;
     this.dimensions = config.dimensions;
     this.#apiKey = config.apiKey.trim();
-    this.#baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL2).replace(/\/+$/, "");
+    this.#baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
     this.#transport = config.transport ?? createHttpEmbeddingTransport();
     this.#timeoutMs = config.timeoutMs;
   }
@@ -3581,7 +3212,7 @@ var ExternalEmbeddingProvider = class {
         timeoutMs: this.#timeoutMs
       });
     } catch (error) {
-      const detail = redactSecret2(error instanceof Error ? error.message : String(error), this.#apiKey);
+      const detail = redactSecret(error instanceof Error ? error.message : String(error), this.#apiKey);
       throw new EmbeddingProviderError(`Embedding request failed: ${detail}`, this.context());
     }
     if (response.status === 401 || response.status === 403) {
@@ -4061,6 +3692,8 @@ function createDatabaseAskAIDependencies(db, options = {}) {
   return {
     db,
     now: options.now,
+    llm: options.llm,
+    synthesisInfo: options.synthesisInfo,
     retrieveCandidates: (query) => retrieve(db, query),
     scoreEvidence: async (question, candidates, query) => scoreEvidenceBundle({
       claimText: question,
@@ -4068,12 +3701,20 @@ function createDatabaseAskAIDependencies(db, options = {}) {
       useType: useType(query.requestedClaimKinds[0] ?? "fact"),
       now: options.now?.().toISOString()
     }),
-    findConflicts: async (evidence) => createConflictRepository(db, options).listActiveForEvidencePointers(evidence.map((item) => item.evidencePointerId))
+    findConflicts: async (evidence) => createConflictRepository(db, { now: options.now }).listActiveForEvidencePointers(evidence.map((item) => item.evidencePointerId))
   };
 }
 
 // src/ask-ai/pipeline.ts
 var useType2 = (kind) => kind === "fact" ? "direct_fact" : kind === "pattern" ? "pattern" : kind;
+function resolveAnswerSynthesis(deps, actualMode) {
+  const configured = deps.synthesisInfo ?? { mode: deps.llm ? "external_llm" : "deterministic" };
+  const mode = actualMode === "llm" ? "external_llm" : actualMode;
+  const runtimeFallback = deps.llm != null && actualMode === "deterministic";
+  const usedFallback = Boolean(configured.usedFallback) || runtimeFallback;
+  const reason = runtimeFallback ? `Configured external LLM "${configured.provider ?? "external"}" did not produce grounded claims; used deterministic synthesis.` : configured.usedFallback ? "External LLM was selected but not fully configured; used deterministic synthesis." : void 0;
+  return { mode, provider: configured.provider, model: configured.model, usedFallback, reason };
+}
 async function askAI(request, deps) {
   const query = understandQuestion(request.question, request);
   const timestamp = deps.now?.() ?? /* @__PURE__ */ new Date();
@@ -4090,7 +3731,14 @@ async function askAI(request, deps) {
   const selectedEvidence = [...new Map([...selection.evidence, ...conflictEvidenceForAnswer(conflicts)].map((item) => [item.evidencePointerId, item])).values()];
   const citations = buildCitations(selectedEvidence);
   const selectedConfidence = confidenceWithConflicts(selection.confidence, conflicts);
-  const claims = await generateClaimsFromEvidence(query, selectedEvidence, citations, { confidence: selectedConfidence, llm: deps.llm });
+  let actualMode = "deterministic";
+  const claims = await generateClaimsFromEvidence(query, selectedEvidence, citations, {
+    confidence: selectedConfidence,
+    llm: deps.llm,
+    onSynthesis: (mode) => {
+      actualMode = mode;
+    }
+  });
   const confidence = claims.length ? selectedConfidence : "no_evidence";
   const usedPointers = new Set(claims.flatMap((claim) => claim.evidencePointerIds));
   const finalEvidence = selectedEvidence.filter((item) => usedPointers.has(item.evidencePointerId));
@@ -4107,7 +3755,8 @@ async function askAI(request, deps) {
     notEnoughEvidence: confidence === "no_evidence",
     createdAt: timestamp.toISOString(),
     queryUnderstanding: query,
-    conflicts
+    conflicts,
+    synthesis: resolveAnswerSynthesis(deps, actualMode)
   };
   if (deps.persistAnswer) await deps.persistAnswer(response);
   else if (deps.db) {
@@ -4117,6 +3766,484 @@ async function askAI(request, deps) {
     })();
   }
   return response;
+}
+
+// src/llm/errors.ts
+var LlmError = class extends Error {
+  context;
+  constructor(message, context, options) {
+    super(message, options);
+    this.name = new.target.name;
+    this.context = context;
+  }
+};
+var LlmTimeoutError = class extends LlmError {
+};
+var LlmCancelledError = class extends LlmError {
+};
+var LlmAuthError = class extends LlmError {
+};
+var LlmRateLimitError = class extends LlmError {
+};
+var LlmProviderError = class extends LlmError {
+};
+var LlmResponseFormatError = class extends LlmError {
+};
+
+// src/llm/redaction.ts
+var REDACTED2 = "[redacted]";
+function redactSecret2(text, secret) {
+  if (!secret || !secret.trim()) return text;
+  return text.split(secret).join(REDACTED2);
+}
+
+// src/llm/timeout.ts
+async function runWithTimeout(operation, options = {}) {
+  const context = { provider: options.provider, model: options.model };
+  if (options.signal?.aborted) throw new LlmCancelledError("LLM request was cancelled", context);
+  const controller = new AbortController();
+  const onExternalAbort = () => controller.abort();
+  options.signal?.addEventListener("abort", onExternalAbort, { once: true });
+  let timedOut = false;
+  let timer;
+  const timeout = options.timeoutMs != null ? new Promise((_resolve, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+      reject(new LlmTimeoutError(`LLM request timed out after ${options.timeoutMs}ms`, context));
+    }, options.timeoutMs);
+  }) : null;
+  try {
+    return await (timeout ? Promise.race([operation(controller.signal), timeout]) : operation(controller.signal));
+  } catch (error) {
+    if (timedOut) throw error instanceof LlmTimeoutError ? error : new LlmTimeoutError(`LLM request timed out after ${options.timeoutMs}ms`, context);
+    if (options.signal?.aborted) throw new LlmCancelledError("LLM request was cancelled", context);
+    throw error;
+  } finally {
+    if (timer) clearTimeout(timer);
+    options.signal?.removeEventListener("abort", onExternalAbort);
+  }
+}
+
+// src/llm/externalLlmProvider.ts
+var DEFAULT_BASE_URL2 = "https://api.openai.com/v1";
+function createHttpLlmTransport(fetchImpl = globalThis.fetch) {
+  return async (request) => {
+    const response = await fetchImpl(request.url, {
+      method: request.method,
+      headers: request.headers,
+      body: request.body,
+      signal: request.signal
+    });
+    let body = null;
+    try {
+      body = await response.json();
+    } catch {
+      try {
+        body = await response.text();
+      } catch {
+        body = null;
+      }
+    }
+    return { status: response.status, body };
+  };
+}
+var asTokenCount = (value) => typeof value === "number" && Number.isFinite(value) ? value : void 0;
+var ExternalLlmProvider = class {
+  id;
+  model;
+  isLocal = false;
+  #apiKey;
+  #baseUrl;
+  #transport;
+  #timeoutMs;
+  constructor(config) {
+    if (!config.apiKey || !config.apiKey.trim()) {
+      throw new LlmAuthError("External LLM provider requires a non-blank API key", { provider: config.id, model: config.model });
+    }
+    this.id = config.id;
+    this.model = config.model;
+    this.#apiKey = config.apiKey.trim();
+    this.#baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL2).replace(/\/+$/, "");
+    this.#transport = config.transport ?? createHttpLlmTransport();
+    this.#timeoutMs = config.timeoutMs;
+  }
+  async complete(request, options) {
+    const messages = [];
+    if (request.system) messages.push({ role: "system", content: request.system });
+    messages.push({ role: "user", content: request.prompt });
+    const payload = { model: this.model, messages };
+    if (request.maxOutputTokens != null) payload.max_tokens = request.maxOutputTokens;
+    if (request.responseFormat === "json") payload.response_format = { type: "json_object" };
+    const body = JSON.stringify(payload);
+    let response;
+    try {
+      response = await runWithTimeout(
+        (signal) => this.#transport({
+          url: `${this.#baseUrl}/chat/completions`,
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.#apiKey}` },
+          body,
+          signal
+        }),
+        { timeoutMs: options?.timeoutMs ?? this.#timeoutMs, signal: options?.signal, provider: this.id, model: this.model }
+      );
+    } catch (error) {
+      if (error instanceof LlmError) throw error;
+      const detail = redactSecret2(error instanceof Error ? error.message : String(error), this.#apiKey);
+      throw new LlmProviderError(`LLM request failed: ${detail}`, { provider: this.id, model: this.model });
+    }
+    if (response.status === 401 || response.status === 403) {
+      throw new LlmAuthError("LLM provider rejected the API key", { provider: this.id, model: this.model });
+    }
+    if (response.status === 429) {
+      throw new LlmRateLimitError("LLM provider rate limit exceeded", { provider: this.id, model: this.model });
+    }
+    if (response.status < 200 || response.status >= 300) {
+      throw new LlmProviderError(`LLM provider returned status ${response.status}`, { provider: this.id, model: this.model });
+    }
+    const choice = response.body?.choices?.[0];
+    const content = choice?.message?.content;
+    if (typeof content !== "string") {
+      throw new LlmResponseFormatError("LLM response did not contain a text completion", { provider: this.id, model: this.model });
+    }
+    const finishReason = choice?.finish_reason === "length" ? "length" : "stop";
+    const usageRaw = response.body.usage;
+    const inputTokens = asTokenCount(usageRaw?.prompt_tokens);
+    const outputTokens = asTokenCount(usageRaw?.completion_tokens);
+    const usage = inputTokens !== void 0 || outputTokens !== void 0 ? { inputTokens, outputTokens } : void 0;
+    return { provider: this.id, model: this.model, text: content, finishReason, usage };
+  }
+};
+
+// src/llm/localDeterministicProvider.ts
+var LocalDeterministicLlmProvider = class {
+  constructor(model = "local-deterministic-v1") {
+    this.model = model;
+  }
+  model;
+  id = "local-deterministic";
+  isLocal = true;
+  // Resolves instantly with no I/O, so signal/timeout are accepted (interface parity) but unused.
+  async complete(request, _options) {
+    const text = request.responseFormat === "json" ? JSON.stringify({ echo: request.prompt, system: request.system ?? null }) : `[local-deterministic] ${request.prompt.trim()}`;
+    return { provider: this.id, model: this.model, text, finishReason: "stop" };
+  }
+};
+
+// src/obsidian/llmSettings.ts
+function externalLlmConfigFromSettings(settings) {
+  if (settings.mode !== "external") return null;
+  const { provider, model, baseUrl, timeoutMs } = settings.llm;
+  if (!isExternalLlmProvider(provider)) return null;
+  if (!model || !model.trim()) return null;
+  const apiKey = settings.apiKeys[provider];
+  if (!apiKey || !apiKey.trim()) return null;
+  const config = { id: provider, model: model.trim(), apiKey: apiKey.trim() };
+  if (baseUrl) config.baseUrl = baseUrl;
+  if (typeof timeoutMs === "number" && timeoutMs > 0) config.timeoutMs = timeoutMs;
+  return config;
+}
+function resolveLlmProviderFromSettings(settings, options = {}) {
+  const external = externalLlmConfigFromSettings(settings);
+  if (external) {
+    const config = options.transport ? { ...external, transport: options.transport } : external;
+    return { provider: new ExternalLlmProvider(config), requestedId: external.id, usedFallback: false };
+  }
+  if (settings.mode === "external" && isExternalLlmProvider(settings.llm.provider)) {
+    return {
+      provider: new LocalDeterministicLlmProvider(),
+      requestedId: settings.llm.provider,
+      usedFallback: true,
+      reason: `External LLM provider "${settings.llm.provider}" is not fully configured (needs a model and a non-blank API key); using the local deterministic LLM provider.`
+    };
+  }
+  return {
+    provider: new LocalDeterministicLlmProvider(),
+    requestedId: settings.llm.provider || "local-deterministic",
+    usedFallback: false
+  };
+}
+function llmResolutionSummary(resolution) {
+  return {
+    requestedId: resolution.requestedId,
+    providerId: resolution.provider.id,
+    model: resolution.provider.model,
+    isLocal: resolution.provider.isLocal,
+    usedFallback: resolution.usedFallback,
+    reason: resolution.reason
+  };
+}
+function askAiSynthesisFromSettings(settings, options = {}) {
+  const resolution = resolveLlmProviderFromSettings(settings, options);
+  const external = !resolution.provider.isLocal;
+  const info = {
+    mode: external ? "external_llm" : "deterministic",
+    provider: resolution.provider.id,
+    model: resolution.provider.model,
+    usedFallback: resolution.usedFallback
+  };
+  return { llm: external ? createLlmAskAILanguageModel(resolution.provider) : void 0, info };
+}
+
+// src/obsidian/SettingsTab.ts
+var TranscriptMemorySettingsTab = class extends import_obsidian.PluginSettingTab {
+  constructor(app, plugin, getHealth, navigation, getSettings, onSave) {
+    super(app, plugin);
+    this.getHealth = getHealth;
+    this.navigation = navigation;
+    this.getSettings = getSettings;
+    this.onSave = onSave;
+  }
+  getHealth;
+  navigation;
+  getSettings;
+  onSave;
+  display() {
+    const health = this.getHealth();
+    const settings = this.getSettings();
+    this.containerEl.empty();
+    this.containerEl.createEl("h2", { text: "Transcript Memory Vault" });
+    this.containerEl.createEl("h3", { text: "AI providers" });
+    const warning = this.containerEl.createEl("p", {
+      text: `API keys are stored in this plugin's local data file (data.json) as plain text. If your vault is synced, the key may sync with it. Run the "Rebuild Embedding Index" command to (re)build the index with the configured provider \u2014 that command is the only action that may make a network call.`
+    });
+    warning.addClass("setting-item-description");
+    new import_obsidian.Setting(this.containerEl).setName("Mode").setDesc("Local deterministic runs fully offline and is the default. External providers are recorded but not active yet.").addDropdown(
+      (dropdown) => dropdown.addOption("local", "Local deterministic (default)").addOption("external", "External providers (not active yet)").setValue(settings.mode).onChange(async (value) => {
+        await this.onSave({ ...this.getSettings(), mode: value === "external" ? "external" : "local" });
+      })
+    );
+    new import_obsidian.Setting(this.containerEl).setName("LLM provider").setDesc("For future Ask AI synthesis. Not called yet.").addDropdown((dropdown) => {
+      for (const option of LLM_PROVIDER_OPTIONS) dropdown.addOption(option, option);
+      dropdown.setValue(settings.llm.provider).onChange(async (value) => {
+        await this.onSave({ ...this.getSettings(), llm: { ...this.getSettings().llm, provider: value } });
+        this.display();
+      });
+    });
+    new import_obsidian.Setting(this.containerEl).setName("LLM model").setDesc("Model identifier. Required for an external provider.").addText(
+      (text) => text.setPlaceholder("e.g. gpt-4o-mini").setValue(settings.llm.model).onChange(async (value) => {
+        await this.onSave({ ...this.getSettings(), llm: { ...this.getSettings().llm, model: value } });
+      })
+    );
+    new import_obsidian.Setting(this.containerEl).setName("LLM base URL").setDesc("Optional. Override the OpenAI-compatible endpoint for the external LLM provider.").addText(
+      (text) => text.setPlaceholder("https://api.openai.com/v1").setValue(settings.llm.baseUrl ?? "").onChange(async (value) => {
+        const baseUrl = value.trim().length > 0 ? value.trim() : void 0;
+        await this.onSave({ ...this.getSettings(), llm: { ...this.getSettings().llm, baseUrl } });
+      })
+    );
+    new import_obsidian.Setting(this.containerEl).setName("LLM request timeout (ms)").setDesc("Optional. Applied to the external LLM provider; the local provider ignores it.").addText(
+      (text) => text.setPlaceholder("e.g. 30000").setValue(settings.llm.timeoutMs != null ? String(settings.llm.timeoutMs) : "").onChange(async (value) => {
+        const parsed = Number(value.trim());
+        const timeoutMs = Number.isFinite(parsed) && parsed > 0 ? parsed : void 0;
+        await this.onSave({ ...this.getSettings(), llm: { ...this.getSettings().llm, timeoutMs } });
+      })
+    );
+    new import_obsidian.Setting(this.containerEl).setName("Embedding provider").setDesc("For future semantic retrieval. The deterministic test provider is the default.").addDropdown((dropdown) => {
+      for (const option of EMBEDDING_PROVIDER_OPTIONS) dropdown.addOption(option, option);
+      dropdown.setValue(settings.embedding.provider).onChange(async (value) => {
+        await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, provider: value } });
+        this.display();
+      });
+    });
+    new import_obsidian.Setting(this.containerEl).setName("Embedding model").setDesc("Model identifier placeholder.").addText(
+      (text) => text.setPlaceholder("token-hash-v1").setValue(settings.embedding.model).onChange(async (value) => {
+        await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, model: value } });
+      })
+    );
+    const embeddingProviderId = settings.embedding.provider;
+    const embeddingIsExternal = isExternalEmbeddingProvider(embeddingProviderId);
+    new import_obsidian.Setting(this.containerEl).setName("Embedding dimensions").setDesc("Required for an external embedding provider: the vector length the model returns.").addText(
+      (text) => text.setPlaceholder("e.g. 1536").setValue(settings.embedding.dimensions != null ? String(settings.embedding.dimensions) : "").onChange(async (value) => {
+        const parsed = Number(value.trim());
+        const dimensions = Number.isInteger(parsed) && parsed > 0 ? parsed : void 0;
+        await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, dimensions } });
+      })
+    );
+    new import_obsidian.Setting(this.containerEl).setName("Embedding base URL").setDesc("Optional. Override the OpenAI-compatible endpoint for the external embedding provider.").addText(
+      (text) => text.setPlaceholder("https://api.openai.com/v1").setValue(settings.embedding.baseUrl ?? "").onChange(async (value) => {
+        const baseUrl = value.trim().length > 0 ? value.trim() : void 0;
+        await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, baseUrl } });
+      })
+    );
+    new import_obsidian.Setting(this.containerEl).setName("Embedding request timeout (ms)").setDesc("Optional. Applied only to the external embedding HTTP transport.").addText(
+      (text) => text.setPlaceholder("e.g. 30000").setValue(settings.embedding.timeoutMs != null ? String(settings.embedding.timeoutMs) : "").onChange(async (value) => {
+        const parsed = Number(value.trim());
+        const timeoutMs = Number.isFinite(parsed) && parsed > 0 ? parsed : void 0;
+        await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, timeoutMs } });
+      })
+    );
+    new import_obsidian.Setting(this.containerEl).setName("Embedding API key").setDesc(
+      embeddingIsExternal ? `Stored for "${embeddingProviderId}": ${redactApiKey(settings.apiKeys[embeddingProviderId])}. Type a new key to replace it; leave blank to keep the existing one.` : "The selected embedding provider runs locally and needs no API key."
+    ).addText((text) => {
+      text.inputEl.type = "password";
+      text.setPlaceholder("Enter API key").onChange(async (value) => {
+        if (!embeddingIsExternal) return;
+        const trimmed = value.trim();
+        if (!trimmed) return;
+        await this.onSave(setApiKey(this.getSettings(), embeddingProviderId, trimmed));
+      });
+    }).addButton(
+      (button) => button.setButtonText("Clear").onClick(async () => {
+        if (!embeddingIsExternal) return;
+        await this.onSave(setApiKey(this.getSettings(), embeddingProviderId, ""));
+        this.display();
+      })
+    );
+    const llmProviderId = settings.llm.provider;
+    const llmKeyStatus = redactApiKey(settings.apiKeys[llmProviderId]);
+    new import_obsidian.Setting(this.containerEl).setName("LLM API key").setDesc(
+      llmProviderId === "none" ? "Select an LLM provider to set its API key." : `Stored for "${llmProviderId}": ${llmKeyStatus}. Type a new key to replace it; leave blank to keep the existing one.`
+    ).addText((text) => {
+      text.inputEl.type = "password";
+      text.setPlaceholder("Enter API key").onChange(async (value) => {
+        if (llmProviderId === "none") return;
+        const trimmed = value.trim();
+        if (!trimmed) return;
+        await this.onSave(setApiKey(this.getSettings(), llmProviderId, trimmed));
+      });
+    }).addButton(
+      (button) => button.setButtonText("Clear").onClick(async () => {
+        if (llmProviderId === "none") return;
+        await this.onSave(setApiKey(this.getSettings(), llmProviderId, ""));
+        this.display();
+      })
+    );
+    this.containerEl.createEl("h3", { text: "Status" });
+    new import_obsidian.Setting(this.containerEl).setName("Plugin status").setDesc(health.status);
+    new import_obsidian.Setting(this.containerEl).setName("Provider mode").setDesc(health.providerMode ?? settings.mode);
+    new import_obsidian.Setting(this.containerEl).setName("API key").setDesc(health.apiKeyConfigured ? "configured" : "not configured");
+    const llmStatus = llmResolutionSummary(resolveLlmProviderFromSettings(settings));
+    new import_obsidian.Setting(this.containerEl).setName("LLM provider").setDesc(
+      llmStatus.usedFallback ? `Using local deterministic LLM (fallback). ${llmStatus.reason ?? ""}`.trim() : `${llmStatus.providerId}${llmStatus.model ? ` / ${llmStatus.model}` : ""}${llmStatus.isLocal ? " (local deterministic)" : " (external)"}`
+    );
+    new import_obsidian.Setting(this.containerEl).setName("Embedding index").setDesc(
+      health.reindexNeeded === void 0 ? "Status unavailable until the database is ready." : health.reindexNeeded ? `Reindex needed \u2014 run the "Rebuild Embedding Index" command. ${health.reindexSummary ?? ""}`.trim() : `Up to date. ${health.reindexSummary ?? ""}`.trim()
+    );
+    if (health.embeddingUsedFallback) {
+      new import_obsidian.Setting(this.containerEl).setName("Embedding fallback").setDesc("The configured external embedding provider is not fully set up; using local token-hash-v1.");
+    }
+    new import_obsidian.Setting(this.containerEl).setName("Database location").setDesc(health.databasePath ?? "Unavailable");
+    new import_obsidian.Setting(this.containerEl).setName("SQLite storage").setDesc(health.realSqliteStorage ? "Connected to real local SQLite storage" : "Not connected");
+    new import_obsidian.Setting(this.containerEl).setName("Migration status").setDesc(`${health.migrationStatus}: ${health.appliedMigrationCount}/${health.packagedMigrationCount} applied`);
+    new import_obsidian.Setting(this.containerEl).setName("Last initialization error").setDesc(health.lastInitializationError ?? "None");
+    new import_obsidian.Setting(this.containerEl).setName("Native binding target").setDesc(health.nativeBindingTarget ?? "Unresolved");
+    new import_obsidian.Setting(this.containerEl).setName("Packaged native targets").setDesc(health.packagedNativeTargets.join(", ") || "None");
+    new import_obsidian.Setting(this.containerEl).setName("Dashboard").addButton((button) => button.setButtonText("Open dashboard").onClick(() => void this.navigation.openDashboard()));
+  }
+};
+
+// src/obsidian/TranscriptMemoryItemView.ts
+var import_obsidian3 = require("obsidian");
+
+// src/frontend/router.ts
+var patterns = [
+  { id: "dashboard", pattern: /^\/(?:dashboard\/?)?$/ },
+  { id: "upload", pattern: /^\/upload\/?$/ },
+  { id: "transcript", pattern: /^\/transcripts\/([^/]+)\/?$/, names: ["id"] },
+  { id: "ask", pattern: /^\/ask\/?$/ },
+  { id: "answer", pattern: /^\/answers\/([^/]+)\/?$/, names: ["id"] },
+  { id: "evidence", pattern: /^\/evidence\/([^/]+)\/?$/, names: ["id"] },
+  { id: "memory", pattern: /^\/memory\/([^/]+)\/?$/, names: ["id"] },
+  { id: "graph", pattern: /^\/graph\/?$/ },
+  { id: "search", pattern: /^\/search\/?$/ },
+  { id: "review", pattern: /^\/review\/?$/ },
+  { id: "review_detail", pattern: /^\/review\/([^/]+)\/?$/, names: ["id"] }
+];
+function matchRoute(input) {
+  const internal = input.startsWith("mv://") ? new URL(input) : null;
+  const inputPath = internal ? `/${internal.host}${internal.pathname}${internal.search}` : input;
+  const url = new URL(inputPath, "http://vault.local");
+  for (const route of patterns) {
+    const match = route.pattern.exec(url.pathname);
+    if (!match) continue;
+    return {
+      id: route.id,
+      path: url.pathname,
+      params: Object.fromEntries((route.names ?? []).map((name, index) => [name, decodeURIComponent(match[index + 1])])),
+      query: url.searchParams
+    };
+  }
+  return { id: "not_found", path: url.pathname, params: {}, query: url.searchParams };
+}
+var routeHref = {
+  dashboard: () => "mv://dashboard",
+  upload: () => "mv://upload",
+  ask: () => "mv://ask",
+  graph: (query = "") => `mv://graph${query}`,
+  search: (query = "") => `mv://search${query}`,
+  reviewQueue: (query = "") => `mv://review${query}`,
+  transcript: (id, spanId) => `mv://transcripts/${encodeURIComponent(id)}${spanId ? `?span=${encodeURIComponent(spanId)}` : ""}`,
+  answer: (id) => `mv://answers/${encodeURIComponent(id)}`,
+  evidence: (id) => `mv://evidence/${encodeURIComponent(id)}`,
+  memory: (id) => `mv://memory/${encodeURIComponent(id)}`,
+  review: (id) => `mv://review/${encodeURIComponent(id)}`
+};
+
+// src/frontend/navigation.ts
+async function navigateInternal(navigation, target) {
+  const route = matchRoute(target);
+  switch (route.id) {
+    case "dashboard":
+      return navigation.openDashboard();
+    case "upload":
+      return navigation.openUpload();
+    case "transcript":
+      return navigation.openTranscript(route.params.id, { spanId: route.query.get("span") ?? void 0 });
+    case "ask":
+      return navigation.openAskAI();
+    case "answer":
+      return navigation.openAnswer(route.params.id);
+    case "evidence":
+      return navigation.openEvidence(route.params.id);
+    case "memory":
+      return navigation.openMemoryObject(route.params.id);
+    case "graph":
+      return navigation.openGraph({
+        selectedNodeId: route.query.get("selectedNode") ?? void 0,
+        selectedEdgeId: route.query.get("selectedEdge") ?? void 0,
+        query: route.query.get("q") ?? void 0
+      });
+    case "search":
+      return navigation.openSearch(route.query.get("q") ?? void 0);
+    case "review_detail":
+      return navigation.openReviewQueue({ reviewItemId: route.params.id });
+    case "review":
+      return navigation.openReviewQueue();
+    default:
+      throw new Error(`Unsupported internal navigation target: ${target}`);
+  }
+}
+
+// src/frontend/html.ts
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;"
+  })[character]);
+}
+function trustBadge(state, label = state.replaceAll("_", " ")) {
+  return `<span class="trust-badge trust-${escapeHtml(state)}" data-trust-state="${escapeHtml(state)}">${escapeHtml(label)}</span>`;
+}
+function score(value) {
+  return value == null ? "not scored" : `${Math.round(value * 100)}%`;
+}
+function emptyState(title, detail, action) {
+  return `<div class="empty-state"><h3>${escapeHtml(title)}</h3><p>${escapeHtml(detail)}</p>${action ? routeButton(action.href, action.label) : ""}</div>`;
+}
+function routeButton(target, label, className = "route-action") {
+  return `<button type="button" class="${escapeHtml(className)}" data-route="${escapeHtml(target)}">${escapeHtml(label)}</button>`;
+}
+function appShell(title, body) {
+  return `<div class="transcript-memory-vault vault-app">
+    <header class="app-header">${routeButton("mv://dashboard", "Interview Intelligence Vault", "route-action brand")}<nav aria-label="Primary">
+      ${routeButton("mv://upload", "Upload")}${routeButton("mv://ask", "Ask AI")}${routeButton("mv://search", "Search")}${routeButton("mv://graph", "Graph")}${routeButton("mv://review", "Review")}
+    </nav></header>
+    <main><header class="page-header"><h1>${escapeHtml(title)}</h1></header>${body}</main>
+  </div>`;
 }
 
 // src/ingest/hash.ts
@@ -4557,8 +4684,8 @@ function buildObsidianGraph(db) {
 }
 
 // src/obsidian/services/ObsidianAppApi.ts
-function createObsidianAppApi(db, vault, health) {
-  const api = createSqliteFrontendApi(db, { health });
+function createObsidianAppApi(db, vault, health, getSynthesis) {
+  const api = createSqliteFrontendApi(db, { health, getSynthesis });
   return {
     ...api,
     async uploadVaultFile(file) {
@@ -4846,10 +4973,12 @@ function createSqliteFrontendApi(db, options = {}) {
       };
     },
     async ask(question, askOptions) {
-      return askAI({ question, transcriptIds: askOptions?.transcriptIds }, createDatabaseAskAIDependencies(db, options));
+      const synth = options.getSynthesis?.();
+      return askAI({ question, transcriptIds: askOptions?.transcriptIds }, createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, synthesisInfo: synth?.info }));
     },
     async askAI(question, askOptions) {
-      return askAI({ question, transcriptIds: askOptions?.transcriptIds }, createDatabaseAskAIDependencies(db, options));
+      const synth = options.getSynthesis?.();
+      return askAI({ question, transcriptIds: askOptions?.transcriptIds }, createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, synthesisInfo: synth?.info }));
     },
     async getAnswer(id) {
       try {
@@ -5416,12 +5545,35 @@ function createObsidianEmbeddingTransport() {
   };
 }
 
+// src/obsidian/llmTransport.ts
+var import_obsidian5 = require("obsidian");
+function createObsidianLlmTransport() {
+  return async (request) => {
+    const response = await (0, import_obsidian5.requestUrl)({
+      url: request.url,
+      method: request.method,
+      headers: request.headers,
+      body: request.body,
+      throw: false
+    });
+    let body = null;
+    try {
+      body = response.json;
+    } catch {
+      body = response.text ?? null;
+    }
+    return { status: response.status, body };
+  };
+}
+
 // src/obsidian/Plugin.ts
-var TranscriptMemoryVaultPlugin = class extends import_obsidian5.Plugin {
+var TranscriptMemoryVaultPlugin = class extends import_obsidian6.Plugin {
   db = null;
   pluginSettings = DEFAULT_SETTINGS;
   health = initialPluginHealth();
   api = createUnavailableFrontendApi(() => this.health);
+  // Built once; reused. The transport makes no call until the synthesis adapter actually runs.
+  llmTransport = createObsidianLlmTransport();
   async onload() {
     await this.loadSettings();
     const navigation = createObsidianNavigation(this.app);
@@ -5435,11 +5587,11 @@ var TranscriptMemoryVaultPlugin = class extends import_obsidian5.Plugin {
     this.addRibbonIcon(OBSIDIAN_RIBBON.icon, OBSIDIAN_RIBBON.title, () => void navigation.openDashboard());
     this.addSettingTab(new TranscriptMemorySettingsTab(this.app, this, () => this.health, navigation, () => this.pluginSettings, (next) => this.saveSettings(next)));
     const adapter = this.app.vault.adapter;
-    const fileSystemAdapter = adapter instanceof import_obsidian5.FileSystemAdapter ? adapter : null;
-    const support = startupSupport({ isDesktopApp: import_obsidian5.Platform.isDesktopApp, hasLocalFilesystem: fileSystemAdapter != null });
+    const fileSystemAdapter = adapter instanceof import_obsidian6.FileSystemAdapter ? adapter : null;
+    const support = startupSupport({ isDesktopApp: import_obsidian6.Platform.isDesktopApp, hasLocalFilesystem: fileSystemAdapter != null });
     if (!support.supported) {
       this.health = { ...this.health, status: "unsupported", lastInitializationError: support.message };
-      new import_obsidian5.Notice(DESKTOP_ONLY_MESSAGE);
+      new import_obsidian6.Notice(DESKTOP_ONLY_MESSAGE);
       console.error("Transcript Memory Vault unsupported environment:", support.message);
       return;
     }
@@ -5456,7 +5608,7 @@ var TranscriptMemoryVaultPlugin = class extends import_obsidian5.Plugin {
     if (!nativeBinding.ok) {
       this.health = { ...this.health, status: "error", lastInitializationError: nativeBinding.error };
       this.api = createUnavailableFrontendApi(() => this.health);
-      new import_obsidian5.Notice(nativeBinding.error);
+      new import_obsidian6.Notice(nativeBinding.error);
       console.error("Transcript Memory Vault native binding unavailable:", nativeBinding.error);
       return;
     }
@@ -5481,16 +5633,16 @@ var TranscriptMemoryVaultPlugin = class extends import_obsidian5.Plugin {
         firstRun,
         lastInitializationError: null
       };
-      this.api = createObsidianAppApi(this.db, this.app.vault, this.health);
+      this.api = createObsidianAppApi(this.db, this.app.vault, this.health, () => askAiSynthesisFromSettings(this.pluginSettings, { transport: this.llmTransport }));
       this.refreshReindexStatus();
-      if (firstRun) new import_obsidian5.Notice("Transcript Memory Vault is ready. Upload a transcript to begin.");
+      if (firstRun) new import_obsidian6.Notice("Transcript Memory Vault is ready. Upload a transcript to begin.");
     } catch (error) {
       this.db?.close();
       this.db = null;
       const message = readableStartupError(error);
       this.health = { ...this.health, status: "error", databaseConnected: false, migrationStatus: "failed", realSqliteStorage: false, lastInitializationError: message };
       this.api = createUnavailableFrontendApi(() => this.health);
-      new import_obsidian5.Notice(`Transcript Memory Vault could not initialize: ${message}`);
+      new import_obsidian6.Notice(`Transcript Memory Vault could not initialize: ${message}`);
       console.error("Transcript Memory Vault initialization failed", error);
     }
   }
@@ -5533,17 +5685,17 @@ var TranscriptMemoryVaultPlugin = class extends import_obsidian5.Plugin {
   /** EXPLICIT manual action. The only path that may make a network call (when external is configured). */
   async rebuildEmbeddingIndex() {
     if (!this.db || this.health.status !== "ready") {
-      new import_obsidian5.Notice("Transcript Memory Vault is not ready; cannot rebuild the embedding index.");
+      new import_obsidian6.Notice("Transcript Memory Vault is not ready; cannot rebuild the embedding index.");
       return;
     }
-    new import_obsidian5.Notice("Rebuilding embedding index\u2026");
+    new import_obsidian6.Notice("Rebuilding embedding index\u2026");
     try {
       const { summary, result } = await runEmbeddingReindex(this.db, this.pluginSettings, { transport: createObsidianEmbeddingTransport() });
-      if (summary.usedFallback && summary.reason) new import_obsidian5.Notice(summary.reason);
-      new import_obsidian5.Notice(`Embedding index rebuilt: ${result.indexed} indexed, ${result.embedded} embedded, ${result.errors} error(s).`);
+      if (summary.usedFallback && summary.reason) new import_obsidian6.Notice(summary.reason);
+      new import_obsidian6.Notice(`Embedding index rebuilt: ${result.indexed} indexed, ${result.embedded} embedded, ${result.errors} error(s).`);
       this.refreshReindexStatus();
     } catch (error) {
-      new import_obsidian5.Notice(`Embedding index rebuild failed: ${readableStartupError(error)}`);
+      new import_obsidian6.Notice(`Embedding index rebuild failed: ${readableStartupError(error)}`);
       console.error("Transcript Memory Vault embedding reindex failed", error);
     }
   }

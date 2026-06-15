@@ -48,7 +48,9 @@ export function persistAskAIResponse(db: SqliteDatabase, response: AskAIResponse
     const answer = repos.answers.createAnswer({
       id: response.id, question_text: response.question, answer_text: response.answerMarkdown, evidence_bundle_id: bundle.id,
       confidence: answerConfidence(response.evidenceConfidence), answer_status: answerStatus(response.evidenceConfidence),
-      metadata: { ask_ai: true, score_run_id: response.scoreRunId ?? null },
+      // Only non-secret synthesis metadata is recorded: actual mode, provider id, model id, usedFallback, reason.
+      model_name: response.synthesis?.model ?? null,
+      metadata: { ask_ai: true, score_run_id: response.scoreRunId ?? null, synthesis: response.synthesis ?? null },
     });
     const selected = new Map(response.evidence.map((item) => [item.evidencePointerId, item]));
     response.claims.forEach((claim, index) => {
@@ -105,6 +107,14 @@ export function getAskAIResponse(db: SqliteDatabase, id: string): AskAIResponse 
     sourcePointerId: String(item.source_pointer_uri), transcriptId: String(item.transcript_id), spanId: String(item.span_id),
     quotePreview: String(item.quote_preview), clickbackUri: `mv://evidence/${String(item.evidence_pointer_id)}`,
   }));
+  const answerMeta = db.prepare("SELECT metadata_json FROM ai_answers WHERE id=?").get(run.answer_id) as { metadata_json?: string } | undefined;
+  let synthesis: AskAIResponse["synthesis"];
+  try {
+    const parsedMeta = answerMeta?.metadata_json ? (JSON.parse(answerMeta.metadata_json) as { synthesis?: AskAIResponse["synthesis"] }) : null;
+    synthesis = parsedMeta?.synthesis ?? undefined;
+  } catch {
+    synthesis = undefined;
+  }
   return {
     id, question: String(run.question), answerMarkdown: String(run.answer_markdown),
     evidenceConfidence: run.evidence_confidence as AskAIResponse["evidenceConfidence"],
@@ -126,6 +136,6 @@ export function getAskAIResponse(db: SqliteDatabase, id: string): AskAIResponse 
         explanation: item.explanation == null ? undefined : String(item.explanation),
       };
     }),
-    citations, suggestedFollowups: followups.map((item) => item.text), conflicts,
+    citations, suggestedFollowups: followups.map((item) => item.text), conflicts, synthesis,
   };
 }

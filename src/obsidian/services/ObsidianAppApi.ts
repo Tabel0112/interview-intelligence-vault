@@ -1,4 +1,5 @@
 import type { TFile, Vault } from "obsidian";
+import type { AskAILanguageModel, SynthesisInfo } from "../../ask-ai/index.js";
 import type { SqliteDatabase } from "../../db/index.js";
 import { createSqliteFrontendApi, validateTranscriptUpload, type FrontendApi } from "../../frontend/index.js";
 import type { PluginHealth } from "../startup.js";
@@ -7,8 +8,13 @@ export interface ObsidianAppApi extends FrontendApi {
   uploadVaultFile(file: TFile): Promise<{ transcriptId: string; status: "imported" | "duplicate"; warning?: string }>;
 }
 
-export function createObsidianAppApi(db: SqliteDatabase, vault: Pick<Vault, "read">, health?: PluginHealth): ObsidianAppApi {
-  const api = createSqliteFrontendApi(db, { health });
+export function createObsidianAppApi(
+  db: SqliteDatabase,
+  vault: Pick<Vault, "read">,
+  health?: PluginHealth,
+  getSynthesis?: () => { llm?: AskAILanguageModel; info: SynthesisInfo } | undefined,
+): ObsidianAppApi {
+  const api = createSqliteFrontendApi(db, { health, getSynthesis });
   return {
     ...api,
     async uploadVaultFile(file) {

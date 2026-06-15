@@ -2,7 +2,7 @@ import type { SqliteDatabase } from "../db/connection.js";
 import { createConflictRepository } from "../conflicts/index.js";
 import { getEvidenceCandidatesForTarget, scoreEvidenceBundle, type EvidenceCandidate, type EvidenceUseType } from "../evidence/index.js";
 import { searchEvidencePointers } from "../retrieval/index.js";
-import type { QueryUnderstanding, AskAIDependencies, ClaimKind } from "./types.js";
+import type { QueryUnderstanding, AskAIDependencies, AskAILanguageModel, ClaimKind, SynthesisInfo } from "./types.js";
 
 const useType = (kind: ClaimKind): EvidenceUseType => kind === "fact" ? "direct_fact" : kind === "pattern" ? "pattern" : kind;
 
@@ -24,13 +24,16 @@ async function retrieve(db: SqliteDatabase, query: QueryUnderstanding): Promise<
   });
 }
 
-export function createDatabaseAskAIDependencies(db: SqliteDatabase, options: { now?: () => Date } = {}): AskAIDependencies {
+export function createDatabaseAskAIDependencies(
+  db: SqliteDatabase,
+  options: { now?: () => Date; llm?: AskAILanguageModel; synthesisInfo?: SynthesisInfo } = {},
+): AskAIDependencies {
   return {
-    db, now: options.now,
+    db, now: options.now, llm: options.llm, synthesisInfo: options.synthesisInfo,
     retrieveCandidates: (query) => retrieve(db, query),
     scoreEvidence: async (question, candidates, query) => scoreEvidenceBundle({
       claimText: question, candidates, useType: useType(query.requestedClaimKinds[0] ?? "fact"), now: options.now?.().toISOString(),
     }),
-    findConflicts: async (evidence) => createConflictRepository(db, options).listActiveForEvidencePointers(evidence.map((item) => item.evidencePointerId)),
+    findConflicts: async (evidence) => createConflictRepository(db, { now: options.now }).listActiveForEvidencePointers(evidence.map((item) => item.evidencePointerId)),
   };
 }

@@ -14,12 +14,16 @@ import { createUnavailableFrontendApi, DESKTOP_ONLY_MESSAGE, initialPluginHealth
 import { DEFAULT_SETTINGS, normalizeSettings, settingsHealthSummary, type TranscriptMemorySettings } from "./settings.js";
 import { embeddingReindexStatus, runEmbeddingReindex } from "./embeddingSettings.js";
 import { createObsidianEmbeddingTransport } from "./embeddingTransport.js";
+import { askAiSynthesisFromSettings } from "./llmSettings.js";
+import { createObsidianLlmTransport } from "./llmTransport.js";
 
 export default class TranscriptMemoryVaultPlugin extends Plugin {
   private db: SqliteDatabase | null = null;
   private pluginSettings: TranscriptMemorySettings = DEFAULT_SETTINGS;
   private health: PluginHealth = initialPluginHealth();
   private api: FrontendApi = createUnavailableFrontendApi(() => this.health);
+  // Built once; reused. The transport makes no call until the synthesis adapter actually runs.
+  private readonly llmTransport = createObsidianLlmTransport();
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -73,7 +77,10 @@ export default class TranscriptMemoryVaultPlugin extends Plugin {
         ...this.health, status: "ready", databaseConnected: true, migrationStatus: "current", appliedMigrationCount,
         realSqliteStorage: true, firstRun, lastInitializationError: null,
       };
-      this.api = createObsidianAppApi(this.db, this.app.vault, this.health);
+      // Per-ask getter: resolves the LLM synthesis from CURRENT settings (no network until synthesis runs).
+      // Ask AI stays deterministic unless settings resolve to a valid external LLM provider.
+      this.api = createObsidianAppApi(this.db, this.app.vault, this.health, () =>
+        askAiSynthesisFromSettings(this.pluginSettings, { transport: this.llmTransport }));
       this.refreshReindexStatus();
       if (firstRun) new Notice("Transcript Memory Vault is ready. Upload a transcript to begin.");
     } catch (error) {

@@ -17,7 +17,7 @@ export async function generateClaimsFromEvidence(
   query: QueryUnderstanding,
   evidence: AskAIEvidenceItem[],
   citations: AskAICitation[],
-  options: { confidence: EvidenceConfidence; llm?: AskAILanguageModel } ,
+  options: { confidence: EvidenceConfidence; llm?: AskAILanguageModel; onSynthesis?: (mode: "llm" | "deterministic" | "conflict") => void } ,
 ): Promise<AskAIClaim[]> {
   if (!evidence.length || options.confidence === "no_evidence") return [];
   const citationByPointer = new Map(citations.map((item) => [item.evidencePointerId, item]));
@@ -32,6 +32,7 @@ export async function generateClaimsFromEvidence(
   let proposed: Array<{ kind: ClaimKind; text: string; evidencePointerIds: string[]; explanation?: string }>;
   if (options.confidence === "conflicting") {
     // Conflict handling stays deterministic and preserves both sides; the LLM never overrides it.
+    options.onSynthesis?.("conflict");
     proposed = conflictEvidence.map((item) => ({ kind: kinds[0] ?? "fact", text: defaultClaimText(kinds[0] ?? "fact", [item]), evidencePointerIds: [item.evidencePointerId] }));
   } else if (options.llm) {
     // Grounded LLM synthesis, with a deterministic fallback when it fails, errors, times out, or
@@ -39,11 +40,14 @@ export async function generateClaimsFromEvidence(
     // evidence pipeline (no_evidence / empty evidence handled above).
     try {
       const llmClaims = await options.llm.generateClaims({ query, evidence });
-      proposed = llmClaims.length ? llmClaims : deterministicClaims();
+      if (llmClaims.length) { options.onSynthesis?.("llm"); proposed = llmClaims; }
+      else { options.onSynthesis?.("deterministic"); proposed = deterministicClaims(); }
     } catch {
+      options.onSynthesis?.("deterministic");
       proposed = deterministicClaims();
     }
   } else {
+    options.onSynthesis?.("deterministic");
     proposed = deterministicClaims();
   }
   return proposed.flatMap((claim, index): AskAIClaim[] => {

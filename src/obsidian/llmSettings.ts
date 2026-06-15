@@ -9,6 +9,7 @@
 // provider). The key is never logged here, and llmResolutionSummary is non-secret and contains
 // no live provider object.
 
+import { createLlmAskAILanguageModel, type AskAILanguageModel, type SynthesisInfo } from "../ask-ai/index.js";
 import {
   ExternalLlmProvider, LocalDeterministicLlmProvider,
   type ExternalLlmProviderConfig, type LlmProvider, type LlmTransport,
@@ -94,4 +95,28 @@ export function llmResolutionSummary(resolution: LlmProviderResolution): LlmReso
     usedFallback: resolution.usedFallback,
     reason: resolution.reason,
   };
+}
+
+export interface AskAiSynthesis {
+  /** Set ONLY when a valid external LLM is configured; otherwise undefined (deterministic path). */
+  llm?: AskAILanguageModel;
+  /** Non-secret configured-synthesis summary recorded with the answer. No keys/provider objects. */
+  info: SynthesisInfo;
+}
+
+/**
+ * Build the Ask AI synthesis dependency from settings. Resolving constructs a provider (no network);
+ * the LLM is wrapped in the grounded synthesis adapter ONLY when the resolved provider is external.
+ * For local/unconfigured/incomplete settings, llm is undefined so Ask AI uses deterministic synthesis.
+ */
+export function askAiSynthesisFromSettings(settings: TranscriptMemorySettings, options: { transport?: LlmTransport } = {}): AskAiSynthesis {
+  const resolution = resolveLlmProviderFromSettings(settings, options);
+  const external = !resolution.provider.isLocal;
+  const info: SynthesisInfo = {
+    mode: external ? "external_llm" : "deterministic",
+    provider: resolution.provider.id,
+    model: resolution.provider.model,
+    usedFallback: resolution.usedFallback,
+  };
+  return { llm: external ? createLlmAskAILanguageModel(resolution.provider) : undefined, info };
 }
