@@ -26,7 +26,7 @@ export class TranscriptMemorySettingsTab extends PluginSettingTab {
 
     this.containerEl.createEl("h3", { text: "AI providers" });
     const warning = this.containerEl.createEl("p", {
-      text: "API keys are stored in this plugin's local data file (data.json) as plain text. If your vault is synced, the key may sync with it. These settings configure providers, but live indexing/retrieval does not use an external provider yet.",
+      text: "API keys are stored in this plugin's local data file (data.json) as plain text. If your vault is synced, the key may sync with it. Run the \"Rebuild Embedding Index\" command to (re)build the index with the configured provider — that command is the only action that may make a network call.",
     });
     warning.addClass("setting-item-description");
 
@@ -174,6 +174,16 @@ export class TranscriptMemorySettingsTab extends PluginSettingTab {
     new Setting(this.containerEl).setName("Plugin status").setDesc(health.status);
     new Setting(this.containerEl).setName("Provider mode").setDesc(health.providerMode ?? settings.mode);
     new Setting(this.containerEl).setName("API key").setDesc(health.apiKeyConfigured ? "configured" : "not configured");
+    new Setting(this.containerEl).setName("Embedding index").setDesc(
+      health.reindexNeeded === undefined
+        ? "Status unavailable until the database is ready."
+        : health.reindexNeeded
+          ? `Reindex needed — run the "Rebuild Embedding Index" command. ${health.reindexSummary ?? ""}`.trim()
+          : `Up to date. ${health.reindexSummary ?? ""}`.trim(),
+    );
+    if (health.embeddingUsedFallback) {
+      new Setting(this.containerEl).setName("Embedding fallback").setDesc("The configured external embedding provider is not fully set up; using local token-hash-v1.");
+    }
     new Setting(this.containerEl).setName("Database location").setDesc(health.databasePath ?? "Unavailable");
     new Setting(this.containerEl).setName("SQLite storage").setDesc(health.realSqliteStorage ? "Connected to real local SQLite storage" : "Not connected");
     new Setting(this.containerEl).setName("Migration status").setDesc(`${health.migrationStatus}: ${health.appliedMigrationCount}/${health.packagedMigrationCount} applied`);

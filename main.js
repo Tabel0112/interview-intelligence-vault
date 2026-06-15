@@ -814,7 +814,7 @@ __export(main_exports, {
 module.exports = __toCommonJS(main_exports);
 
 // src/obsidian/Plugin.ts
-var import_obsidian4 = require("obsidian");
+var import_obsidian5 = require("obsidian");
 var import_node_fs3 = require("node:fs");
 var import_node_path4 = require("node:path");
 
@@ -1438,6 +1438,7 @@ var OBSIDIAN_COMMANDS = [
   { id: "open-review", name: "Open Review Queue", viewType: OBSIDIAN_VIEW_TYPES.review }
 ];
 var OBSIDIAN_RIBBON = { icon: "database", title: "Open Transcript Memory Dashboard" };
+var OBSIDIAN_REINDEX_COMMAND = { id: "rebuild-embedding-index", name: "Rebuild Embedding Index" };
 var viewTitle = (type) => ({
   [OBSIDIAN_VIEW_TYPES.dashboard]: "Transcript Memory Dashboard",
   [OBSIDIAN_VIEW_TYPES.upload]: "Upload Transcript",
@@ -1632,7 +1633,7 @@ var TranscriptMemorySettingsTab = class extends import_obsidian.PluginSettingTab
     this.containerEl.createEl("h2", { text: "Transcript Memory Vault" });
     this.containerEl.createEl("h3", { text: "AI providers" });
     const warning = this.containerEl.createEl("p", {
-      text: "API keys are stored in this plugin's local data file (data.json) as plain text. If your vault is synced, the key may sync with it. These settings configure providers, but live indexing/retrieval does not use an external provider yet."
+      text: `API keys are stored in this plugin's local data file (data.json) as plain text. If your vault is synced, the key may sync with it. Run the "Rebuild Embedding Index" command to (re)build the index with the configured provider \u2014 that command is the only action that may make a network call.`
     });
     warning.addClass("setting-item-description");
     new import_obsidian.Setting(this.containerEl).setName("Mode").setDesc("Local deterministic runs fully offline and is the default. External providers are recorded but not active yet.").addDropdown(
@@ -1726,6 +1727,12 @@ var TranscriptMemorySettingsTab = class extends import_obsidian.PluginSettingTab
     new import_obsidian.Setting(this.containerEl).setName("Plugin status").setDesc(health.status);
     new import_obsidian.Setting(this.containerEl).setName("Provider mode").setDesc(health.providerMode ?? settings.mode);
     new import_obsidian.Setting(this.containerEl).setName("API key").setDesc(health.apiKeyConfigured ? "configured" : "not configured");
+    new import_obsidian.Setting(this.containerEl).setName("Embedding index").setDesc(
+      health.reindexNeeded === void 0 ? "Status unavailable until the database is ready." : health.reindexNeeded ? `Reindex needed \u2014 run the "Rebuild Embedding Index" command. ${health.reindexSummary ?? ""}`.trim() : `Up to date. ${health.reindexSummary ?? ""}`.trim()
+    );
+    if (health.embeddingUsedFallback) {
+      new import_obsidian.Setting(this.containerEl).setName("Embedding fallback").setDesc("The configured external embedding provider is not fully set up; using local token-hash-v1.");
+    }
     new import_obsidian.Setting(this.containerEl).setName("Database location").setDesc(health.databasePath ?? "Unavailable");
     new import_obsidian.Setting(this.containerEl).setName("SQLite storage").setDesc(health.realSqliteStorage ? "Connected to real local SQLite storage" : "Not connected");
     new import_obsidian.Setting(this.containerEl).setName("Migration status").setDesc(`${health.migrationStatus}: ${health.appliedMigrationCount}/${health.packagedMigrationCount} applied`);
@@ -3202,6 +3209,229 @@ function saveEvidenceScoreRun(db, assessment, options) {
   return id;
 }
 
+// src/retrieval/embeddingProvider.ts
+var import_node_crypto5 = require("node:crypto");
+var DeterministicTestEmbeddingProvider = class {
+  constructor(dimensions = 32) {
+    this.dimensions = dimensions;
+  }
+  dimensions;
+  name = "deterministic-test";
+  model = "token-hash-v1";
+  async embedTexts(texts) {
+    return texts.map((text) => {
+      const vector = Array(this.dimensions).fill(0);
+      for (const token of text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []) {
+        const hash = (0, import_node_crypto5.createHash)("sha256").update(token).digest();
+        vector[hash[0] % this.dimensions] += hash[1] % 2 ? 1 : -1;
+      }
+      return vector;
+    });
+  }
+};
+var NoopEmbeddingProvider = class {
+  name = "noop";
+  model = "disabled";
+  dimensions = 0;
+  async embedTexts(texts) {
+    return texts.map(() => []);
+  }
+};
+
+// src/retrieval/externalEmbeddingProvider.ts
+var EmbeddingError = class extends Error {
+  context;
+  constructor(message, context, options) {
+    super(message, options);
+    this.name = new.target.name;
+    this.context = context;
+  }
+};
+var EmbeddingAuthError = class extends EmbeddingError {
+};
+var EmbeddingRateLimitError = class extends EmbeddingError {
+};
+var EmbeddingProviderError = class extends EmbeddingError {
+};
+var EmbeddingResponseError = class extends EmbeddingError {
+};
+var REDACTED = "[redacted]";
+function redactSecret(text, secret) {
+  if (!secret || !secret.trim()) return text;
+  return text.split(secret).join(REDACTED);
+}
+var DEFAULT_BASE_URL = "https://api.openai.com/v1";
+function createHttpEmbeddingTransport(fetchImpl = globalThis.fetch) {
+  return async (request) => {
+    const controller = new AbortController();
+    const onExternalAbort = () => controller.abort();
+    request.signal?.addEventListener("abort", onExternalAbort, { once: true });
+    let timer;
+    if (request.timeoutMs != null) timer = setTimeout(() => controller.abort(), request.timeoutMs);
+    try {
+      const response = await fetchImpl(request.url, {
+        method: request.method,
+        headers: request.headers,
+        body: request.body,
+        signal: controller.signal
+      });
+      let body = null;
+      try {
+        body = await response.json();
+      } catch {
+        try {
+          body = await response.text();
+        } catch {
+          body = null;
+        }
+      }
+      return { status: response.status, body };
+    } finally {
+      if (timer) clearTimeout(timer);
+      request.signal?.removeEventListener("abort", onExternalAbort);
+    }
+  };
+}
+var ExternalEmbeddingProvider = class {
+  name;
+  model;
+  dimensions;
+  apiKey;
+  baseUrl;
+  transport;
+  timeoutMs;
+  constructor(config) {
+    if (!config.apiKey || !config.apiKey.trim()) {
+      throw new EmbeddingAuthError("External embedding provider requires a non-blank API key", { provider: config.provider, model: config.model });
+    }
+    if (!Number.isInteger(config.dimensions) || config.dimensions <= 0) {
+      throw new EmbeddingResponseError("External embedding provider requires positive integer dimensions", { provider: config.provider, model: config.model });
+    }
+    this.name = config.provider;
+    this.model = config.model;
+    this.dimensions = config.dimensions;
+    this.apiKey = config.apiKey.trim();
+    this.baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
+    this.transport = config.transport ?? createHttpEmbeddingTransport();
+    this.timeoutMs = config.timeoutMs;
+  }
+  context(status) {
+    return { provider: this.name, model: this.model, status };
+  }
+  async embedTexts(texts) {
+    if (!texts.length) return [];
+    let response;
+    try {
+      response = await this.transport({
+        url: `${this.baseUrl}/embeddings`,
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.apiKey}` },
+        body: JSON.stringify({ model: this.model, input: texts }),
+        timeoutMs: this.timeoutMs
+      });
+    } catch (error) {
+      const detail = redactSecret(error instanceof Error ? error.message : String(error), this.apiKey);
+      throw new EmbeddingProviderError(`Embedding request failed: ${detail}`, this.context());
+    }
+    if (response.status === 401 || response.status === 403) {
+      throw new EmbeddingAuthError("Embedding provider rejected the API key", this.context(response.status));
+    }
+    if (response.status === 429) {
+      throw new EmbeddingRateLimitError("Embedding provider rate limit exceeded", this.context(response.status));
+    }
+    if (response.status < 200 || response.status >= 300) {
+      throw new EmbeddingProviderError(`Embedding provider returned status ${response.status}`, this.context(response.status));
+    }
+    const data = response.body?.data;
+    if (!Array.isArray(data) || data.length !== texts.length) {
+      throw new EmbeddingResponseError("Embedding response did not contain one vector per input", this.context(response.status));
+    }
+    const ordered = [...data].sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+    return ordered.map((item) => {
+      const vector = item.embedding;
+      if (!Array.isArray(vector) || vector.length !== this.dimensions || vector.some((value) => typeof value !== "number" || !Number.isFinite(value))) {
+        throw new EmbeddingResponseError(`Embedding response vector did not match expected ${this.dimensions} finite dimensions`, this.context(response.status));
+      }
+      return vector;
+    });
+  }
+};
+var createExternalEmbeddingProvider = (config) => new ExternalEmbeddingProvider(config);
+
+// src/retrieval/embeddingSpace.ts
+var embeddingSpaceOf = (provider) => ({
+  provider: provider.name,
+  model: provider.model,
+  dimensions: provider.dimensions
+});
+var sameEmbeddingSpace = (a, b) => a.provider === b.provider && a.model === b.model && a.dimensions === b.dimensions;
+var isVectorCapable = (space) => space.dimensions > 0;
+var DEFAULT_EMBEDDING_PROVIDER_ID = "deterministic-test";
+var TOKEN_HASH_MODEL = "token-hash-v1";
+function resolveEmbeddingProvider(id = DEFAULT_EMBEDDING_PROVIDER_ID, options) {
+  if (options?.external) {
+    const external = options.external;
+    if (external.apiKey && external.apiKey.trim().length > 0) {
+      return { provider: createExternalEmbeddingProvider(external), requestedId: external.provider, usedFallback: false };
+    }
+    return {
+      provider: new DeterministicTestEmbeddingProvider(options?.dimensions),
+      requestedId: external.provider,
+      usedFallback: true,
+      reason: `Embedding provider "${external.provider}" has no API key configured; using local deterministic ${TOKEN_HASH_MODEL}.`
+    };
+  }
+  if (id === "noop" || id === "disabled") {
+    return { provider: new NoopEmbeddingProvider(), requestedId: id, usedFallback: false };
+  }
+  if (id === DEFAULT_EMBEDDING_PROVIDER_ID || id === TOKEN_HASH_MODEL) {
+    return { provider: new DeterministicTestEmbeddingProvider(options?.dimensions), requestedId: id, usedFallback: false };
+  }
+  return {
+    provider: new DeterministicTestEmbeddingProvider(options?.dimensions),
+    requestedId: id,
+    usedFallback: true,
+    reason: `Embedding provider "${id}" is not available yet; using local deterministic ${TOKEN_HASH_MODEL}.`
+  };
+}
+
+// src/retrieval/reindexStatus.ts
+var isProvider = (value) => typeof value.embedTexts === "function";
+function detectReindexNeeded(db, active, options = {}) {
+  const activeSpace = isProvider(active) ? embeddingSpaceOf(active) : active;
+  const vectorCapable = isVectorCapable(activeSpace);
+  const types = options.targetTypes;
+  const typeClause = types && types.length ? ` WHERE target_type IN (${types.map(() => "?").join(",")})` : "";
+  const typeArgs = types && types.length ? types : [];
+  const documentCount = db.prepare(`SELECT COUNT(*) c FROM retrieval_documents${typeClause}`).get(...typeArgs).c;
+  const joinTypeClause = types && types.length ? ` AND d.target_type IN (${types.map(() => "?").join(",")})` : "";
+  const embeddedUnderActive = db.prepare(
+    `SELECT COUNT(*) c FROM retrieval_documents d
+     JOIN search_embeddings e ON e.target_type=d.target_type AND e.target_id=d.target_id
+     WHERE e.embedding_provider=? AND e.embedding_model=? AND e.embedding_dim=?${joinTypeClause}`
+  ).get(activeSpace.provider, activeSpace.model, activeSpace.dimensions, ...typeArgs).c;
+  const missingUnderActive = Math.max(0, documentCount - embeddedUnderActive);
+  const indexedSpaces = db.prepare(
+    `SELECT embedding_provider provider, embedding_model model, embedding_dim dimensions, COUNT(*) count
+     FROM search_embeddings${typeClause}
+     GROUP BY embedding_provider, embedding_model, embedding_dim
+     ORDER BY embedding_provider, embedding_model, embedding_dim`
+  ).all(...typeArgs);
+  const foreignSpaces = indexedSpaces.filter((space) => !sameEmbeddingSpace(space, activeSpace));
+  const reasons = [];
+  if (!vectorCapable) reasons.push("Embeddings are disabled for the active provider (0 dimensions).");
+  if (documentCount === 0) reasons.push("No indexed documents to embed.");
+  if (vectorCapable && documentCount > 0 && missingUnderActive > 0) {
+    reasons.push(`${missingUnderActive} of ${documentCount} document(s) are not embedded under the active space (${activeSpace.provider}/${activeSpace.model}@${activeSpace.dimensions}).`);
+  }
+  if (foreignSpaces.length) {
+    const total = foreignSpaces.reduce((sum, space) => sum + space.count, 0);
+    reasons.push(`${total} embedding(s) are indexed under a different provider/model and are ignored by vector search.`);
+  }
+  const needsReindex = vectorCapable && documentCount > 0 && missingUnderActive > 0;
+  return { activeSpace, vectorCapable, documentCount, embeddedUnderActive, missingUnderActive, indexedSpaces, foreignSpaces, needsReindex, reasons };
+}
+
 // src/retrieval/embeddingStore.ts
 function validateVector(vector, dimensions) {
   if (!vector.length || vector.length !== dimensions || vector.some((value) => !Number.isFinite(value))) {
@@ -3218,6 +3448,25 @@ function cosineSimilarity(a, b) {
   }
   if (!left || !right) return 0;
   return Math.max(0, Math.min(1, (dot / Math.sqrt(left * right) + 1) / 2));
+}
+async function upsertEmbedding(db, input) {
+  if (input.provider.dimensions <= 0) return false;
+  const existing = db.prepare(`SELECT content_hash FROM search_embeddings WHERE target_type=? AND target_id=? AND embedding_provider=? AND embedding_model=?`).get(input.targetType, input.targetId, input.provider.name, input.provider.model);
+  if (existing?.content_hash === input.contentHash) return false;
+  const vector = (await input.provider.embedTexts([input.text]))[0];
+  return storeEmbeddingVector(db, { targetType: input.targetType, targetId: input.targetId, contentHash: input.contentHash, provider: input.provider, vector });
+}
+function storeEmbeddingVector(db, input) {
+  if (input.provider.dimensions <= 0) return false;
+  const existing = db.prepare(`SELECT content_hash FROM search_embeddings WHERE target_type=? AND target_id=? AND embedding_provider=? AND embedding_model=?`).get(input.targetType, input.targetId, input.provider.name, input.provider.model);
+  if (existing?.content_hash === input.contentHash) return false;
+  const vector = input.vector;
+  validateVector(vector, input.provider.dimensions);
+  const timestamp = (/* @__PURE__ */ new Date()).toISOString();
+  db.prepare(`INSERT INTO search_embeddings(id,target_type,target_id,embedding_provider,embedding_model,embedding_dim,content_hash,vector_json,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(target_type,target_id,embedding_provider,embedding_model) DO UPDATE SET embedding_dim=excluded.embedding_dim,content_hash=excluded.content_hash,vector_json=excluded.vector_json,updated_at=excluded.updated_at`).run(stableProvenanceId("semb_", `${input.targetType}:${input.targetId}:${input.provider.name}:${input.provider.model}`), input.targetType, input.targetId, input.provider.name, input.provider.model, input.provider.dimensions, input.contentHash, JSON.stringify(vector), timestamp, timestamp);
+  return true;
 }
 
 // src/retrieval/filters.ts
@@ -3266,6 +3515,127 @@ function rowToCandidate(row) {
     sourcePointerIds: JSON.parse(row.source_pointer_ids_json),
     supportRole: row.support_role
   };
+}
+
+// src/retrieval/indexer.ts
+function pointerMetadata(db, targetType, targetId) {
+  const rows = db.prepare(`SELECT evidence_pointer_id,source_pointer_uri,transcript_id,evidence_role,evidence_strength,confidence,final_score
+    FROM evidence_pointers WHERE target_type=? AND target_id=? ORDER BY evidence_pointer_id`).all(targetType, targetId);
+  const support = rows.some((row) => row.evidence_role === "support"), opposition = rows.some((row) => row.evidence_role === "opposition");
+  const supportRole = support && opposition ? "mixed" : opposition ? "opposing" : support ? "supporting" : "unknown";
+  return {
+    rows,
+    supportRole,
+    evidenceScore: rows.length ? Math.max(...rows.map((row) => row.final_score ?? row.confidence)) : 0.5,
+    evidencePointerIds: rows.map((row) => row.evidence_pointer_id),
+    sourcePointerIds: rows.map((row) => row.source_pointer_uri)
+  };
+}
+function spanDocument(db, spanId) {
+  const row = db.prepare(`SELECT s.id,s.transcript_id,s.source_id,s.speaker_id,s.speaker_label,s.text,s.created_at,t.updated_at
+    FROM transcript_spans s JOIN transcripts t ON t.id=s.transcript_id WHERE s.id=?`).get(spanId);
+  if (!row) throw new NotFoundError(`Transcript span not found: ${spanId}`);
+  const pointers = db.prepare("SELECT pointer_uri FROM source_pointers WHERE span_id=?").all(spanId);
+  const evidence = db.prepare("SELECT evidence_pointer_id,evidence_role,confidence,final_score FROM evidence_pointers WHERE span_id=?").all(spanId);
+  const opposition = evidence.some((item) => item.evidence_role === "opposition"), support = evidence.some((item) => item.evidence_role === "support");
+  return { targetType: "transcript_span", targetId: spanId, transcriptId: row.transcript_id, sourceId: row.source_id, speakerId: row.speaker_id, speakerName: row.speaker_label, memoryType: null, memoryStatus: null, title: null, text: row.text, topicText: null, createdAt: row.created_at, updatedAt: row.updated_at, evidenceScore: evidence.length ? Math.max(...evidence.map((item) => item.final_score ?? item.confidence)) : 0.5, supportRole: support && opposition ? "mixed" : opposition ? "opposing" : support ? "supporting" : "unknown", evidencePointerIds: evidence.map((item) => item.evidence_pointer_id), sourcePointerIds: pointers.map((item) => item.pointer_uri) };
+}
+function memoryDocument(db, id) {
+  const raw = db.prepare("SELECT * FROM memory_objects WHERE id=?").get(id);
+  const canonical = createMemoryObjectsRepo(db).getCanonicalMemoryObject(id);
+  if (!raw || !canonical) throw new NotFoundError(`Memory object not found: ${id}`);
+  const pointer = pointerMetadata(db, "memory_object", id);
+  const legacyEvidence = db.prepare(`SELECT e.span_id,s.transcript_id,s.source_id,s.speaker_id,s.speaker_label
+    FROM memory_object_evidence e JOIN transcript_spans s ON s.id=e.span_id WHERE e.memory_id=?`).all(id);
+  const transcriptId = pointer.rows[0]?.transcript_id ?? legacyEvidence[0]?.transcript_id ?? null;
+  const linkedSpan = legacyEvidence[0] ?? db.prepare(`SELECT s.transcript_id,s.source_id,s.speaker_id,s.speaker_label
+    FROM evidence_pointers e JOIN transcript_spans s ON s.id=e.span_id WHERE e.target_type='memory_object' AND e.target_id=? LIMIT 1`).get(id);
+  const sourcePointers = db.prepare(`SELECT sp.pointer_uri FROM source_pointers sp WHERE sp.span_id IN (SELECT span_id FROM memory_object_evidence WHERE memory_id=?)`).all(id);
+  const evidencePointerIds = pointer.evidencePointerIds;
+  return { targetType: "memory_object", targetId: id, transcriptId, sourceId: linkedSpan?.source_id ?? null, speakerId: linkedSpan?.speaker_id ?? null, speakerName: linkedSpan?.speaker_label ?? null, memoryType: canonical.type, memoryStatus: canonical.status, title: canonical.title, text: canonical.body, topicText: canonical.type === "topic" ? canonical.title : null, createdAt: String(raw.created_at), updatedAt: String(raw.updated_at), evidenceScore: isStrongMemoryObject(canonical) ? canonical.confidence : Math.min(canonical.confidence, 0.45), supportRole: pointer.supportRole, evidencePointerIds: [...evidencePointerIds], sourcePointerIds: [.../* @__PURE__ */ new Set([...pointer.sourcePointerIds, ...sourcePointers.map((item) => item.pointer_uri)])] };
+}
+function evidenceDocument(db, id) {
+  const row = db.prepare("SELECT * FROM evidence_pointers WHERE evidence_pointer_id=?").get(id);
+  if (!row) throw new NotFoundError(`Evidence pointer not found: ${id}`);
+  const span = db.prepare("SELECT source_id,speaker_id,speaker_label FROM transcript_spans WHERE id=?").get(row.span_id);
+  return { targetType: "evidence_pointer", targetId: id, transcriptId: row.transcript_id, sourceId: span.source_id, speakerId: span.speaker_id, speakerName: span.speaker_label, memoryType: null, memoryStatus: null, title: null, text: row.quote_preview, topicText: null, createdAt: row.created_at, updatedAt: row.created_at, evidenceScore: row.final_score ?? row.confidence, supportRole: row.evidence_role === "support" ? "supporting" : row.evidence_role === "opposition" ? "opposing" : "unknown", evidencePointerIds: [id], sourcePointerIds: [row.source_pointer_uri] };
+}
+function getDocument(db, type, id) {
+  return type === "transcript_span" ? spanDocument(db, id) : type === "memory_object" ? memoryDocument(db, id) : evidenceDocument(db, id);
+}
+async function indexDocument(db, type, id, options = {}) {
+  try {
+    const doc = getDocument(db, type, id);
+    const text = `${doc.title ?? ""}
+${doc.text}`.trim(), embeddingHash = contentHash(text);
+    const hash = contentHash(JSON.stringify({ text, transcriptId: doc.transcriptId, sourceId: doc.sourceId, speakerId: doc.speakerId, speakerName: doc.speakerName, memoryType: doc.memoryType, memoryStatus: doc.memoryStatus, evidenceScore: doc.evidenceScore, supportRole: doc.supportRole, evidencePointerIds: doc.evidencePointerIds, sourcePointerIds: doc.sourcePointerIds }));
+    const timestamp = (/* @__PURE__ */ new Date()).toISOString();
+    const previous = db.prepare("SELECT indexed_hash FROM retrieval_index_status WHERE target_type=? AND target_id=?").get(type, id);
+    const skipped = previous?.indexed_hash === hash && !options.force;
+    if (!skipped) {
+      db.prepare(`INSERT INTO retrieval_documents(id,target_type,target_id,transcript_id,source_id,speaker_id,speaker_name,memory_type,memory_status,title,search_text,topic_text,created_at,updated_at,evidence_score,support_role,evidence_pointer_ids_json,source_pointer_ids_json,content_hash)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(target_type,target_id) DO UPDATE SET transcript_id=excluded.transcript_id,source_id=excluded.source_id,speaker_id=excluded.speaker_id,speaker_name=excluded.speaker_name,memory_type=excluded.memory_type,memory_status=excluded.memory_status,title=excluded.title,search_text=excluded.search_text,topic_text=excluded.topic_text,created_at=excluded.created_at,updated_at=excluded.updated_at,evidence_score=excluded.evidence_score,support_role=excluded.support_role,evidence_pointer_ids_json=excluded.evidence_pointer_ids_json,source_pointer_ids_json=excluded.source_pointer_ids_json,content_hash=excluded.content_hash`).run(`${type}:${id}`, type, id, doc.transcriptId, doc.sourceId, doc.speakerId, doc.speakerName, doc.memoryType, doc.memoryStatus, doc.title, doc.text, doc.topicText, doc.createdAt, doc.updatedAt, doc.evidenceScore, doc.supportRole, JSON.stringify(doc.evidencePointerIds), JSON.stringify(doc.sourcePointerIds), hash);
+      try {
+        db.prepare("DELETE FROM retrieval_documents_fts WHERE target_type=? AND target_id=?").run(type, id);
+        db.prepare("INSERT INTO retrieval_documents_fts(target_type,target_id,title,search_text,speaker_name,topic_text) VALUES (?,?,?,?,?,?)").run(type, id, doc.title, doc.text, doc.speakerName, doc.topicText);
+      } catch {
+      }
+    }
+    const embedded = options.embeddingProvider ? await upsertEmbedding(db, { targetType: type, targetId: id, text, contentHash: embeddingHash, provider: options.embeddingProvider }) : false;
+    db.prepare(`INSERT INTO retrieval_index_status(target_type,target_id,indexed_hash,keyword_indexed_at,embedding_indexed_at,embedding_provider,embedding_model,error)
+      VALUES (?,?,?,?,?,?,?,NULL)
+      ON CONFLICT(target_type,target_id) DO UPDATE SET indexed_hash=excluded.indexed_hash,keyword_indexed_at=excluded.keyword_indexed_at,embedding_indexed_at=COALESCE(excluded.embedding_indexed_at,retrieval_index_status.embedding_indexed_at),embedding_provider=COALESCE(excluded.embedding_provider,retrieval_index_status.embedding_provider),embedding_model=COALESCE(excluded.embedding_model,retrieval_index_status.embedding_model),error=NULL`).run(type, id, hash, timestamp, embedded ? timestamp : null, options.embeddingProvider?.name ?? null, options.embeddingProvider?.model ?? null);
+    return { embedded, skipped };
+  } catch (error) {
+    db.prepare(`INSERT INTO retrieval_index_status(target_type,target_id,indexed_hash,error) VALUES (?,?,'',?)
+      ON CONFLICT(target_type,target_id) DO UPDATE SET error=excluded.error`).run(type, id, error instanceof Error ? error.message : String(error));
+    throw error;
+  }
+}
+async function rebuildRetrievalIndex(db, options = {}) {
+  const types = options.targetTypes ?? ["transcript_span", "memory_object", "evidence_pointer"];
+  let indexed = 0, skipped = 0, embedded = 0, errors = 0;
+  const table = { transcript_span: ["transcript_spans", "id"], memory_object: ["memory_objects", "id"], evidence_pointer: ["evidence_pointers", "evidence_pointer_id"] };
+  for (const type of types) {
+    for (const row of db.prepare(`SELECT ${table[type][1]} id FROM ${table[type][0]}`).all()) {
+      try {
+        const result = await indexDocument(db, type, row.id, { ...options, embeddingProvider: void 0 });
+        result.skipped ? skipped++ : indexed++;
+      } catch {
+        errors++;
+      }
+    }
+  }
+  const provider = options.embeddingProvider;
+  if (provider && provider.dimensions > 0) {
+    const placeholders = types.map(() => "?").join(",");
+    const documents = db.prepare(`SELECT target_type,target_id,title,search_text FROM retrieval_documents WHERE target_type IN (${placeholders})`).all(...types);
+    const pending = documents.map((doc) => {
+      const text = `${doc.title ?? ""}
+${doc.search_text}`.trim(), hash = contentHash(text);
+      const existing = db.prepare(`SELECT content_hash FROM search_embeddings WHERE target_type=? AND target_id=? AND embedding_provider=? AND embedding_model=?`).get(doc.target_type, doc.target_id, provider.name, provider.model);
+      return existing?.content_hash === hash ? null : { ...doc, text, hash };
+    }).filter((item) => item != null);
+    const batchSize = Math.max(1, options.batchSize ?? 64);
+    for (let start = 0; start < pending.length; start += batchSize) {
+      const batch = pending.slice(start, start + batchSize);
+      try {
+        const vectors = await provider.embedTexts(batch.map((item) => item.text));
+        if (vectors.length !== batch.length) throw new Error("Embedding provider returned the wrong batch size");
+        vectors.forEach((vector, index) => {
+          const item = batch[index];
+          validateVector(vector, provider.dimensions);
+          if (storeEmbeddingVector(db, { targetType: item.target_type, targetId: item.target_id, contentHash: item.hash, provider, vector })) embedded++;
+          db.prepare(`UPDATE retrieval_index_status SET embedding_indexed_at=?,embedding_provider=?,embedding_model=?,error=NULL WHERE target_type=? AND target_id=?`).run((/* @__PURE__ */ new Date()).toISOString(), provider.name, provider.model, item.target_type, item.target_id);
+        });
+      } catch (error) {
+        errors += batch.length;
+        for (const item of batch) db.prepare("UPDATE retrieval_index_status SET error=? WHERE target_type=? AND target_id=?").run(error instanceof Error ? error.message : String(error), item.target_type, item.target_id);
+      }
+    }
+  }
+  return { indexed, skipped, embedded, errors };
 }
 
 // src/retrieval/keywordSearch.ts
@@ -3702,9 +4072,9 @@ function createSpansFromTurns(rawText, turns) {
 }
 
 // src/ingest/importTranscript.ts
-var import_node_crypto5 = require("node:crypto");
+var import_node_crypto6 = require("node:crypto");
 function stableId3(prefix, value, length = 24) {
-  return `${prefix}${(0, import_node_crypto5.createHash)("sha256").update(value).digest("hex").slice(0, length)}`;
+  return `${prefix}${(0, import_node_crypto6.createHash)("sha256").update(value).digest("hex").slice(0, length)}`;
 }
 function sourceTypeForDatabase(sourceType) {
   if (sourceType === "paste" || sourceType === "test") return "pasted_text";
@@ -3847,8 +4217,8 @@ var conflictPath = (id) => `Conflicts/${safeName(id)}.md`;
 var entityPath = (kind, label, id) => `${kind === "person" ? "People" : kind === "topic" ? "Topics" : "Decisions"}/${stableNoteName(label, id)}.md`;
 
 // src/obsidian/graphBuilder.ts
-var import_node_crypto6 = require("node:crypto");
-var edgeId = (source, target, type, evidence = "") => `ov_edge_${(0, import_node_crypto6.createHash)("sha256").update(`${source}:${target}:${type}:${evidence}`).digest("hex").slice(0, 24)}`;
+var import_node_crypto7 = require("node:crypto");
+var edgeId = (source, target, type, evidence = "") => `ov_edge_${(0, import_node_crypto7.createHash)("sha256").update(`${source}:${target}:${type}:${evidence}`).digest("hex").slice(0, 24)}`;
 var mapEdgeType = (value) => value === "contradicts" ? "contradicts" : value === "updates" ? "updates" : value === "mentions" ? "mentions" : value === "supports" ? "supports" : value === "derived_from" ? "derived_from" : "about";
 var memoryNodeId = (id) => `memory:${id}`;
 var evidenceNodeId = (id) => `evidence:${id}`;
@@ -4726,8 +5096,77 @@ function readableStartupError(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
+// src/obsidian/embeddingSettings.ts
+function externalEmbeddingConfigFromSettings(settings) {
+  if (settings.mode !== "external") return null;
+  const { provider, model, dimensions, baseUrl, timeoutMs } = settings.embedding;
+  if (!isExternalEmbeddingProvider(provider)) return null;
+  const apiKey = settings.apiKeys[provider];
+  if (!apiKey || !apiKey.trim()) return null;
+  if (typeof dimensions !== "number" || !Number.isInteger(dimensions) || dimensions <= 0) return null;
+  const config = { provider, model, dimensions, apiKey: apiKey.trim() };
+  if (baseUrl) config.baseUrl = baseUrl;
+  if (typeof timeoutMs === "number" && timeoutMs > 0) config.timeoutMs = timeoutMs;
+  return config;
+}
+var summarizeResolution = (resolution) => ({
+  requestedId: resolution.requestedId,
+  model: resolution.provider.model,
+  usedFallback: resolution.usedFallback,
+  reason: resolution.reason
+});
+function resolveEmbeddingProviderFromSettings(settings, options = {}) {
+  const external = externalEmbeddingConfigFromSettings(settings);
+  if (external) {
+    const config = options.transport ? { ...external, transport: options.transport } : external;
+    return resolveEmbeddingProvider(void 0, { external: config });
+  }
+  if (settings.mode === "external" && isExternalEmbeddingProvider(settings.embedding.provider)) {
+    const fallback = resolveEmbeddingProvider();
+    return {
+      ...fallback,
+      requestedId: settings.embedding.provider,
+      usedFallback: true,
+      reason: `External embedding provider "${settings.embedding.provider}" is not fully configured (needs a non-blank API key and positive dimensions); using local ${TOKEN_HASH_MODEL}.`
+    };
+  }
+  return resolveEmbeddingProvider(settings.embedding.provider, { dimensions: settings.embedding.dimensions });
+}
+function embeddingReindexStatus(db, settings) {
+  const resolution = resolveEmbeddingProviderFromSettings(settings);
+  const assessment = detectReindexNeeded(db, resolution.provider);
+  return { summary: summarizeResolution(resolution), assessment };
+}
+async function runEmbeddingReindex(db, settings, options = {}) {
+  const resolution = resolveEmbeddingProviderFromSettings(settings, options);
+  const result = await rebuildRetrievalIndex(db, { embeddingProvider: resolution.provider });
+  const assessment = detectReindexNeeded(db, resolution.provider);
+  return { summary: summarizeResolution(resolution), result, assessment };
+}
+
+// src/obsidian/embeddingTransport.ts
+var import_obsidian4 = require("obsidian");
+function createObsidianEmbeddingTransport() {
+  return async (request) => {
+    const response = await (0, import_obsidian4.requestUrl)({
+      url: request.url,
+      method: request.method,
+      headers: request.headers,
+      body: request.body,
+      throw: false
+    });
+    let body = null;
+    try {
+      body = response.json;
+    } catch {
+      body = response.text ?? null;
+    }
+    return { status: response.status, body };
+  };
+}
+
 // src/obsidian/Plugin.ts
-var TranscriptMemoryVaultPlugin = class extends import_obsidian4.Plugin {
+var TranscriptMemoryVaultPlugin = class extends import_obsidian5.Plugin {
   db = null;
   pluginSettings = DEFAULT_SETTINGS;
   health = initialPluginHealth();
@@ -4741,14 +5180,15 @@ var TranscriptMemoryVaultPlugin = class extends import_obsidian4.Plugin {
     for (const command of OBSIDIAN_COMMANDS) {
       this.addCommand({ id: command.id, name: command.name, callback: () => void navigationForView(navigation, command.viewType) });
     }
+    this.addCommand({ id: OBSIDIAN_REINDEX_COMMAND.id, name: OBSIDIAN_REINDEX_COMMAND.name, callback: () => void this.rebuildEmbeddingIndex() });
     this.addRibbonIcon(OBSIDIAN_RIBBON.icon, OBSIDIAN_RIBBON.title, () => void navigation.openDashboard());
     this.addSettingTab(new TranscriptMemorySettingsTab(this.app, this, () => this.health, navigation, () => this.pluginSettings, (next) => this.saveSettings(next)));
     const adapter = this.app.vault.adapter;
-    const fileSystemAdapter = adapter instanceof import_obsidian4.FileSystemAdapter ? adapter : null;
-    const support = startupSupport({ isDesktopApp: import_obsidian4.Platform.isDesktopApp, hasLocalFilesystem: fileSystemAdapter != null });
+    const fileSystemAdapter = adapter instanceof import_obsidian5.FileSystemAdapter ? adapter : null;
+    const support = startupSupport({ isDesktopApp: import_obsidian5.Platform.isDesktopApp, hasLocalFilesystem: fileSystemAdapter != null });
     if (!support.supported) {
       this.health = { ...this.health, status: "unsupported", lastInitializationError: support.message };
-      new import_obsidian4.Notice(DESKTOP_ONLY_MESSAGE);
+      new import_obsidian5.Notice(DESKTOP_ONLY_MESSAGE);
       console.error("Transcript Memory Vault unsupported environment:", support.message);
       return;
     }
@@ -4765,7 +5205,7 @@ var TranscriptMemoryVaultPlugin = class extends import_obsidian4.Plugin {
     if (!nativeBinding.ok) {
       this.health = { ...this.health, status: "error", lastInitializationError: nativeBinding.error };
       this.api = createUnavailableFrontendApi(() => this.health);
-      new import_obsidian4.Notice(nativeBinding.error);
+      new import_obsidian5.Notice(nativeBinding.error);
       console.error("Transcript Memory Vault native binding unavailable:", nativeBinding.error);
       return;
     }
@@ -4791,14 +5231,15 @@ var TranscriptMemoryVaultPlugin = class extends import_obsidian4.Plugin {
         lastInitializationError: null
       };
       this.api = createObsidianAppApi(this.db, this.app.vault, this.health);
-      if (firstRun) new import_obsidian4.Notice("Transcript Memory Vault is ready. Upload a transcript to begin.");
+      this.refreshReindexStatus();
+      if (firstRun) new import_obsidian5.Notice("Transcript Memory Vault is ready. Upload a transcript to begin.");
     } catch (error) {
       this.db?.close();
       this.db = null;
       const message = readableStartupError(error);
       this.health = { ...this.health, status: "error", databaseConnected: false, migrationStatus: "failed", realSqliteStorage: false, lastInitializationError: message };
       this.api = createUnavailableFrontendApi(() => this.health);
-      new import_obsidian4.Notice(`Transcript Memory Vault could not initialize: ${message}`);
+      new import_obsidian5.Notice(`Transcript Memory Vault could not initialize: ${message}`);
       console.error("Transcript Memory Vault initialization failed", error);
     }
   }
@@ -4821,6 +5262,39 @@ var TranscriptMemoryVaultPlugin = class extends import_obsidian4.Plugin {
     this.pluginSettings = normalizeSettings(next);
     await this.saveData(this.pluginSettings);
     this.health = { ...this.health, ...settingsHealthSummary(this.pluginSettings) };
+    this.refreshReindexStatus();
+  }
+  /** Read-only, network-free. Safe to call on startup and after every settings change. */
+  refreshReindexStatus() {
+    if (!this.db) return;
+    try {
+      const { summary, assessment } = embeddingReindexStatus(this.db, this.pluginSettings);
+      this.health = {
+        ...this.health,
+        reindexNeeded: assessment.needsReindex,
+        reindexSummary: assessment.reasons.join(" ") || "Embedding index is up to date.",
+        embeddingUsedFallback: summary.usedFallback
+      };
+    } catch {
+      this.health = { ...this.health, reindexSummary: "Reindex status unavailable." };
+    }
+  }
+  /** EXPLICIT manual action. The only path that may make a network call (when external is configured). */
+  async rebuildEmbeddingIndex() {
+    if (!this.db || this.health.status !== "ready") {
+      new import_obsidian5.Notice("Transcript Memory Vault is not ready; cannot rebuild the embedding index.");
+      return;
+    }
+    new import_obsidian5.Notice("Rebuilding embedding index\u2026");
+    try {
+      const { summary, result } = await runEmbeddingReindex(this.db, this.pluginSettings, { transport: createObsidianEmbeddingTransport() });
+      if (summary.usedFallback && summary.reason) new import_obsidian5.Notice(summary.reason);
+      new import_obsidian5.Notice(`Embedding index rebuilt: ${result.indexed} indexed, ${result.embedded} embedded, ${result.errors} error(s).`);
+      this.refreshReindexStatus();
+    } catch (error) {
+      new import_obsidian5.Notice(`Embedding index rebuild failed: ${readableStartupError(error)}`);
+      console.error("Transcript Memory Vault embedding reindex failed", error);
+    }
   }
 };
 function navigationForView(navigation, viewType) {

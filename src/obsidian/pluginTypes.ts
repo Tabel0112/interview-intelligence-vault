@@ -28,6 +28,9 @@ export const OBSIDIAN_COMMANDS = [
 
 export const OBSIDIAN_RIBBON = { icon: "database", title: "Open Transcript Memory Dashboard" } as const;
 
+// Explicit (manual) action command — kept out of OBSIDIAN_COMMANDS (which are navigation only).
+export const OBSIDIAN_REINDEX_COMMAND = { id: "rebuild-embedding-index", name: "Rebuild Embedding Index" } as const;
+
 export const viewTitle = (type: TranscriptMemoryViewType): string => ({
   [OBSIDIAN_VIEW_TYPES.dashboard]: "Transcript Memory Dashboard",
   [OBSIDIAN_VIEW_TYPES.upload]: "Upload Transcript",

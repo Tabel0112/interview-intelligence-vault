@@ -26,6 +26,10 @@ export interface PluginHealth {
   embeddingProvider?: string;
   embeddingModel?: string;
   apiKeyConfigured?: boolean;
+  // Embedding reindex status (read-only, network-free). No secret material.
+  reindexNeeded?: boolean;
+  reindexSummary?: string;
+  embeddingUsedFallback?: boolean;
 }
 
 export const initialPluginHealth = (): PluginHealth => ({

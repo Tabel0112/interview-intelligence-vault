@@ -9,9 +9,11 @@ import { nativeBindingLoadError, resolveNativeBinding } from "./nativeBindings.j
 import { TranscriptMemorySettingsTab } from "./SettingsTab.js";
 import { TranscriptMemoryItemView } from "./TranscriptMemoryItemView.js";
 import { createObsidianAppApi } from "./services/ObsidianAppApi.js";
-import { OBSIDIAN_COMMANDS, OBSIDIAN_RIBBON, OBSIDIAN_VIEW_TYPES, type TranscriptMemoryViewType } from "./pluginTypes.js";
+import { OBSIDIAN_COMMANDS, OBSIDIAN_REINDEX_COMMAND, OBSIDIAN_RIBBON, OBSIDIAN_VIEW_TYPES, type TranscriptMemoryViewType } from "./pluginTypes.js";
 import { createUnavailableFrontendApi, DESKTOP_ONLY_MESSAGE, initialPluginHealth, readableStartupError, startupSupport, type PluginHealth } from "./startup.js";
 import { DEFAULT_SETTINGS, normalizeSettings, settingsHealthSummary, type TranscriptMemorySettings } from "./settings.js";
+import { embeddingReindexStatus, runEmbeddingReindex } from "./embeddingSettings.js";
+import { createObsidianEmbeddingTransport } from "./embeddingTransport.js";
 
 export default class TranscriptMemoryVaultPlugin extends Plugin {
   private db: SqliteDatabase | null = null;
@@ -28,6 +30,7 @@ export default class TranscriptMemoryVaultPlugin extends Plugin {
     for (const command of OBSIDIAN_COMMANDS) {
       this.addCommand({ id: command.id, name: command.name, callback: () => void navigationForView(navigation, command.viewType) });
     }
+    this.addCommand({ id: OBSIDIAN_REINDEX_COMMAND.id, name: OBSIDIAN_REINDEX_COMMAND.name, callback: () => void this.rebuildEmbeddingIndex() });
     this.addRibbonIcon(OBSIDIAN_RIBBON.icon, OBSIDIAN_RIBBON.title, () => void navigation.openDashboard());
     this.addSettingTab(new TranscriptMemorySettingsTab(this.app, this, () => this.health, navigation, () => this.pluginSettings, (next) => this.saveSettings(next)));
 
@@ -71,6 +74,7 @@ export default class TranscriptMemoryVaultPlugin extends Plugin {
         realSqliteStorage: true, firstRun, lastInitializationError: null,
       };
       this.api = createObsidianAppApi(this.db, this.app.vault, this.health);
+      this.refreshReindexStatus();
       if (firstRun) new Notice("Transcript Memory Vault is ready. Upload a transcript to begin.");
     } catch (error) {
       this.db?.close();
@@ -105,6 +109,43 @@ export default class TranscriptMemoryVaultPlugin extends Plugin {
     this.pluginSettings = normalizeSettings(next);
     await this.saveData(this.pluginSettings);
     this.health = { ...this.health, ...settingsHealthSummary(this.pluginSettings) };
+    // Read-only, network-free: recompute whether the index matches the (possibly changed) provider.
+    this.refreshReindexStatus();
+  }
+
+  /** Read-only, network-free. Safe to call on startup and after every settings change. */
+  private refreshReindexStatus(): void {
+    if (!this.db) return;
+    try {
+      const { summary, assessment } = embeddingReindexStatus(this.db, this.pluginSettings);
+      this.health = {
+        ...this.health,
+        reindexNeeded: assessment.needsReindex,
+        reindexSummary: assessment.reasons.join(" ") || "Embedding index is up to date.",
+        embeddingUsedFallback: summary.usedFallback,
+      };
+    } catch {
+      // Status is best-effort and must never break the plugin.
+      this.health = { ...this.health, reindexSummary: "Reindex status unavailable." };
+    }
+  }
+
+  /** EXPLICIT manual action. The only path that may make a network call (when external is configured). */
+  private async rebuildEmbeddingIndex(): Promise<void> {
+    if (!this.db || this.health.status !== "ready") {
+      new Notice("Transcript Memory Vault is not ready; cannot rebuild the embedding index.");
+      return;
+    }
+    new Notice("Rebuilding embedding index…");
+    try {
+      const { summary, result } = await runEmbeddingReindex(this.db, this.pluginSettings, { transport: createObsidianEmbeddingTransport() });
+      if (summary.usedFallback && summary.reason) new Notice(summary.reason);
+      new Notice(`Embedding index rebuilt: ${result.indexed} indexed, ${result.embedded} embedded, ${result.errors} error(s).`);
+      this.refreshReindexStatus();
+    } catch (error) {
+      new Notice(`Embedding index rebuild failed: ${readableStartupError(error)}`);
+      console.error("Transcript Memory Vault embedding reindex failed", error);
+    }
   }
 }
 
