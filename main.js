@@ -3293,13 +3293,16 @@ function createHttpEmbeddingTransport(fetchImpl = globalThis.fetch) {
   };
 }
 var ExternalEmbeddingProvider = class {
+  // Only name/model/dimensions are public. The secret-bearing internals are true ECMAScript
+  // private fields (#), which are not reflectable: they never appear in JSON.stringify, object
+  // spread, Object.keys/getOwnPropertyNames, Reflect.ownKeys, or util.inspect.
   name;
   model;
   dimensions;
-  apiKey;
-  baseUrl;
-  transport;
-  timeoutMs;
+  #apiKey;
+  #baseUrl;
+  #transport;
+  #timeoutMs;
   constructor(config) {
     if (!config.apiKey || !config.apiKey.trim()) {
       throw new EmbeddingAuthError("External embedding provider requires a non-blank API key", { provider: config.provider, model: config.model });
@@ -3310,10 +3313,10 @@ var ExternalEmbeddingProvider = class {
     this.name = config.provider;
     this.model = config.model;
     this.dimensions = config.dimensions;
-    this.apiKey = config.apiKey.trim();
-    this.baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
-    this.transport = config.transport ?? createHttpEmbeddingTransport();
-    this.timeoutMs = config.timeoutMs;
+    this.#apiKey = config.apiKey.trim();
+    this.#baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
+    this.#transport = config.transport ?? createHttpEmbeddingTransport();
+    this.#timeoutMs = config.timeoutMs;
   }
   context(status) {
     return { provider: this.name, model: this.model, status };
@@ -3322,15 +3325,15 @@ var ExternalEmbeddingProvider = class {
     if (!texts.length) return [];
     let response;
     try {
-      response = await this.transport({
-        url: `${this.baseUrl}/embeddings`,
+      response = await this.#transport({
+        url: `${this.#baseUrl}/embeddings`,
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.apiKey}` },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.#apiKey}` },
         body: JSON.stringify({ model: this.model, input: texts }),
-        timeoutMs: this.timeoutMs
+        timeoutMs: this.#timeoutMs
       });
     } catch (error) {
-      const detail = redactSecret(error instanceof Error ? error.message : String(error), this.apiKey);
+      const detail = redactSecret(error instanceof Error ? error.message : String(error), this.#apiKey);
       throw new EmbeddingProviderError(`Embedding request failed: ${detail}`, this.context());
     }
     if (response.status === 401 || response.status === 403) {

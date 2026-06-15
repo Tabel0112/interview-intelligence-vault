@@ -114,13 +114,16 @@ interface EmbeddingResponseShape {
 }
 
 export class ExternalEmbeddingProvider implements EmbeddingProvider {
+  // Only name/model/dimensions are public. The secret-bearing internals are true ECMAScript
+  // private fields (#), which are not reflectable: they never appear in JSON.stringify, object
+  // spread, Object.keys/getOwnPropertyNames, Reflect.ownKeys, or util.inspect.
   readonly name: string;
   readonly model: string;
   readonly dimensions: number;
-  private readonly apiKey: string;
-  private readonly baseUrl: string;
-  private readonly transport: EmbeddingTransport;
-  private readonly timeoutMs?: number;
+  readonly #apiKey: string;
+  readonly #baseUrl: string;
+  readonly #transport: EmbeddingTransport;
+  readonly #timeoutMs?: number;
 
   constructor(config: ExternalEmbeddingConfig) {
     if (!config.apiKey || !config.apiKey.trim()) {
@@ -132,10 +135,10 @@ export class ExternalEmbeddingProvider implements EmbeddingProvider {
     this.name = config.provider;
     this.model = config.model;
     this.dimensions = config.dimensions;
-    this.apiKey = config.apiKey.trim();
-    this.baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
-    this.transport = config.transport ?? createHttpEmbeddingTransport();
-    this.timeoutMs = config.timeoutMs;
+    this.#apiKey = config.apiKey.trim();
+    this.#baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
+    this.#transport = config.transport ?? createHttpEmbeddingTransport();
+    this.#timeoutMs = config.timeoutMs;
   }
 
   private context(status?: number): EmbeddingErrorContext {
@@ -146,16 +149,16 @@ export class ExternalEmbeddingProvider implements EmbeddingProvider {
     if (!texts.length) return [];
     let response: EmbeddingTransportResponse;
     try {
-      response = await this.transport({
-        url: `${this.baseUrl}/embeddings`,
+      response = await this.#transport({
+        url: `${this.#baseUrl}/embeddings`,
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.apiKey}` },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.#apiKey}` },
         body: JSON.stringify({ model: this.model, input: texts }),
-        timeoutMs: this.timeoutMs,
+        timeoutMs: this.#timeoutMs,
       });
     } catch (error) {
       // Transport/network failure. Strip the key in case an upstream message echoed it.
-      const detail = redactSecret(error instanceof Error ? error.message : String(error), this.apiKey);
+      const detail = redactSecret(error instanceof Error ? error.message : String(error), this.#apiKey);
       throw new EmbeddingProviderError(`Embedding request failed: ${detail}`, this.context());
     }
 

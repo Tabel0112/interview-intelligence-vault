@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { inspect } from "node:util";
 import { openDatabase, type SqliteDatabase } from "../src/db/index.js";
 import { importTranscript } from "../src/ingest/index.js";
 import {
@@ -115,6 +116,41 @@ describe("external embedding provider — key safety", () => {
   it("redactSecret strips the secret and is a no-op when blank", () => {
     expect(redactSecret(`a ${SECRET} b`, SECRET)).not.toContain(SECRET);
     expect(redactSecret("no secret", "")).toBe("no secret");
+  });
+});
+
+describe("external embedding provider — serialization/inspection cannot expose the key", () => {
+  const provider = () => new ExternalEmbeddingProvider(config(makeTransport(embedResponder()).transport, { timeoutMs: 30000 }));
+
+  it("JSON.stringify exposes only name/model/dimensions", () => {
+    const p = provider();
+    const serialized = JSON.stringify(p);
+    expect(serialized).not.toContain(SECRET);
+    expect(JSON.parse(serialized)).toEqual({ name: "openai", model: "text-embedding-3-small", dimensions: DIM });
+  });
+
+  it("object spread and key enumeration never include the key or internals", () => {
+    const p = provider();
+    const spread = { ...p };
+    expect(spread).toEqual({ name: "openai", model: "text-embedding-3-small", dimensions: DIM });
+    expect(JSON.stringify(spread)).not.toContain(SECRET);
+    expect(Object.keys(p)).toEqual(["name", "model", "dimensions"]);
+    expect(Object.getOwnPropertyNames(p)).toEqual(["name", "model", "dimensions"]);
+    expect(Reflect.ownKeys(p)).toEqual(["name", "model", "dimensions"]);
+    for (const key of Reflect.ownKeys(p)) expect(String(key)).not.toContain("apiKey");
+  });
+
+  it("util.inspect and console-style/string inspection do not reveal the key", () => {
+    const p = provider();
+    expect(inspect(p)).not.toContain(SECRET);
+    expect(inspect(p, { showHidden: true, depth: null })).not.toContain(SECRET);
+    expect(String(p)).not.toContain(SECRET);
+    expect(`${p}`).not.toContain(SECRET);
+  });
+
+  it("still embeds correctly after the privacy change (behavior unchanged)", async () => {
+    const p = provider();
+    expect(await p.embedTexts(["alpha"])).toEqual([vec("alpha")]);
   });
 });
 
