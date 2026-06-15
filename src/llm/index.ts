@@ -6,4 +6,5 @@ export * from "./types.js";
 export * from "./errors.js";
 export * from "./redaction.js";
 export * from "./timeout.js";
+export * from "./externalLlmProvider.js";
 export { LocalDeterministicLlmProvider } from "./localDeterministicProvider.js";
