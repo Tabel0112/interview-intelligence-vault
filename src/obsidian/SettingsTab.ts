@@ -5,6 +5,7 @@ import {
   EMBEDDING_PROVIDER_OPTIONS, isExternalEmbeddingProvider, LLM_PROVIDER_OPTIONS, redactApiKey, setApiKey,
   type TranscriptMemorySettings,
 } from "./settings.js";
+import { llmResolutionSummary, resolveLlmProviderFromSettings } from "./llmSettings.js";
 
 export class TranscriptMemorySettingsTab extends PluginSettingTab {
   constructor(
@@ -56,10 +57,31 @@ export class TranscriptMemorySettingsTab extends PluginSettingTab {
 
     new Setting(this.containerEl)
       .setName("LLM model")
-      .setDesc("Model identifier placeholder.")
+      .setDesc("Model identifier. Required for an external provider.")
       .addText((text) =>
-        text.setPlaceholder("e.g. claude-...").setValue(settings.llm.model).onChange(async (value) => {
+        text.setPlaceholder("e.g. gpt-4o-mini").setValue(settings.llm.model).onChange(async (value) => {
           await this.onSave({ ...this.getSettings(), llm: { ...this.getSettings().llm, model: value } });
+        }),
+      );
+
+    new Setting(this.containerEl)
+      .setName("LLM base URL")
+      .setDesc("Optional. Override the OpenAI-compatible endpoint for the external LLM provider.")
+      .addText((text) =>
+        text.setPlaceholder("https://api.openai.com/v1").setValue(settings.llm.baseUrl ?? "").onChange(async (value) => {
+          const baseUrl = value.trim().length > 0 ? value.trim() : undefined;
+          await this.onSave({ ...this.getSettings(), llm: { ...this.getSettings().llm, baseUrl } });
+        }),
+      );
+
+    new Setting(this.containerEl)
+      .setName("LLM request timeout (ms)")
+      .setDesc("Optional. Applied to the external LLM provider; the local provider ignores it.")
+      .addText((text) =>
+        text.setPlaceholder("e.g. 30000").setValue(settings.llm.timeoutMs != null ? String(settings.llm.timeoutMs) : "").onChange(async (value) => {
+          const parsed = Number(value.trim());
+          const timeoutMs = Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+          await this.onSave({ ...this.getSettings(), llm: { ...this.getSettings().llm, timeoutMs } });
         }),
       );
 
@@ -174,6 +196,13 @@ export class TranscriptMemorySettingsTab extends PluginSettingTab {
     new Setting(this.containerEl).setName("Plugin status").setDesc(health.status);
     new Setting(this.containerEl).setName("Provider mode").setDesc(health.providerMode ?? settings.mode);
     new Setting(this.containerEl).setName("API key").setDesc(health.apiKeyConfigured ? "configured" : "not configured");
+    // Read-only, non-secret. Resolving constructs a provider (no network) and we surface only strings.
+    const llmStatus = llmResolutionSummary(resolveLlmProviderFromSettings(settings));
+    new Setting(this.containerEl).setName("LLM provider").setDesc(
+      llmStatus.usedFallback
+        ? `Using local deterministic LLM (fallback). ${llmStatus.reason ?? ""}`.trim()
+        : `${llmStatus.providerId}${llmStatus.model ? ` / ${llmStatus.model}` : ""}${llmStatus.isLocal ? " (local deterministic)" : " (external)"}`,
+    );
     new Setting(this.containerEl).setName("Embedding index").setDesc(
       health.reindexNeeded === undefined
         ? "Status unavailable until the database is ready."

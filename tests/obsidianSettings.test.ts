@@ -56,6 +56,17 @@ describe("transcript memory settings foundation", () => {
     expect(invalid.embedding).toEqual({ provider: "openai", model: "m" }); // invalid optional fields dropped
   });
 
+  it("normalizes external LLM fields and drops invalid baseUrl/timeoutMs", () => {
+    const valid = normalizeSettings({
+      mode: "external",
+      llm: { provider: "openai", model: "gpt-4o-mini", baseUrl: "https://api.test/v1", timeoutMs: 30000 },
+    });
+    expect(valid.llm).toEqual({ provider: "openai", model: "gpt-4o-mini", baseUrl: "https://api.test/v1", timeoutMs: 30000 });
+
+    const invalid = normalizeSettings({ llm: { provider: "openai", model: "m", baseUrl: "   ", timeoutMs: -1 } });
+    expect(invalid.llm).toEqual({ provider: "openai", model: "m" }); // invalid optional fields dropped
+  });
+
   it("round-trips a fully-populated external embedding selection", () => {
     const settings: TranscriptMemorySettings = {
       schemaVersion: 1,
