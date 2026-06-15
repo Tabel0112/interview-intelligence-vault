@@ -1,6 +1,7 @@
 export * from "./types.js";
 export * from "./prompt.js";
 export * from "./extractor.js";
+export * from "./llmExtractor.js";
 export * from "./normalize.js";
 export * from "./confidence.js";
 export * from "./validator.js";

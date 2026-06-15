@@ -35,7 +35,11 @@ export async function extractMemoryObjectsForTranscript(db: SqliteDatabase, opti
       for (const extracted of candidates) {
         const validation = validateMemoryCandidate(extracted, window);
         if (!validation.ok) { result.rejectedCandidates++; result.errors.push(validation.problem); continue; }
-        const candidate = validation.candidate;
+        // LLM-extracted memory is never auto-promoted to trusted/active: cap every LLM candidate to
+        // needs_review (downgrade only). Deterministic extraction is unaffected.
+        const candidate = options.extractor.kind === "llm"
+          ? { ...validation.candidate, status: "needs_review" as const }
+          : validation.candidate;
         const duplicate = findDuplicateMemoryObject(db, candidate);
         if (duplicate) {
           const rejected = duplicate.object.extraction_status === "rejected";

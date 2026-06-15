@@ -10,3 +10,19 @@ Every object needs evidence. Generic filler is invalid. Quote bodies must use ex
 
 ${window.text}`;
 }
+
+// Grounded LLM extraction prompt: every object must carry a verbatim supportingQuote from a cited span.
+export const MEMORY_EXTRACTION_LLM_PROMPT_VERSION = "mvp-memory-extraction-llm-v1";
+
+export const MEMORY_EXTRACTION_LLM_SYSTEM =
+  "You extract source-backed memory objects strictly from the transcript spans provided. Use ONLY the listed spans; never invent facts or cite span_ids that are not listed. Every object must include a supportingQuote copied verbatim from one of the spans it cites. Prefer fewer high-quality objects. Respond with JSON only.";
+
+export function buildLlmMemoryExtractionPrompt(window: ExtractionWindow): string {
+  return [
+    'Extract memory objects as JSON: {"objects":[{"type":"topic|quote|question|decision|action_item|objection|advice_idea","title":"...","body":"...","evidenceSpanIds":["<span_id>"],"supportingQuote":"<verbatim substring of a cited span>"}]}',
+    'Cite only the span_ids below. Each object must include a supportingQuote copied verbatim from one cited span. If nothing is well supported, return {"objects":[]}.',
+    "",
+    "Spans:",
+    window.text,
+  ].join("\n");
+}
