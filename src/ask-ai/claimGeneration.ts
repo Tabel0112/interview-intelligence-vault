@@ -27,12 +27,25 @@ export async function generateClaimsFromEvidence(
     evidence.find((item) => item.stance === "supports" || item.stance === "updates"),
     evidence.find((item) => item.stance === "opposes"),
   ].filter((item): item is AskAIEvidenceItem => item != null);
-  const proposed: Array<{ kind: ClaimKind; text: string; evidencePointerIds: string[]; explanation?: string }> =
-    options.confidence === "conflicting"
-      ? conflictEvidence.map((item) => ({ kind: kinds[0] ?? "fact", text: defaultClaimText(kinds[0] ?? "fact", [item]), evidencePointerIds: [item.evidencePointerId] }))
-      : options.llm
-        ? await options.llm.generateClaims({ query, evidence })
-        : kinds.map((kind) => ({ kind, text: defaultClaimText(kind, evidence), evidencePointerIds: evidence.map((item) => item.evidencePointerId) }));
+  const deterministicClaims = (): Array<{ kind: ClaimKind; text: string; evidencePointerIds: string[]; explanation?: string }> =>
+    kinds.map((kind) => ({ kind, text: defaultClaimText(kind, evidence), evidencePointerIds: evidence.map((item) => item.evidencePointerId) }));
+  let proposed: Array<{ kind: ClaimKind; text: string; evidencePointerIds: string[]; explanation?: string }>;
+  if (options.confidence === "conflicting") {
+    // Conflict handling stays deterministic and preserves both sides; the LLM never overrides it.
+    proposed = conflictEvidence.map((item) => ({ kind: kinds[0] ?? "fact", text: defaultClaimText(kinds[0] ?? "fact", [item]), evidencePointerIds: [item.evidencePointerId] }));
+  } else if (options.llm) {
+    // Grounded LLM synthesis, with a deterministic fallback when it fails, errors, times out, or
+    // produces no grounded claims. This never refuses on its own — refusal stays driven by the
+    // evidence pipeline (no_evidence / empty evidence handled above).
+    try {
+      const llmClaims = await options.llm.generateClaims({ query, evidence });
+      proposed = llmClaims.length ? llmClaims : deterministicClaims();
+    } catch {
+      proposed = deterministicClaims();
+    }
+  } else {
+    proposed = deterministicClaims();
+  }
   return proposed.flatMap((claim, index): AskAIClaim[] => {
     const pointers = [...new Set(claim.evidencePointerIds)].filter((id) => selectedPointers.has(id));
     if (!claim.text.trim() || !pointers.length) return [];
