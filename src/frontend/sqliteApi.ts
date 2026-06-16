@@ -4,7 +4,7 @@ import type { SqliteDatabase } from "../db/connection.js";
 import { createCorrectionsRepo } from "../db/repositories/correctionsRepo.js";
 import { createMemoryObjectsRepo } from "../db/repositories/memoryObjectsRepo.js";
 import { importTranscript } from "../ingest/index.js";
-import { isStrongMemoryObject } from "../memory/index.js";
+import { extractMemoryObjectsForTranscript, isStrongMemoryObject, type MemoryExtractor } from "../memory/index.js";
 import { buildObsidianGraph } from "../obsidian/index.js";
 import { resolveEvidencePointer, type EvidencePointer } from "../provenance/index.js";
 import { routeHref } from "./router.js";
@@ -165,7 +165,7 @@ function normalizeCorrectionTarget(db: SqliteDatabase, input: Parameters<Fronten
 
 export function createSqliteFrontendApi(
   db: SqliteDatabase,
-  options: { now?: () => Date; health?: PluginHealth; getSynthesis?: () => { llm?: AskAILanguageModel; info: SynthesisInfo } | undefined } = {},
+  options: { now?: () => Date; health?: PluginHealth; getSynthesis?: () => { llm?: AskAILanguageModel; info: SynthesisInfo } | undefined; getMemoryExtractor?: () => MemoryExtractor } = {},
 ): FrontendApi {
   return {
     async getDashboard(): Promise<DashboardView> {
@@ -185,8 +185,22 @@ export function createSqliteFrontendApi(
     async listTranscripts() { return transcriptList(db); },
     async uploadTranscript(input) {
       validateTranscriptUpload(input);
+      // The raw transcript is committed first (its own immutable transaction).
       const result = importTranscript(db, { filename: input.filename, rawText: input.rawText, sourceType: "upload" });
-      return { transcriptId: result.transcriptId, status: result.status, warning: result.warning };
+      let warning = result.warning;
+      // Automatically extract memory only after a successful NEW import, and never twice for the same
+      // transcript. Extraction failure must never lose/roll back the imported transcript.
+      const extractor = result.status === "imported" ? options.getMemoryExtractor?.() : undefined;
+      if (extractor && !db.prepare("SELECT 1 FROM extraction_runs WHERE transcript_id=? AND status='completed' LIMIT 1").get(result.transcriptId)) {
+        try {
+          const extraction = await extractMemoryObjectsForTranscript(db, { transcriptId: result.transcriptId, extractor });
+          const runStatus = db.prepare("SELECT status FROM extraction_runs WHERE id=?").get(extraction.extractionRunId) as { status: string } | undefined;
+          if (runStatus?.status !== "completed") warning = warning ?? "Transcript imported, but automatic memory extraction did not complete.";
+        } catch {
+          warning = warning ?? "Transcript imported, but automatic memory extraction did not complete.";
+        }
+      }
+      return { transcriptId: result.transcriptId, status: result.status, warning };
     },
     async getTranscript(id): Promise<TranscriptView | null> {
       const row = db.prepare("SELECT id,title,status,imported_at,raw_text,source_type FROM transcripts WHERE id=?").get(id) as Row | undefined;

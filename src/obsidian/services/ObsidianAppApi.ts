@@ -2,6 +2,7 @@ import type { TFile, Vault } from "obsidian";
 import type { AskAILanguageModel, SynthesisInfo } from "../../ask-ai/index.js";
 import type { SqliteDatabase } from "../../db/index.js";
 import { createSqliteFrontendApi, validateTranscriptUpload, type FrontendApi } from "../../frontend/index.js";
+import type { MemoryExtractor } from "../../memory/index.js";
 import type { PluginHealth } from "../startup.js";
 
 export interface ObsidianAppApi extends FrontendApi {
@@ -13,8 +14,9 @@ export function createObsidianAppApi(
   vault: Pick<Vault, "read">,
   health?: PluginHealth,
   getSynthesis?: () => { llm?: AskAILanguageModel; info: SynthesisInfo } | undefined,
+  getMemoryExtractor?: () => MemoryExtractor,
 ): ObsidianAppApi {
-  const api = createSqliteFrontendApi(db, { health, getSynthesis });
+  const api = createSqliteFrontendApi(db, { health, getSynthesis, getMemoryExtractor });
   return {
     ...api,
     async uploadVaultFile(file) {

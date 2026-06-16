@@ -14,6 +14,7 @@ import {
   ExternalLlmProvider, LocalDeterministicLlmProvider,
   type ExternalLlmProviderConfig, type LlmProvider, type LlmTransport,
 } from "../llm/index.js";
+import { createLlmMemoryExtractor, DeterministicRuleExtractor, type MemoryExtractor } from "../memory/index.js";
 import { isExternalLlmProvider, type TranscriptMemorySettings } from "./settings.js";
 
 /**
@@ -119,4 +120,15 @@ export function askAiSynthesisFromSettings(settings: TranscriptMemorySettings, o
     usedFallback: resolution.usedFallback,
   };
   return { llm: external ? createLlmAskAILanguageModel(resolution.provider) : undefined, info };
+}
+
+/**
+ * Resolve the memory extractor from settings. Deterministic is the default; the grounded LLM
+ * extractor (with a deterministic per-window fallback) is used ONLY when the resolved provider is a
+ * valid external LLM. Resolving only constructs a provider — no network call happens here.
+ */
+export function memoryExtractorFromSettings(settings: TranscriptMemorySettings, options: { transport?: LlmTransport } = {}): MemoryExtractor {
+  const resolution = resolveLlmProviderFromSettings(settings, options);
+  if (resolution.provider.isLocal) return new DeterministicRuleExtractor();
+  return createLlmMemoryExtractor(resolution.provider, { fallback: new DeterministicRuleExtractor() });
 }
