@@ -132,6 +132,23 @@ describe("full pipeline: LLM extraction stores needs_review with audit metadata"
     expect(statuses.some((s) => s.extraction_status === "active")).toBe(true);
   });
 
+  it("records the LLM prompt version on the run and objects for LLM extraction", async () => {
+    const transcriptId = seed();
+    const extractor = llmExtractor((id, text) => [{ type: "decision", title: "Use SQLite as source of truth", body: "Chose SQLite.", evidenceSpanIds: [id], supportingQuote: text }]);
+    const result = await extractMemoryObjectsForTranscript(db, { transcriptId, extractor });
+    const run = db.prepare("SELECT prompt_version FROM extraction_runs WHERE id=?").get(result.extractionRunId) as { prompt_version: string };
+    expect(run.prompt_version).toBe("mvp-memory-extraction-llm-v1");
+    const object = db.prepare("SELECT prompt_version FROM memory_objects WHERE extraction_run_id=?").get(result.extractionRunId) as { prompt_version: string };
+    expect(object.prompt_version).toBe("mvp-memory-extraction-llm-v1");
+  });
+
+  it("keeps the deterministic prompt version for deterministic extraction", async () => {
+    const transcriptId = seed();
+    const result = await extractMemoryObjectsForTranscript(db, { transcriptId, extractor: new DeterministicRuleExtractor() });
+    const run = db.prepare("SELECT prompt_version FROM extraction_runs WHERE id=?").get(result.extractionRunId) as { prompt_version: string };
+    expect(run.prompt_version).toBe("mvp-memory-extraction-v1");
+  });
+
   it("does not leak the API key into any persisted row when using a real external provider", async () => {
     const transcriptId = seed();
     const transport: LlmTransport = async (req) => {

@@ -11,9 +11,11 @@ import { validateMemoryCandidate } from "./validator.js";
 export async function extractMemoryObjectsForTranscript(db: SqliteDatabase, options: {
   transcriptId: string; extractor: MemoryExtractor; maxWindowChars?: number; overlapSpans?: number; force?: boolean;
 }): Promise<ExtractionRunResult> {
+  // Record the extractor's own prompt version (e.g. the LLM prompt version); deterministic is the default.
+  const promptVersion = options.extractor.promptVersion ?? MEMORY_EXTRACTION_PROMPT_VERSION;
   const runId = createExtractionRun(db, {
     transcriptId: options.transcriptId, extractorKind: options.extractor.kind ?? "test", extractorModel: options.extractor.model,
-    promptVersion: MEMORY_EXTRACTION_PROMPT_VERSION, config: { maxWindowChars: options.maxWindowChars ?? 4000, overlapSpans: options.overlapSpans ?? 0, force: options.force ?? false },
+    promptVersion, config: { maxWindowChars: options.maxWindowChars ?? 4000, overlapSpans: options.overlapSpans ?? 0, force: options.force ?? false },
   });
   const result: ExtractionRunResult = {
     extractionRunId: runId, transcriptId: options.transcriptId, windowsProcessed: 0, candidatesExtracted: 0,
@@ -44,7 +46,7 @@ export async function extractMemoryObjectsForTranscript(db: SqliteDatabase, opti
         if (duplicate) {
           const rejected = duplicate.object.extraction_status === "rejected";
           if (!duplicate.evidenceOverlaps && candidate.confidenceLabel === "high" && !rejected) {
-            markDuplicate(db, candidate, duplicate.object.id, runId, MEMORY_EXTRACTION_PROMPT_VERSION);
+            markDuplicate(db, candidate, duplicate.object.id, runId, promptVersion);
             result.objectsInserted++;
             result.duplicatesSkipped++;
             result.weakObjectsInserted++;
@@ -53,7 +55,7 @@ export async function extractMemoryObjectsForTranscript(db: SqliteDatabase, opti
           if (!options.force || duplicate.object.user_corrected === 1 || !rejected) { result.duplicatesSkipped++; continue; }
         }
         try {
-          storeMemoryObjectWithEvidence(db, runId, MEMORY_EXTRACTION_PROMPT_VERSION, candidate);
+          storeMemoryObjectWithEvidence(db, runId, promptVersion, candidate);
           result.objectsInserted++;
           if (candidate.status !== "active") result.weakObjectsInserted++;
         } catch (error) {

@@ -19,7 +19,7 @@
 //     the deterministic fallback.
 
 import type { LlmProvider, LlmRequestOptions } from "../../llm/index.js";
-import { buildLlmMemoryExtractionPrompt, MEMORY_EXTRACTION_LLM_SYSTEM } from "./prompt.js";
+import { buildLlmMemoryExtractionPrompt, MEMORY_EXTRACTION_LLM_PROMPT_VERSION, MEMORY_EXTRACTION_LLM_SYSTEM } from "./prompt.js";
 import type { ExtractedMemoryCandidate, ExtractionMemoryObjectType, ExtractionWindow, MemoryExtractor } from "./types.js";
 
 export class MemoryExtractionError extends Error {
@@ -98,6 +98,7 @@ export function createLlmMemoryExtractor(provider: LlmProvider, options: LlmMemo
   return {
     kind: "llm",
     model: provider.model,
+    promptVersion: MEMORY_EXTRACTION_LLM_PROMPT_VERSION,
     async extract(window) {
       const requestOptions: LlmRequestOptions = {};
       if (options.timeoutMs != null) requestOptions.timeoutMs = options.timeoutMs;
