@@ -5,6 +5,7 @@ import { createCorrectionsRepo } from "../db/repositories/correctionsRepo.js";
 import { createMemoryObjectsRepo } from "../db/repositories/memoryObjectsRepo.js";
 import { importTranscript } from "../ingest/index.js";
 import { extractMemoryObjectsForTranscript, isStrongMemoryObject, type MemoryExtractor } from "../memory/index.js";
+import { indexTranscriptForRetrieval } from "../retrieval/index.js";
 import { buildObsidianGraph } from "../obsidian/index.js";
 import { resolveEvidencePointer, type EvidencePointer } from "../provenance/index.js";
 import { routeHref } from "./router.js";
@@ -198,6 +199,13 @@ export function createSqliteFrontendApi(
           if (runStatus?.status !== "completed") warning = warning ?? "Transcript imported, but automatic memory extraction did not complete.";
         } catch {
           warning = warning ?? "Transcript imported, but automatic memory extraction did not complete.";
+        }
+        // Post-import: bridge usable memory to provenance pointers + local keyword indexing (offline,
+        // idempotent). Runs even if extraction warned, so spans are still indexed. Never rolls back.
+        try {
+          await indexTranscriptForRetrieval(db, result.transcriptId);
+        } catch {
+          warning = warning ?? "Transcript imported, but automatic memory indexing did not complete.";
         }
       }
       return { transcriptId: result.transcriptId, status: result.status, warning };

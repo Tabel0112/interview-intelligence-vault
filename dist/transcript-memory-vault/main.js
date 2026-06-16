@@ -2099,6 +2099,9 @@ function createAnswerClaim(db, input) {
 function linkAnswerClaimToEvidence(db, input) {
   return createEvidencePointer(db, { targetType: "answer_claim", targetId: input.answerClaimId, transcriptId: input.transcriptId, spanId: input.spanId, evidenceRole: input.evidenceRole, evidenceStrength: input.evidenceStrength, confidence: input.confidence, ...input.scores });
 }
+function linkMemoryObjectToSpan(db, input) {
+  return createEvidencePointer(db, { targetType: "memory_object", targetId: input.memoryObjectId, transcriptId: input.transcriptId, spanId: input.spanId, evidenceRole: input.evidenceRole ?? "support", evidenceStrength: input.evidenceStrength ?? "unknown", confidence: input.confidence ?? 0.5 });
+}
 
 // src/provenance/citations.ts
 function formatCitationLabel(order) {
@@ -3314,6 +3317,354 @@ function detectReindexNeeded(db, active, options = {}) {
   return { activeSpace, vectorCapable, documentCount, embeddedUnderActive, missingUnderActive, indexedSpaces, foreignSpaces, needsReindex, reasons };
 }
 
+// src/memory/extraction/prompt.ts
+var MEMORY_EXTRACTION_PROMPT_VERSION = "mvp-memory-extraction-v1";
+var MEMORY_EXTRACTION_LLM_PROMPT_VERSION = "mvp-memory-extraction-llm-v1";
+var MEMORY_EXTRACTION_LLM_SYSTEM = "You extract source-backed memory objects strictly from the transcript spans provided. Use ONLY the listed spans; never invent facts or cite span_ids that are not listed. Every object must include a supportingQuote copied verbatim from one of the spans it cites. Prefer fewer high-quality objects. Respond with JSON only.";
+function buildLlmMemoryExtractionPrompt(window) {
+  return [
+    'Extract memory objects as JSON: {"objects":[{"type":"topic|quote|question|decision|action_item|objection|advice_idea","title":"...","body":"...","evidenceSpanIds":["<span_id>"],"supportingQuote":"<verbatim substring of a cited span>"}]}',
+    'Cite only the span_ids below. Each object must include a supportingQuote copied verbatim from one cited span. If nothing is well supported, return {"objects":[]}.',
+    "",
+    "Spans:",
+    window.text
+  ].join("\n");
+}
+
+// src/memory/extraction/extractor.ts
+var DeterministicRuleExtractor = class {
+  kind = "deterministic";
+  model = null;
+  async extract(window) {
+    const objects = [];
+    for (const span of window.spans) {
+      const text = span.text.trim();
+      const lower = text.toLowerCase();
+      const body = text.replace(/^[^:]{1,100}:\s*/, "");
+      const add = (type, title, confidence) => objects.push({ type, title, body, evidenceSpanIds: [span.spanId], confidence, reason: "Deterministic rule match" });
+      if (/\b(decided|decision|will use|must use|source of truth)\b/i.test(text)) add("decision", body.slice(0, 100), 0.95);
+      if (/\b(todo|action item|need to|should implement|must add)\b/i.test(text)) add("action_item", body.slice(0, 100), 0.85);
+      if (/\?/.test(text)) add("question", body.slice(0, 100), 0.85);
+      if (/\b(but|however|concern|object|blocker|doubt)\b/i.test(text)) add("objection", body.slice(0, 100), 0.8);
+      if (/\b(should|recommend|idea|could use|suggest)\b/i.test(text) && !lower.includes("should implement")) add("advice_idea", body.slice(0, 100), 0.75);
+      if (/\b(topic:)\b/i.test(text)) add("topic", body.replace(/^topic:\s*/i, "").slice(0, 100), 0.8);
+      if (/\bquote:\s*/i.test(text)) {
+        const quote2 = text.replace(/^.*?\bquote:\s*/i, "");
+        objects.push({ type: "quote", title: quote2.slice(0, 100), body: quote2, evidenceSpanIds: [span.spanId], confidence: 0.9, reason: "Explicit quote marker" });
+      }
+    }
+    return objects;
+  }
+};
+
+// src/memory/extraction/llmExtractor.ts
+var MemoryExtractionError = class extends Error {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "MemoryExtractionError";
+  }
+};
+var VALID_TYPES = ["topic", "quote", "question", "decision", "action_item", "objection", "advice_idea"];
+var normalizeForMatch2 = (value) => value.toLowerCase().replace(/\s+/g, " ").trim();
+function parseAndGroundMemoryCandidates(rawText, window) {
+  let parsed;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch {
+    throw new MemoryExtractionError("LLM memory extraction output was not valid JSON");
+  }
+  if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.objects)) {
+    throw new MemoryExtractionError("LLM memory extraction output did not contain an objects array");
+  }
+  const spanTextById = new Map(window.spans.map((span) => [span.spanId, normalizeForMatch2(span.text)]));
+  const grounded = [];
+  for (const raw of parsed.objects) {
+    if (!raw || typeof raw !== "object") continue;
+    const candidate = raw;
+    if (typeof candidate.type !== "string" || !VALID_TYPES.includes(candidate.type)) continue;
+    if (typeof candidate.title !== "string" || !candidate.title.trim()) continue;
+    if (typeof candidate.body !== "string" || !candidate.body.trim()) continue;
+    const ids = candidate.evidenceSpanIds;
+    if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string")) continue;
+    const evidenceSpanIds = [...new Set(ids)].filter((id) => spanTextById.has(id));
+    if (!evidenceSpanIds.length) continue;
+    const quote2 = candidate.supportingQuote;
+    if (typeof quote2 !== "string" || !quote2.trim()) continue;
+    const needle = normalizeForMatch2(quote2);
+    const anchored = needle.length > 0 && evidenceSpanIds.some((id) => spanTextById.get(id)?.includes(needle));
+    if (!anchored) continue;
+    grounded.push({
+      type: candidate.type,
+      title: candidate.title.trim(),
+      body: candidate.body.trim(),
+      evidenceSpanIds,
+      confidence: 0,
+      // LLM self-reported confidence is NOT trusted; the pipeline caps LLM candidates to needs_review
+      reason: quote2.trim()
+      // grounded supportingQuote -> persisted in metadata_json.extraction_reason for audit
+    });
+  }
+  return grounded;
+}
+function createLlmMemoryExtractor(provider, options) {
+  const fallback = options.fallback;
+  return {
+    kind: "llm",
+    model: provider.model,
+    promptVersion: MEMORY_EXTRACTION_LLM_PROMPT_VERSION,
+    async extract(window) {
+      const requestOptions = {};
+      if (options.timeoutMs != null) requestOptions.timeoutMs = options.timeoutMs;
+      let text;
+      try {
+        text = (await provider.complete({ system: MEMORY_EXTRACTION_LLM_SYSTEM, prompt: buildLlmMemoryExtractionPrompt(window), responseFormat: "json" }, requestOptions)).text;
+      } catch {
+        return fallback.extract(window);
+      }
+      let grounded;
+      try {
+        grounded = parseAndGroundMemoryCandidates(text, window);
+      } catch {
+        return fallback.extract(window);
+      }
+      return grounded.length ? grounded : fallback.extract(window);
+    }
+  };
+}
+
+// src/memory/extraction/normalize.ts
+function normalizeMemoryText(title, body) {
+  return `${title} ${body}`.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
+}
+function memoryFingerprint(type, normalizedText) {
+  return contentHash(`${type}:${normalizedText}`);
+}
+function tokenJaccard(a, b) {
+  const left = new Set(a.split(/\s+/).filter(Boolean)), right = new Set(b.split(/\s+/).filter(Boolean));
+  const intersection = [...left].filter((token) => right.has(token)).length;
+  const union = (/* @__PURE__ */ new Set([...left, ...right])).size;
+  return union ? intersection / union : 0;
+}
+
+// src/memory/extraction/confidence.ts
+var vague = /* @__PURE__ */ new Set(["ai", "transcript", "discussion", "project", "thing", "something"]);
+function scoreCandidateConfidence(candidate, spans) {
+  const extractor = Math.max(0, Math.min(1, candidate.confidence));
+  const coverage = Math.min(1, 0.55 + Math.max(0, spans.length - 1) * 0.2);
+  const normalizedTitle = candidate.title.toLowerCase().trim();
+  const specificity = vague.has(normalizedTitle) || normalizedTitle.split(/\s+/).length < 2 ? 0.25 : Math.min(1, 0.55 + normalizedTitle.split(/\s+/).length * 0.06);
+  const typeRule = candidate.type === "quote" ? 1 : candidate.type === "decision" || candidate.type === "action_item" ? 0.9 : 0.8;
+  const finalConfidence = Math.max(0, Math.min(1, 0.45 * extractor + 0.25 * coverage + 0.15 * specificity + 0.15 * typeRule));
+  const confidenceLabel2 = finalConfidence >= 0.8 ? "high" : finalConfidence >= 0.6 ? "medium" : "low";
+  const status = confidenceLabel2 === "low" ? candidate.type === "decision" || candidate.type === "action_item" ? "needs_review" : "weak" : candidate.type === "decision" || candidate.type === "action_item" ? confidenceLabel2 === "high" ? "active" : "needs_review" : "active";
+  return { finalConfidence, confidenceLabel: confidenceLabel2, status };
+}
+
+// src/memory/extraction/validator.ts
+var validTypes = /* @__PURE__ */ new Set(["topic", "quote", "question", "decision", "action_item", "objection", "advice_idea"]);
+var genericTopics = /* @__PURE__ */ new Set(["ai", "transcript", "discussion", "project"]);
+function validateMemoryCandidate(candidate, window) {
+  if (!validTypes.has(candidate.type)) return { ok: false, problem: `Invalid memory object type: ${String(candidate.type)}` };
+  if (!candidate.title?.trim() || !candidate.body?.trim()) return { ok: false, problem: "Candidate title and body are required" };
+  if (candidate.title.length > 300 || candidate.body.length > 4e3) return { ok: false, problem: "Candidate title or body is too long" };
+  if (!candidate.evidenceSpanIds?.length) return { ok: false, problem: "Candidate has no evidence spans" };
+  const spanMap = new Map(window.spans.map((span) => [span.spanId, span]));
+  const evidenceSpans = [...new Set(candidate.evidenceSpanIds)].map((id) => spanMap.get(id));
+  if (evidenceSpans.some((span) => !span)) return { ok: false, problem: "Candidate references a span outside its extraction window" };
+  const validSpans = evidenceSpans.filter((span) => span != null);
+  if (validSpans.some((span) => span.transcriptId !== window.transcriptId)) return { ok: false, problem: "Evidence span belongs to another transcript" };
+  if (candidate.type === "quote" && !validSpans.some((span) => span.text.includes(candidate.body))) return { ok: false, problem: "Quote body is not exact source text" };
+  if (candidate.type === "topic" && genericTopics.has(candidate.title.trim().toLowerCase())) return { ok: false, problem: "Topic is too generic" };
+  if (/\bthe transcript proves\b/i.test(candidate.body) && !validSpans.some((span) => /the transcript proves/i.test(span.text))) {
+    return { ok: false, problem: "Candidate contains an unsupported meta-claim" };
+  }
+  const clamped = { ...candidate, confidence: Math.max(0, Math.min(1, Number.isFinite(candidate.confidence) ? candidate.confidence : 0)) };
+  const normalizedText = normalizeMemoryText(clamped.title, clamped.body);
+  const fingerprint = memoryFingerprint(clamped.type, normalizedText);
+  const scored = scoreCandidateConfidence(clamped, validSpans);
+  return { ok: true, candidate: { ...clamped, transcriptId: window.transcriptId, normalizedText, fingerprint, evidenceSpans: validSpans, ...scored } };
+}
+
+// src/memory/extraction/duplicateDetection.ts
+function findDuplicateMemoryObject(db, candidate) {
+  const spanIds = new Set(candidate.evidenceSpans.map((span) => span.spanId));
+  const overlaps = (id) => db.prepare("SELECT span_id FROM memory_object_evidence WHERE memory_id=?").all(id).some((row) => spanIds.has(row.span_id));
+  const exacts = db.prepare(`SELECT * FROM memory_objects WHERE object_fingerprint=? ORDER BY user_corrected DESC, created_at`).all(candidate.fingerprint);
+  const exact = exacts.find((object) => overlaps(object.id)) ?? exacts[0];
+  if (exact) return { object: exact, kind: "exact", evidenceOverlaps: overlaps(exact.id) };
+  const candidates = db.prepare(`SELECT * FROM memory_objects WHERE extraction_type=? AND normalized_text IS NOT NULL ORDER BY user_corrected DESC, created_at`).all(candidate.type);
+  for (const existing of candidates) {
+    if (tokenJaccard(candidate.normalizedText, existing.normalized_text) >= 0.82) return { object: existing, kind: "near", evidenceOverlaps: overlaps(existing.id) };
+  }
+  return null;
+}
+
+// src/memory/extraction/repository.ts
+var legacyType = { topic: "topic", quote: "quote", question: "question", decision: "decision", action_item: "task", objection: "concept", advice_idea: "concept" };
+var legacyStatus = { active: "active", weak: "needs_review", needs_review: "needs_review" };
+function createExtractionRun(db, input) {
+  if (!db.prepare("SELECT 1 FROM transcripts WHERE id=?").get(input.transcriptId)) throw new NotFoundError(`Transcript not found: ${input.transcriptId}`);
+  const id = createId("xrun_");
+  db.prepare(`INSERT INTO extraction_runs(id,transcript_id,started_at,status,extractor_kind,extractor_model,prompt_version,config_json)
+    VALUES (?,?,?,'running',?,?,?,?)`).run(id, input.transcriptId, now(), input.extractorKind, input.extractorModel ?? null, input.promptVersion, json(input.config));
+  return id;
+}
+function completeExtractionRun(db, id) {
+  db.prepare("UPDATE extraction_runs SET status='completed',completed_at=? WHERE id=?").run(now(), id);
+}
+function failExtractionRun(db, id, error) {
+  db.prepare("UPDATE extraction_runs SET status='failed',completed_at=?,error_message=? WHERE id=?").run(now(), error, id);
+}
+function loadSpansForTranscript(db, transcriptId) {
+  return db.prepare(`SELECT s.transcript_id transcriptId,
+    (SELECT tt.id FROM transcript_turns tt WHERE tt.transcript_id=s.transcript_id AND tt.start_char<=s.start_char AND tt.end_char>=s.end_char ORDER BY tt.turn_index LIMIT 1) turnId,
+    s.id spanId,s.speaker_label speaker,s.start_char startOffset,s.end_char endOffset,s.text,s.start_time_ms startTimeMs,s.end_time_ms endTimeMs
+    FROM transcript_spans s WHERE s.transcript_id=? ORDER BY s.ordinal`).all(transcriptId);
+}
+function buildExtractionWindows(spans, maxWindowChars = 4e3, overlapSpans = 0) {
+  if (!spans.length) return [];
+  const windows = [];
+  let start = 0;
+  while (start < spans.length) {
+    const selected = [];
+    let chars = 0, index = start;
+    while (index < spans.length && (!selected.length || chars + spans[index].text.length <= maxWindowChars)) {
+      selected.push(spans[index]);
+      chars += spans[index].text.length;
+      index++;
+    }
+    const transcriptId = selected[0].transcriptId;
+    windows.push({
+      transcriptId,
+      windowId: stableProvenanceId("win_", `${transcriptId}:${selected.map((span) => span.spanId).join(":")}`),
+      spans: selected,
+      text: selected.map((span) => `[span_id=${span.spanId} speaker=${span.speaker ?? "unknown"}]
+${span.text}`).join("\n\n")
+    });
+    if (index >= spans.length) break;
+    start = Math.max(start + 1, index - Math.max(0, overlapSpans));
+  }
+  return windows;
+}
+function storeMemoryObjectWithEvidence(db, runId, promptVersion, candidate, duplicateOfId = null) {
+  const sortedSpanIds = candidate.evidenceSpans.map((span) => span.spanId).sort();
+  const id = stableProvenanceId("mem_", `${candidate.transcriptId}:${candidate.type}:${candidate.normalizedText}:${sortedSpanIds.join(":")}`);
+  return db.transaction(() => {
+    const timestamp = now();
+    db.prepare(`INSERT OR IGNORE INTO memory_objects(
+      id,type,title,generated_text,normalized_text,status,confidence,created_by,created_at,updated_at,metadata_json,
+      extraction_type,extraction_status,generated_by,generated_at,extraction_run_id,prompt_version,confidence_label,object_fingerprint,duplicate_of_id
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'needs_review',?,?,?,?,?,?,?)`).run(
+      id,
+      legacyType[candidate.type],
+      candidate.title,
+      candidate.body,
+      candidate.normalizedText,
+      legacyStatus[candidate.status],
+      candidate.finalConfidence,
+      "agent",
+      timestamp,
+      timestamp,
+      json({ extraction_reason: candidate.reason ?? null }),
+      candidate.type,
+      "memory_extraction_pipeline",
+      timestamp,
+      runId,
+      promptVersion,
+      candidate.confidenceLabel,
+      candidate.fingerprint,
+      duplicateOfId
+    );
+    for (const [index, span] of candidate.evidenceSpans.entries()) {
+      const evidenceId = stableProvenanceId("mev_", `${id}:${span.spanId}:primary`);
+      db.prepare(`INSERT OR IGNORE INTO memory_object_evidence(
+        id,memory_id,span_id,role,evidence_score,created_at,metadata_json,transcript_id,turn_id,extraction_role
+      ) VALUES (?,?,?,'source',?,?, '{}',?,?,?)`).run(evidenceId, id, span.spanId, candidate.finalConfidence, timestamp, span.transcriptId, span.turnId, index === 0 ? "primary" : "supporting");
+    }
+    db.prepare("UPDATE memory_objects SET extraction_status=? WHERE id=? AND user_corrected=0").run(candidate.status, id);
+    return db.prepare("SELECT * FROM memory_objects WHERE id=?").get(id);
+  })();
+}
+function markDuplicate(db, candidate, existingObjectId, runId, promptVersion) {
+  return storeMemoryObjectWithEvidence(db, runId, promptVersion, { ...candidate, status: "needs_review" }, existingObjectId);
+}
+
+// src/memory/extraction/pipeline.ts
+async function extractMemoryObjectsForTranscript(db, options) {
+  const promptVersion = options.extractor.promptVersion ?? MEMORY_EXTRACTION_PROMPT_VERSION;
+  const runId = createExtractionRun(db, {
+    transcriptId: options.transcriptId,
+    extractorKind: options.extractor.kind ?? "test",
+    extractorModel: options.extractor.model,
+    promptVersion,
+    config: { maxWindowChars: options.maxWindowChars ?? 4e3, overlapSpans: options.overlapSpans ?? 0, force: options.force ?? false }
+  });
+  const result = {
+    extractionRunId: runId,
+    transcriptId: options.transcriptId,
+    windowsProcessed: 0,
+    candidatesExtracted: 0,
+    objectsInserted: 0,
+    duplicatesSkipped: 0,
+    weakObjectsInserted: 0,
+    rejectedCandidates: 0,
+    errors: []
+  };
+  try {
+    const spans = loadSpansForTranscript(db, options.transcriptId);
+    const windows = buildExtractionWindows(spans, options.maxWindowChars, options.overlapSpans);
+    for (const window of windows) {
+      let candidates;
+      try {
+        candidates = await options.extractor.extract(window);
+        result.windowsProcessed++;
+      } catch (error) {
+        result.errors.push(`Window ${window.windowId}: ${error instanceof Error ? error.message : String(error)}`);
+        continue;
+      }
+      result.candidatesExtracted += candidates.length;
+      for (const extracted of candidates) {
+        const validation = validateMemoryCandidate(extracted, window);
+        if (!validation.ok) {
+          result.rejectedCandidates++;
+          result.errors.push(validation.problem);
+          continue;
+        }
+        const candidate = options.extractor.kind === "llm" ? { ...validation.candidate, status: "needs_review" } : validation.candidate;
+        const duplicate = findDuplicateMemoryObject(db, candidate);
+        if (duplicate) {
+          const rejected = duplicate.object.extraction_status === "rejected";
+          if (!duplicate.evidenceOverlaps && candidate.confidenceLabel === "high" && !rejected) {
+            markDuplicate(db, candidate, duplicate.object.id, runId, promptVersion);
+            result.objectsInserted++;
+            result.duplicatesSkipped++;
+            result.weakObjectsInserted++;
+            continue;
+          }
+          if (!options.force || duplicate.object.user_corrected === 1 || !rejected) {
+            result.duplicatesSkipped++;
+            continue;
+          }
+        }
+        try {
+          storeMemoryObjectWithEvidence(db, runId, promptVersion, candidate);
+          result.objectsInserted++;
+          if (candidate.status !== "active") result.weakObjectsInserted++;
+        } catch (error) {
+          result.rejectedCandidates++;
+          result.errors.push(`Store candidate "${candidate.title}": ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+    }
+    if (windows.length > 0 && result.windowsProcessed === 0) failExtractionRun(db, runId, result.errors.join("\n") || "No extraction windows completed");
+    else completeExtractionRun(db, runId);
+    return result;
+  } catch (error) {
+    failExtractionRun(db, runId, error instanceof Error ? error.message : String(error));
+    throw error;
+  }
+}
+
 // src/retrieval/embeddingStore.ts
 function validateVector(vector, dimensions) {
   if (!vector.length || vector.length !== dimensions || vector.some((value) => !Number.isFinite(value))) {
@@ -3349,54 +3700,6 @@ function storeEmbeddingVector(db, input) {
     VALUES (?,?,?,?,?,?,?,?,?,?)
     ON CONFLICT(target_type,target_id,embedding_provider,embedding_model) DO UPDATE SET embedding_dim=excluded.embedding_dim,content_hash=excluded.content_hash,vector_json=excluded.vector_json,updated_at=excluded.updated_at`).run(stableProvenanceId("semb_", `${input.targetType}:${input.targetId}:${input.provider.name}:${input.provider.model}`), input.targetType, input.targetId, input.provider.name, input.provider.model, input.provider.dimensions, input.contentHash, JSON.stringify(vector), timestamp, timestamp);
   return true;
-}
-
-// src/retrieval/filters.ts
-function inList(value, list, insensitive = false) {
-  if (!list?.length) return true;
-  if (value == null) return false;
-  return insensitive ? list.some((item) => item.toLowerCase() === value.toLowerCase()) : list.includes(value);
-}
-function validDate(value) {
-  if (!value) return null;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-function documentMatchesFilters(row, filters = {}) {
-  if (!inList(row.transcript_id, filters.transcriptIds) || !inList(row.source_id, filters.sourceIds) || !inList(row.speaker_id, filters.speakerIds) || !inList(row.speaker_name, filters.speakerNames, true) || !inList(row.memory_type, filters.memoryTypes) || !inList(row.memory_status, filters.memoryStatuses)) return false;
-  if (filters.minEvidenceScore != null && row.evidence_score < filters.minEvidenceScore) return false;
-  if (filters.includeGenerated === false && row.target_type !== "transcript_span") return false;
-  if (row.target_type === "memory_object" && filters.includeUnsupportedMemory !== true) {
-    if (row.memory_status === "rejected" || row.memory_status === "superseded" || JSON.parse(row.evidence_pointer_ids_json).length === 0 && JSON.parse(row.source_pointer_ids_json).length === 0) return false;
-  }
-  const created = validDate(row.created_at ?? void 0), updated = validDate(row.updated_at ?? void 0);
-  const createdAfter = validDate(filters.createdAfter), createdBefore = validDate(filters.createdBefore);
-  const updatedAfter = validDate(filters.updatedAfter), updatedBefore = validDate(filters.updatedBefore);
-  if (createdAfter != null && (created == null || created < createdAfter)) return false;
-  if (createdBefore != null && (created == null || created > createdBefore)) return false;
-  if (updatedAfter != null && (updated == null || updated < updatedAfter)) return false;
-  if (updatedBefore != null && (updated == null || updated > updatedBefore)) return false;
-  return true;
-}
-function rowToCandidate(row) {
-  return {
-    targetType: row.target_type,
-    targetId: row.target_id,
-    transcriptId: row.transcript_id ?? void 0,
-    sourceId: row.source_id ?? void 0,
-    speakerId: row.speaker_id ?? void 0,
-    speakerName: row.speaker_name ?? void 0,
-    title: row.title ?? void 0,
-    textPreview: row.search_text.slice(0, 500),
-    createdAt: row.created_at ?? void 0,
-    updatedAt: row.updated_at ?? void 0,
-    evidenceScore: row.evidence_score,
-    finalScore: 0,
-    matchReasons: [],
-    evidencePointerIds: JSON.parse(row.evidence_pointer_ids_json),
-    sourcePointerIds: JSON.parse(row.source_pointer_ids_json),
-    supportRole: row.support_role
-  };
 }
 
 // src/retrieval/indexer.ts
@@ -3518,6 +3821,73 @@ ${doc.search_text}`.trim(), hash = contentHash(text);
     }
   }
   return { indexed, skipped, embedded, errors };
+}
+
+// src/retrieval/transcriptIndex.ts
+var mapEvidenceRole = (role) => role === "contradicts" ? "opposition" : role === "qualifies" ? "conditional" : role === "context" ? "neutral" : "support";
+async function indexTranscriptForRetrieval(db, transcriptId) {
+  const repo = createMemoryObjectsRepo(db);
+  const memoryIds = db.prepare("SELECT DISTINCT memory_id FROM memory_object_evidence WHERE transcript_id=?").all(transcriptId);
+  let evidencePointersBridged = 0;
+  for (const { memory_id } of memoryIds) {
+    const canonical = repo.getCanonicalMemoryObject(memory_id);
+    if (!canonical || !isUsableAsEvidence(canonical)) continue;
+    const rows = db.prepare("SELECT span_id, role, evidence_score, transcript_id FROM memory_object_evidence WHERE memory_id=? AND transcript_id=?").all(memory_id, transcriptId);
+    for (const row of rows) {
+      linkMemoryObjectToSpan(db, { memoryObjectId: memory_id, transcriptId: row.transcript_id, spanId: row.span_id, evidenceRole: mapEvidenceRole(row.role), confidence: row.evidence_score });
+      evidencePointersBridged++;
+    }
+  }
+  const index = await rebuildRetrievalIndex(db);
+  return { transcriptId, evidencePointersBridged, indexed: index.indexed, skipped: index.skipped };
+}
+
+// src/retrieval/filters.ts
+function inList(value, list, insensitive = false) {
+  if (!list?.length) return true;
+  if (value == null) return false;
+  return insensitive ? list.some((item) => item.toLowerCase() === value.toLowerCase()) : list.includes(value);
+}
+function validDate(value) {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+function documentMatchesFilters(row, filters = {}) {
+  if (!inList(row.transcript_id, filters.transcriptIds) || !inList(row.source_id, filters.sourceIds) || !inList(row.speaker_id, filters.speakerIds) || !inList(row.speaker_name, filters.speakerNames, true) || !inList(row.memory_type, filters.memoryTypes) || !inList(row.memory_status, filters.memoryStatuses)) return false;
+  if (filters.minEvidenceScore != null && row.evidence_score < filters.minEvidenceScore) return false;
+  if (filters.includeGenerated === false && row.target_type !== "transcript_span") return false;
+  if (row.target_type === "memory_object" && filters.includeUnsupportedMemory !== true) {
+    if (row.memory_status === "rejected" || row.memory_status === "superseded" || JSON.parse(row.evidence_pointer_ids_json).length === 0 && JSON.parse(row.source_pointer_ids_json).length === 0) return false;
+  }
+  const created = validDate(row.created_at ?? void 0), updated = validDate(row.updated_at ?? void 0);
+  const createdAfter = validDate(filters.createdAfter), createdBefore = validDate(filters.createdBefore);
+  const updatedAfter = validDate(filters.updatedAfter), updatedBefore = validDate(filters.updatedBefore);
+  if (createdAfter != null && (created == null || created < createdAfter)) return false;
+  if (createdBefore != null && (created == null || created > createdBefore)) return false;
+  if (updatedAfter != null && (updated == null || updated < updatedAfter)) return false;
+  if (updatedBefore != null && (updated == null || updated > updatedBefore)) return false;
+  return true;
+}
+function rowToCandidate(row) {
+  return {
+    targetType: row.target_type,
+    targetId: row.target_id,
+    transcriptId: row.transcript_id ?? void 0,
+    sourceId: row.source_id ?? void 0,
+    speakerId: row.speaker_id ?? void 0,
+    speakerName: row.speaker_name ?? void 0,
+    title: row.title ?? void 0,
+    textPreview: row.search_text.slice(0, 500),
+    createdAt: row.created_at ?? void 0,
+    updatedAt: row.updated_at ?? void 0,
+    evidenceScore: row.evidence_score,
+    finalScore: 0,
+    matchReasons: [],
+    evidencePointerIds: JSON.parse(row.evidence_pointer_ids_json),
+    sourcePointerIds: JSON.parse(row.source_pointer_ids_json),
+    supportRole: row.support_role
+  };
 }
 
 // src/retrieval/keywordSearch.ts
@@ -3930,354 +4300,6 @@ var LocalDeterministicLlmProvider = class {
     return { provider: this.id, model: this.model, text, finishReason: "stop" };
   }
 };
-
-// src/memory/extraction/prompt.ts
-var MEMORY_EXTRACTION_PROMPT_VERSION = "mvp-memory-extraction-v1";
-var MEMORY_EXTRACTION_LLM_PROMPT_VERSION = "mvp-memory-extraction-llm-v1";
-var MEMORY_EXTRACTION_LLM_SYSTEM = "You extract source-backed memory objects strictly from the transcript spans provided. Use ONLY the listed spans; never invent facts or cite span_ids that are not listed. Every object must include a supportingQuote copied verbatim from one of the spans it cites. Prefer fewer high-quality objects. Respond with JSON only.";
-function buildLlmMemoryExtractionPrompt(window) {
-  return [
-    'Extract memory objects as JSON: {"objects":[{"type":"topic|quote|question|decision|action_item|objection|advice_idea","title":"...","body":"...","evidenceSpanIds":["<span_id>"],"supportingQuote":"<verbatim substring of a cited span>"}]}',
-    'Cite only the span_ids below. Each object must include a supportingQuote copied verbatim from one cited span. If nothing is well supported, return {"objects":[]}.',
-    "",
-    "Spans:",
-    window.text
-  ].join("\n");
-}
-
-// src/memory/extraction/extractor.ts
-var DeterministicRuleExtractor = class {
-  kind = "deterministic";
-  model = null;
-  async extract(window) {
-    const objects = [];
-    for (const span of window.spans) {
-      const text = span.text.trim();
-      const lower = text.toLowerCase();
-      const body = text.replace(/^[^:]{1,100}:\s*/, "");
-      const add = (type, title, confidence) => objects.push({ type, title, body, evidenceSpanIds: [span.spanId], confidence, reason: "Deterministic rule match" });
-      if (/\b(decided|decision|will use|must use|source of truth)\b/i.test(text)) add("decision", body.slice(0, 100), 0.95);
-      if (/\b(todo|action item|need to|should implement|must add)\b/i.test(text)) add("action_item", body.slice(0, 100), 0.85);
-      if (/\?/.test(text)) add("question", body.slice(0, 100), 0.85);
-      if (/\b(but|however|concern|object|blocker|doubt)\b/i.test(text)) add("objection", body.slice(0, 100), 0.8);
-      if (/\b(should|recommend|idea|could use|suggest)\b/i.test(text) && !lower.includes("should implement")) add("advice_idea", body.slice(0, 100), 0.75);
-      if (/\b(topic:)\b/i.test(text)) add("topic", body.replace(/^topic:\s*/i, "").slice(0, 100), 0.8);
-      if (/\bquote:\s*/i.test(text)) {
-        const quote2 = text.replace(/^.*?\bquote:\s*/i, "");
-        objects.push({ type: "quote", title: quote2.slice(0, 100), body: quote2, evidenceSpanIds: [span.spanId], confidence: 0.9, reason: "Explicit quote marker" });
-      }
-    }
-    return objects;
-  }
-};
-
-// src/memory/extraction/llmExtractor.ts
-var MemoryExtractionError = class extends Error {
-  constructor(message, options) {
-    super(message, options);
-    this.name = "MemoryExtractionError";
-  }
-};
-var VALID_TYPES = ["topic", "quote", "question", "decision", "action_item", "objection", "advice_idea"];
-var normalizeForMatch2 = (value) => value.toLowerCase().replace(/\s+/g, " ").trim();
-function parseAndGroundMemoryCandidates(rawText, window) {
-  let parsed;
-  try {
-    parsed = JSON.parse(rawText);
-  } catch {
-    throw new MemoryExtractionError("LLM memory extraction output was not valid JSON");
-  }
-  if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.objects)) {
-    throw new MemoryExtractionError("LLM memory extraction output did not contain an objects array");
-  }
-  const spanTextById = new Map(window.spans.map((span) => [span.spanId, normalizeForMatch2(span.text)]));
-  const grounded = [];
-  for (const raw of parsed.objects) {
-    if (!raw || typeof raw !== "object") continue;
-    const candidate = raw;
-    if (typeof candidate.type !== "string" || !VALID_TYPES.includes(candidate.type)) continue;
-    if (typeof candidate.title !== "string" || !candidate.title.trim()) continue;
-    if (typeof candidate.body !== "string" || !candidate.body.trim()) continue;
-    const ids = candidate.evidenceSpanIds;
-    if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string")) continue;
-    const evidenceSpanIds = [...new Set(ids)].filter((id) => spanTextById.has(id));
-    if (!evidenceSpanIds.length) continue;
-    const quote2 = candidate.supportingQuote;
-    if (typeof quote2 !== "string" || !quote2.trim()) continue;
-    const needle = normalizeForMatch2(quote2);
-    const anchored = needle.length > 0 && evidenceSpanIds.some((id) => spanTextById.get(id)?.includes(needle));
-    if (!anchored) continue;
-    grounded.push({
-      type: candidate.type,
-      title: candidate.title.trim(),
-      body: candidate.body.trim(),
-      evidenceSpanIds,
-      confidence: 0,
-      // LLM self-reported confidence is NOT trusted; the pipeline caps LLM candidates to needs_review
-      reason: quote2.trim()
-      // grounded supportingQuote -> persisted in metadata_json.extraction_reason for audit
-    });
-  }
-  return grounded;
-}
-function createLlmMemoryExtractor(provider, options) {
-  const fallback = options.fallback;
-  return {
-    kind: "llm",
-    model: provider.model,
-    promptVersion: MEMORY_EXTRACTION_LLM_PROMPT_VERSION,
-    async extract(window) {
-      const requestOptions = {};
-      if (options.timeoutMs != null) requestOptions.timeoutMs = options.timeoutMs;
-      let text;
-      try {
-        text = (await provider.complete({ system: MEMORY_EXTRACTION_LLM_SYSTEM, prompt: buildLlmMemoryExtractionPrompt(window), responseFormat: "json" }, requestOptions)).text;
-      } catch {
-        return fallback.extract(window);
-      }
-      let grounded;
-      try {
-        grounded = parseAndGroundMemoryCandidates(text, window);
-      } catch {
-        return fallback.extract(window);
-      }
-      return grounded.length ? grounded : fallback.extract(window);
-    }
-  };
-}
-
-// src/memory/extraction/normalize.ts
-function normalizeMemoryText(title, body) {
-  return `${title} ${body}`.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
-}
-function memoryFingerprint(type, normalizedText) {
-  return contentHash(`${type}:${normalizedText}`);
-}
-function tokenJaccard(a, b) {
-  const left = new Set(a.split(/\s+/).filter(Boolean)), right = new Set(b.split(/\s+/).filter(Boolean));
-  const intersection = [...left].filter((token) => right.has(token)).length;
-  const union = (/* @__PURE__ */ new Set([...left, ...right])).size;
-  return union ? intersection / union : 0;
-}
-
-// src/memory/extraction/confidence.ts
-var vague = /* @__PURE__ */ new Set(["ai", "transcript", "discussion", "project", "thing", "something"]);
-function scoreCandidateConfidence(candidate, spans) {
-  const extractor = Math.max(0, Math.min(1, candidate.confidence));
-  const coverage = Math.min(1, 0.55 + Math.max(0, spans.length - 1) * 0.2);
-  const normalizedTitle = candidate.title.toLowerCase().trim();
-  const specificity = vague.has(normalizedTitle) || normalizedTitle.split(/\s+/).length < 2 ? 0.25 : Math.min(1, 0.55 + normalizedTitle.split(/\s+/).length * 0.06);
-  const typeRule = candidate.type === "quote" ? 1 : candidate.type === "decision" || candidate.type === "action_item" ? 0.9 : 0.8;
-  const finalConfidence = Math.max(0, Math.min(1, 0.45 * extractor + 0.25 * coverage + 0.15 * specificity + 0.15 * typeRule));
-  const confidenceLabel2 = finalConfidence >= 0.8 ? "high" : finalConfidence >= 0.6 ? "medium" : "low";
-  const status = confidenceLabel2 === "low" ? candidate.type === "decision" || candidate.type === "action_item" ? "needs_review" : "weak" : candidate.type === "decision" || candidate.type === "action_item" ? confidenceLabel2 === "high" ? "active" : "needs_review" : "active";
-  return { finalConfidence, confidenceLabel: confidenceLabel2, status };
-}
-
-// src/memory/extraction/validator.ts
-var validTypes = /* @__PURE__ */ new Set(["topic", "quote", "question", "decision", "action_item", "objection", "advice_idea"]);
-var genericTopics = /* @__PURE__ */ new Set(["ai", "transcript", "discussion", "project"]);
-function validateMemoryCandidate(candidate, window) {
-  if (!validTypes.has(candidate.type)) return { ok: false, problem: `Invalid memory object type: ${String(candidate.type)}` };
-  if (!candidate.title?.trim() || !candidate.body?.trim()) return { ok: false, problem: "Candidate title and body are required" };
-  if (candidate.title.length > 300 || candidate.body.length > 4e3) return { ok: false, problem: "Candidate title or body is too long" };
-  if (!candidate.evidenceSpanIds?.length) return { ok: false, problem: "Candidate has no evidence spans" };
-  const spanMap = new Map(window.spans.map((span) => [span.spanId, span]));
-  const evidenceSpans = [...new Set(candidate.evidenceSpanIds)].map((id) => spanMap.get(id));
-  if (evidenceSpans.some((span) => !span)) return { ok: false, problem: "Candidate references a span outside its extraction window" };
-  const validSpans = evidenceSpans.filter((span) => span != null);
-  if (validSpans.some((span) => span.transcriptId !== window.transcriptId)) return { ok: false, problem: "Evidence span belongs to another transcript" };
-  if (candidate.type === "quote" && !validSpans.some((span) => span.text.includes(candidate.body))) return { ok: false, problem: "Quote body is not exact source text" };
-  if (candidate.type === "topic" && genericTopics.has(candidate.title.trim().toLowerCase())) return { ok: false, problem: "Topic is too generic" };
-  if (/\bthe transcript proves\b/i.test(candidate.body) && !validSpans.some((span) => /the transcript proves/i.test(span.text))) {
-    return { ok: false, problem: "Candidate contains an unsupported meta-claim" };
-  }
-  const clamped = { ...candidate, confidence: Math.max(0, Math.min(1, Number.isFinite(candidate.confidence) ? candidate.confidence : 0)) };
-  const normalizedText = normalizeMemoryText(clamped.title, clamped.body);
-  const fingerprint = memoryFingerprint(clamped.type, normalizedText);
-  const scored = scoreCandidateConfidence(clamped, validSpans);
-  return { ok: true, candidate: { ...clamped, transcriptId: window.transcriptId, normalizedText, fingerprint, evidenceSpans: validSpans, ...scored } };
-}
-
-// src/memory/extraction/duplicateDetection.ts
-function findDuplicateMemoryObject(db, candidate) {
-  const spanIds = new Set(candidate.evidenceSpans.map((span) => span.spanId));
-  const overlaps = (id) => db.prepare("SELECT span_id FROM memory_object_evidence WHERE memory_id=?").all(id).some((row) => spanIds.has(row.span_id));
-  const exacts = db.prepare(`SELECT * FROM memory_objects WHERE object_fingerprint=? ORDER BY user_corrected DESC, created_at`).all(candidate.fingerprint);
-  const exact = exacts.find((object) => overlaps(object.id)) ?? exacts[0];
-  if (exact) return { object: exact, kind: "exact", evidenceOverlaps: overlaps(exact.id) };
-  const candidates = db.prepare(`SELECT * FROM memory_objects WHERE extraction_type=? AND normalized_text IS NOT NULL ORDER BY user_corrected DESC, created_at`).all(candidate.type);
-  for (const existing of candidates) {
-    if (tokenJaccard(candidate.normalizedText, existing.normalized_text) >= 0.82) return { object: existing, kind: "near", evidenceOverlaps: overlaps(existing.id) };
-  }
-  return null;
-}
-
-// src/memory/extraction/repository.ts
-var legacyType = { topic: "topic", quote: "quote", question: "question", decision: "decision", action_item: "task", objection: "concept", advice_idea: "concept" };
-var legacyStatus = { active: "active", weak: "needs_review", needs_review: "needs_review" };
-function createExtractionRun(db, input) {
-  if (!db.prepare("SELECT 1 FROM transcripts WHERE id=?").get(input.transcriptId)) throw new NotFoundError(`Transcript not found: ${input.transcriptId}`);
-  const id = createId("xrun_");
-  db.prepare(`INSERT INTO extraction_runs(id,transcript_id,started_at,status,extractor_kind,extractor_model,prompt_version,config_json)
-    VALUES (?,?,?,'running',?,?,?,?)`).run(id, input.transcriptId, now(), input.extractorKind, input.extractorModel ?? null, input.promptVersion, json(input.config));
-  return id;
-}
-function completeExtractionRun(db, id) {
-  db.prepare("UPDATE extraction_runs SET status='completed',completed_at=? WHERE id=?").run(now(), id);
-}
-function failExtractionRun(db, id, error) {
-  db.prepare("UPDATE extraction_runs SET status='failed',completed_at=?,error_message=? WHERE id=?").run(now(), error, id);
-}
-function loadSpansForTranscript(db, transcriptId) {
-  return db.prepare(`SELECT s.transcript_id transcriptId,
-    (SELECT tt.id FROM transcript_turns tt WHERE tt.transcript_id=s.transcript_id AND tt.start_char<=s.start_char AND tt.end_char>=s.end_char ORDER BY tt.turn_index LIMIT 1) turnId,
-    s.id spanId,s.speaker_label speaker,s.start_char startOffset,s.end_char endOffset,s.text,s.start_time_ms startTimeMs,s.end_time_ms endTimeMs
-    FROM transcript_spans s WHERE s.transcript_id=? ORDER BY s.ordinal`).all(transcriptId);
-}
-function buildExtractionWindows(spans, maxWindowChars = 4e3, overlapSpans = 0) {
-  if (!spans.length) return [];
-  const windows = [];
-  let start = 0;
-  while (start < spans.length) {
-    const selected = [];
-    let chars = 0, index = start;
-    while (index < spans.length && (!selected.length || chars + spans[index].text.length <= maxWindowChars)) {
-      selected.push(spans[index]);
-      chars += spans[index].text.length;
-      index++;
-    }
-    const transcriptId = selected[0].transcriptId;
-    windows.push({
-      transcriptId,
-      windowId: stableProvenanceId("win_", `${transcriptId}:${selected.map((span) => span.spanId).join(":")}`),
-      spans: selected,
-      text: selected.map((span) => `[span_id=${span.spanId} speaker=${span.speaker ?? "unknown"}]
-${span.text}`).join("\n\n")
-    });
-    if (index >= spans.length) break;
-    start = Math.max(start + 1, index - Math.max(0, overlapSpans));
-  }
-  return windows;
-}
-function storeMemoryObjectWithEvidence(db, runId, promptVersion, candidate, duplicateOfId = null) {
-  const sortedSpanIds = candidate.evidenceSpans.map((span) => span.spanId).sort();
-  const id = stableProvenanceId("mem_", `${candidate.transcriptId}:${candidate.type}:${candidate.normalizedText}:${sortedSpanIds.join(":")}`);
-  return db.transaction(() => {
-    const timestamp = now();
-    db.prepare(`INSERT OR IGNORE INTO memory_objects(
-      id,type,title,generated_text,normalized_text,status,confidence,created_by,created_at,updated_at,metadata_json,
-      extraction_type,extraction_status,generated_by,generated_at,extraction_run_id,prompt_version,confidence_label,object_fingerprint,duplicate_of_id
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'needs_review',?,?,?,?,?,?,?)`).run(
-      id,
-      legacyType[candidate.type],
-      candidate.title,
-      candidate.body,
-      candidate.normalizedText,
-      legacyStatus[candidate.status],
-      candidate.finalConfidence,
-      "agent",
-      timestamp,
-      timestamp,
-      json({ extraction_reason: candidate.reason ?? null }),
-      candidate.type,
-      "memory_extraction_pipeline",
-      timestamp,
-      runId,
-      promptVersion,
-      candidate.confidenceLabel,
-      candidate.fingerprint,
-      duplicateOfId
-    );
-    for (const [index, span] of candidate.evidenceSpans.entries()) {
-      const evidenceId = stableProvenanceId("mev_", `${id}:${span.spanId}:primary`);
-      db.prepare(`INSERT OR IGNORE INTO memory_object_evidence(
-        id,memory_id,span_id,role,evidence_score,created_at,metadata_json,transcript_id,turn_id,extraction_role
-      ) VALUES (?,?,?,'source',?,?, '{}',?,?,?)`).run(evidenceId, id, span.spanId, candidate.finalConfidence, timestamp, span.transcriptId, span.turnId, index === 0 ? "primary" : "supporting");
-    }
-    db.prepare("UPDATE memory_objects SET extraction_status=? WHERE id=? AND user_corrected=0").run(candidate.status, id);
-    return db.prepare("SELECT * FROM memory_objects WHERE id=?").get(id);
-  })();
-}
-function markDuplicate(db, candidate, existingObjectId, runId, promptVersion) {
-  return storeMemoryObjectWithEvidence(db, runId, promptVersion, { ...candidate, status: "needs_review" }, existingObjectId);
-}
-
-// src/memory/extraction/pipeline.ts
-async function extractMemoryObjectsForTranscript(db, options) {
-  const promptVersion = options.extractor.promptVersion ?? MEMORY_EXTRACTION_PROMPT_VERSION;
-  const runId = createExtractionRun(db, {
-    transcriptId: options.transcriptId,
-    extractorKind: options.extractor.kind ?? "test",
-    extractorModel: options.extractor.model,
-    promptVersion,
-    config: { maxWindowChars: options.maxWindowChars ?? 4e3, overlapSpans: options.overlapSpans ?? 0, force: options.force ?? false }
-  });
-  const result = {
-    extractionRunId: runId,
-    transcriptId: options.transcriptId,
-    windowsProcessed: 0,
-    candidatesExtracted: 0,
-    objectsInserted: 0,
-    duplicatesSkipped: 0,
-    weakObjectsInserted: 0,
-    rejectedCandidates: 0,
-    errors: []
-  };
-  try {
-    const spans = loadSpansForTranscript(db, options.transcriptId);
-    const windows = buildExtractionWindows(spans, options.maxWindowChars, options.overlapSpans);
-    for (const window of windows) {
-      let candidates;
-      try {
-        candidates = await options.extractor.extract(window);
-        result.windowsProcessed++;
-      } catch (error) {
-        result.errors.push(`Window ${window.windowId}: ${error instanceof Error ? error.message : String(error)}`);
-        continue;
-      }
-      result.candidatesExtracted += candidates.length;
-      for (const extracted of candidates) {
-        const validation = validateMemoryCandidate(extracted, window);
-        if (!validation.ok) {
-          result.rejectedCandidates++;
-          result.errors.push(validation.problem);
-          continue;
-        }
-        const candidate = options.extractor.kind === "llm" ? { ...validation.candidate, status: "needs_review" } : validation.candidate;
-        const duplicate = findDuplicateMemoryObject(db, candidate);
-        if (duplicate) {
-          const rejected = duplicate.object.extraction_status === "rejected";
-          if (!duplicate.evidenceOverlaps && candidate.confidenceLabel === "high" && !rejected) {
-            markDuplicate(db, candidate, duplicate.object.id, runId, promptVersion);
-            result.objectsInserted++;
-            result.duplicatesSkipped++;
-            result.weakObjectsInserted++;
-            continue;
-          }
-          if (!options.force || duplicate.object.user_corrected === 1 || !rejected) {
-            result.duplicatesSkipped++;
-            continue;
-          }
-        }
-        try {
-          storeMemoryObjectWithEvidence(db, runId, promptVersion, candidate);
-          result.objectsInserted++;
-          if (candidate.status !== "active") result.weakObjectsInserted++;
-        } catch (error) {
-          result.rejectedCandidates++;
-          result.errors.push(`Store candidate "${candidate.title}": ${error instanceof Error ? error.message : String(error)}`);
-        }
-      }
-    }
-    if (windows.length > 0 && result.windowsProcessed === 0) failExtractionRun(db, runId, result.errors.join("\n") || "No extraction windows completed");
-    else completeExtractionRun(db, runId);
-    return result;
-  } catch (error) {
-    failExtractionRun(db, runId, error instanceof Error ? error.message : String(error));
-    throw error;
-  }
-}
 
 // src/obsidian/llmSettings.ts
 function externalLlmConfigFromSettings(settings) {
@@ -5300,6 +5322,11 @@ function createSqliteFrontendApi(db, options = {}) {
           if (runStatus?.status !== "completed") warning = warning ?? "Transcript imported, but automatic memory extraction did not complete.";
         } catch {
           warning = warning ?? "Transcript imported, but automatic memory extraction did not complete.";
+        }
+        try {
+          await indexTranscriptForRetrieval(db, result.transcriptId);
+        } catch {
+          warning = warning ?? "Transcript imported, but automatic memory indexing did not complete.";
         }
       }
       return { transcriptId: result.transcriptId, status: result.status, warning };

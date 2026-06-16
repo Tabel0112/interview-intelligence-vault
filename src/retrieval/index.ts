@@ -3,6 +3,7 @@ export * from "./embeddingProvider.js";
 export * from "./embeddingSpace.js";
 export * from "./externalEmbeddingProvider.js";
 export * from "./reindexStatus.js";
+export * from "./transcriptIndex.js";
 export * from "./embeddingStore.js";
 export * from "./filters.js";
 export * from "./indexer.js";
