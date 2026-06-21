@@ -3,6 +3,7 @@ import { openDatabase, type SqliteDatabase } from "../src/db/index.js";
 import { askAI, createDatabaseAskAIDependencies } from "../src/ask-ai/index.js";
 import { createSqliteFrontendApi, renderRoute, type FrontendApi } from "../src/frontend/index.js";
 import { createLlmMemoryExtractor, DeterministicRuleExtractor } from "../src/memory/index.js";
+import { searchMemoryObjects } from "../src/retrieval/index.js";
 import { resolveEvidencePointer } from "../src/provenance/index.js";
 import { MockLlmProvider } from "../src/llm/testing.js";
 import type { LlmCompletion, LlmRequest } from "../src/llm/index.js";
@@ -70,15 +71,31 @@ describe("review approval -> evidence bridge / retrieval indexing", () => {
     const { api, memoryId } = await seedNeedsReview();
     await api.reviewMemoryObject(memoryId, "approve");
     expect(count(db, "evidence_pointers WHERE target_type='memory_object' AND target_id=?", memoryId)).toBeGreaterThan(0);
+    // After approval the memory is a discoverable memory_object retrieval document.
+    expect(count(db, "retrieval_documents WHERE target_type='memory_object' AND target_id=?", memoryId)).toBe(1);
+    expect((await searchMemoryObjects(db, { query: "SQLite source of truth" })).some((c) => c.targetId === memoryId)).toBe(true);
 
     const result = await api.reviewMemoryObject(memoryId, "reject");
     expect(result.status).toBe("rejected");
     expect((db.prepare("SELECT extraction_status FROM memory_objects WHERE id=?").get(memoryId) as { extraction_status: string }).extraction_status).toBe("rejected");
     expect(count(db, "evidence_pointers WHERE target_type='memory_object' AND target_id=?", memoryId)).toBe(0);
     expect(count(db, "retrieval_documents WHERE target_type='evidence_pointer'")).toBe(0); // cascade cleanup trigger
+    // The memory_object retrieval doc and its index rows are removed; it is no longer searchable.
+    expect(count(db, "retrieval_documents WHERE target_type='memory_object' AND target_id=?", memoryId)).toBe(0);
+    expect(count(db, "retrieval_index_status WHERE target_type='memory_object' AND target_id=?", memoryId)).toBe(0);
+    expect(count(db, "search_embeddings WHERE target_type='memory_object' AND target_id=?", memoryId)).toBe(0);
+    expect((await searchMemoryObjects(db, { query: "SQLite source of truth" })).some((c) => c.targetId === memoryId)).toBe(false);
     expect((await askSourceOfTruth()).notEnoughEvidence).toBe(true);
-    // Legacy evidence rows are preserved.
+    // Legacy evidence rows + source pointers are preserved for audit.
     expect(count(db, "memory_object_evidence WHERE memory_id=?", memoryId)).toBeGreaterThan(0);
+    expect(count(db, "source_pointers")).toBeGreaterThan(0);
+
+    // Idempotent: a second reject is a no-op; re-approval re-indexes the memory cleanly.
+    await api.reviewMemoryObject(memoryId, "reject");
+    expect(count(db, "retrieval_documents WHERE target_type='memory_object' AND target_id=?", memoryId)).toBe(0);
+    await api.reviewMemoryObject(memoryId, "approve");
+    expect(count(db, "retrieval_documents WHERE target_type='memory_object' AND target_id=?", memoryId)).toBe(1);
+    expect((await searchMemoryObjects(db, { query: "SQLite source of truth" })).some((c) => c.targetId === memoryId)).toBe(true);
   });
 
   it("is idempotent for repeated approve and reject, and leaks no secret in the result", async () => {

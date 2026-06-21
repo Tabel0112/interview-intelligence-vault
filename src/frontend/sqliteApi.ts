@@ -5,7 +5,7 @@ import { createCorrectionsRepo } from "../db/repositories/correctionsRepo.js";
 import { createMemoryObjectsRepo } from "../db/repositories/memoryObjectsRepo.js";
 import { importTranscript } from "../ingest/index.js";
 import { extractMemoryObjectsForTranscript, isStrongMemoryObject, type MemoryExtractor } from "../memory/index.js";
-import { indexTranscriptForRetrieval } from "../retrieval/index.js";
+import { indexTranscriptForRetrieval, removeRetrievalDocument } from "../retrieval/index.js";
 import { buildObsidianGraph } from "../obsidian/index.js";
 import { resolveEvidencePointer, type EvidencePointer } from "../provenance/index.js";
 import { routeHref } from "./router.js";
@@ -336,6 +336,9 @@ export function createSqliteFrontendApi(
       corrections.applyMemoryObjectCorrection(memoryId, { correction_type: "reject", new_value: { status: "rejected" } });
       try {
         db.prepare("DELETE FROM evidence_pointers WHERE target_type='memory_object' AND target_id=?").run(memoryId);
+        // Remove the rejected memory's own retrieval document/index rows so it is no longer discoverable
+        // in normal search (the evidence-pointer retrieval rows are cleaned by the cascade trigger above).
+        removeRetrievalDocument(db, "memory_object", memoryId);
       } catch {
         return { status: "rejected", warning: "Memory rejected, but evidence cleanup did not complete." };
       }

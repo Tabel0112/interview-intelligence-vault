@@ -3778,6 +3778,15 @@ ${doc.text}`.trim(), embeddingHash = contentHash(text);
     throw error;
   }
 }
+function removeRetrievalDocument(db, targetType, targetId) {
+  try {
+    db.prepare("DELETE FROM retrieval_documents_fts WHERE target_type=? AND target_id=?").run(targetType, targetId);
+  } catch {
+  }
+  db.prepare("DELETE FROM retrieval_documents WHERE target_type=? AND target_id=?").run(targetType, targetId);
+  db.prepare("DELETE FROM search_embeddings WHERE target_type=? AND target_id=?").run(targetType, targetId);
+  db.prepare("DELETE FROM retrieval_index_status WHERE target_type=? AND target_id=?").run(targetType, targetId);
+}
 async function rebuildRetrievalIndex(db, options = {}) {
   const types = options.targetTypes ?? ["transcript_span", "memory_object", "evidence_pointer"];
   let indexed = 0, skipped = 0, embedded = 0, errors = 0;
@@ -5476,6 +5485,7 @@ function createSqliteFrontendApi(db, options = {}) {
       corrections.applyMemoryObjectCorrection(memoryId, { correction_type: "reject", new_value: { status: "rejected" } });
       try {
         db.prepare("DELETE FROM evidence_pointers WHERE target_type='memory_object' AND target_id=?").run(memoryId);
+        removeRetrievalDocument(db, "memory_object", memoryId);
       } catch {
         return { status: "rejected", warning: "Memory rejected, but evidence cleanup did not complete." };
       }
