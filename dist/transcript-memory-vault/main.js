@@ -5459,6 +5459,27 @@ function createSqliteFrontendApi(db, options = {}) {
         metadata: { submitted_from: "frontend_review_queue", append_only: true, requested_target_type: input.targetType, requested_target_id: input.targetId }
       });
       return { correctionId: correction.id, status: "received" };
+    },
+    async reviewMemoryObject(memoryId, decision) {
+      const corrections = createCorrectionsRepo(db);
+      if (decision === "approve") {
+        corrections.applyMemoryObjectCorrection(memoryId, { correction_type: "confirm", new_value: { status: "active" } });
+        let warning;
+        try {
+          const transcriptIds = db.prepare("SELECT DISTINCT transcript_id FROM memory_object_evidence WHERE memory_id=? AND transcript_id IS NOT NULL").all(memoryId);
+          for (const { transcript_id } of transcriptIds) await indexTranscriptForRetrieval(db, transcript_id);
+        } catch {
+          warning = "Memory approved, but automatic retrieval indexing did not complete.";
+        }
+        return { status: "approved", warning };
+      }
+      corrections.applyMemoryObjectCorrection(memoryId, { correction_type: "reject", new_value: { status: "rejected" } });
+      try {
+        db.prepare("DELETE FROM evidence_pointers WHERE target_type='memory_object' AND target_id=?").run(memoryId);
+      } catch {
+        return { status: "rejected", warning: "Memory rejected, but evidence cleanup did not complete." };
+      }
+      return { status: "rejected" };
     }
   };
 }
@@ -5531,10 +5552,13 @@ function memoryView(view) {
   ${view.conflicts.length ? section("Conflicts", view.conflicts.map((item) => `<article>${trustBadge("conflicting")} <strong>${escapeHtml(item.summary)}</strong><p>${escapeHtml(item.explanation)}</p></article>`).join("")) : ""}
   ${section("Submit a correction", correctionForm("memory_object", memory.id))}`;
 }
+var reviewActions = (item) => item.type === "memory_needs_review" && item.targetType === "memory_object" ? `<form data-action="review"><input type="hidden" name="memoryId" value="${escapeHtml(item.targetId)}">
+        <button type="submit" name="decision" value="approve">Approve</button>
+        <button type="submit" name="decision" value="reject">Reject</button></form><div data-form-result></div>` : "";
 function reviewCard(item) {
   return `<article class="review-card">${trustBadge(item.trustState)}<h3><a href="${escapeHtml(item.href)}">${escapeHtml(item.title)}</a></h3>
     <p>${escapeHtml(item.detail)}</p><small>${escapeHtml(item.severity)} severity \xB7 ${escapeHtml(item.status)} \xB7 ${escapeHtml(item.type)} \xB7 ${escapeHtml(item.targetType)}:${escapeHtml(item.targetId)}</small>
-    <a href="${escapeHtml(routeHref.review(item.id))}">Review and correct</a></article>`;
+    <a href="${escapeHtml(routeHref.review(item.id))}">Review and correct</a>${reviewActions(item)}</article>`;
 }
 function searchCard(item) {
   return `<article class="search-result">${item.trustState ? trustBadge(item.trustState) : ""}<h3><a href="${escapeHtml(item.href)}">${escapeHtml(item.title)}</a></h3>
@@ -5714,6 +5738,9 @@ async function mountObsidianUi(root, api, navigation, initialTarget) {
             reason: String(data.get("reason") ?? "") || void 0
           });
           if (result) result.innerHTML = `Correction appended: <code>${escapeHtml(correction.correctionId)}</code>`;
+        } else if (action === "review") {
+          const reviewed = await api.reviewMemoryObject(String(data.get("memoryId") ?? ""), data.get("decision") === "reject" ? "reject" : "approve");
+          if (result) result.innerHTML = `Memory ${escapeHtml(reviewed.status)}.${reviewed.warning ? ` ${escapeHtml(reviewed.warning)}` : ""}`;
         } else if (action === "filter") {
           const view = form.dataset.view ?? "dashboard";
           await render(`mv://${view}?${new URLSearchParams(data)}`);
@@ -5859,6 +5886,9 @@ function createUnavailableFrontendApi(getHealth) {
       return unavailable(getHealth());
     },
     async submitCorrection() {
+      return unavailable(getHealth());
+    },
+    async reviewMemoryObject() {
       return unavailable(getHealth());
     }
   };

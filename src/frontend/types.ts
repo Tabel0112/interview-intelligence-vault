@@ -140,6 +140,7 @@ export interface FrontendApi {
   listReviewItems(filter?: { type?: ReviewItemType; status?: ReviewItemView["status"] }): Promise<ReviewItemView[]>;
   getReviewItem(id: string): Promise<ReviewItemView | null>;
   submitCorrection(input: CorrectionDraft): Promise<{ correctionId: string; status: "received" }>;
+  reviewMemoryObject(memoryId: string, decision: "approve" | "reject"): Promise<{ status: "approved" | "rejected"; warning?: string }>;
 }
 
 export interface FrontendAnswerView extends AskAIResponse {

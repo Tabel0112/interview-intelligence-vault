@@ -316,5 +316,30 @@ export function createSqliteFrontendApi(
       });
       return { correctionId: correction.id, status: "received" };
     },
+    async reviewMemoryObject(memoryId, decision) {
+      const corrections = createCorrectionsRepo(db);
+      if (decision === "approve") {
+        // Promote through the existing trust gate: append-only user correction (sets status+extraction_status
+        // active and user_corrected=1; throws if no evidence exists). Then bridge + local keyword index.
+        corrections.applyMemoryObjectCorrection(memoryId, { correction_type: "confirm", new_value: { status: "active" } });
+        let warning: string | undefined;
+        try {
+          const transcriptIds = db.prepare("SELECT DISTINCT transcript_id FROM memory_object_evidence WHERE memory_id=? AND transcript_id IS NOT NULL").all(memoryId) as Array<{ transcript_id: string }>;
+          for (const { transcript_id } of transcriptIds) await indexTranscriptForRetrieval(db, transcript_id);
+        } catch {
+          warning = "Memory approved, but automatic retrieval indexing did not complete.";
+        }
+        return { status: "approved", warning };
+      }
+      // Reject: mark rejected (append-only correction) and delete this memory's evidence pointers; the
+      // retrieval_cleanup_evidence trigger removes the corresponding retrieval rows. memory_object_evidence kept.
+      corrections.applyMemoryObjectCorrection(memoryId, { correction_type: "reject", new_value: { status: "rejected" } });
+      try {
+        db.prepare("DELETE FROM evidence_pointers WHERE target_type='memory_object' AND target_id=?").run(memoryId);
+      } catch {
+        return { status: "rejected", warning: "Memory rejected, but evidence cleanup did not complete." };
+      }
+      return { status: "rejected" };
+    },
   };
 }

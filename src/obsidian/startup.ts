@@ -78,6 +78,7 @@ export function createUnavailableFrontendApi(getHealth: () => PluginHealth): Fro
     async listReviewItems() { return unavailable(getHealth()); },
     async getReviewItem() { return unavailable(getHealth()); },
     async submitCorrection() { return unavailable(getHealth()); },
+    async reviewMemoryObject() { return unavailable(getHealth()); },
   };
 }
 

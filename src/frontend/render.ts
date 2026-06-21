@@ -84,10 +84,17 @@ function memoryView(view: MemoryView): string {
   ${section("Submit a correction", correctionForm("memory_object", memory.id))}`;
 }
 
+const reviewActions = (item: ReviewItemView): string =>
+  item.type === "memory_needs_review" && item.targetType === "memory_object"
+    ? `<form data-action="review"><input type="hidden" name="memoryId" value="${escapeHtml(item.targetId)}">
+        <button type="submit" name="decision" value="approve">Approve</button>
+        <button type="submit" name="decision" value="reject">Reject</button></form><div data-form-result></div>`
+    : "";
+
 function reviewCard(item: ReviewItemView): string {
   return `<article class="review-card">${trustBadge(item.trustState)}<h3><a href="${escapeHtml(item.href)}">${escapeHtml(item.title)}</a></h3>
     <p>${escapeHtml(item.detail)}</p><small>${escapeHtml(item.severity)} severity · ${escapeHtml(item.status)} · ${escapeHtml(item.type)} · ${escapeHtml(item.targetType)}:${escapeHtml(item.targetId)}</small>
-    <a href="${escapeHtml(routeHref.review(item.id))}">Review and correct</a></article>`;
+    <a href="${escapeHtml(routeHref.review(item.id))}">Review and correct</a>${reviewActions(item)}</article>`;
 }
 
 function searchCard(item: SearchResultView): string {

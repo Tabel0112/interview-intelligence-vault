@@ -73,6 +73,9 @@ export async function mountObsidianUi(root: HTMLElement, api: FrontendApi, navig
             correctionText: String(data.get("correctionText") ?? ""), reason: String(data.get("reason") ?? "") || undefined,
           });
           if (result) result.innerHTML = `Correction appended: <code>${escapeHtml(correction.correctionId)}</code>`;
+        } else if (action === "review") {
+          const reviewed = await api.reviewMemoryObject(String(data.get("memoryId") ?? ""), data.get("decision") === "reject" ? "reject" : "approve");
+          if (result) result.innerHTML = `Memory ${escapeHtml(reviewed.status)}.${reviewed.warning ? ` ${escapeHtml(reviewed.warning)}` : ""}`;
         } else if (action === "filter") {
           const view = form.dataset.view ?? "dashboard";
           await render(`mv://${view}?${new URLSearchParams(data as never)}`);
