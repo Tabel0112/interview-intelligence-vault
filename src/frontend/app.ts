@@ -20,14 +20,20 @@ export async function renderRoute(api: FrontendApi, url: string): Promise<string
 // would stack another set of delegated listeners and every click would open duplicate views.
 const mountControllers = new WeakMap<HTMLElement, AbortController>();
 
-export async function mountObsidianUi(root: HTMLElement, api: FrontendApi, navigation: ObsidianNavigation, initialTarget: string): Promise<void> {
+// Frontend actions that change persisted data. After one succeeds, other open views are notified to
+// refresh so they cannot show stale status/items.
+const MUTATING_ACTIONS = new Set(["upload", "ask", "correction", "review"]);
+
+export async function mountObsidianUi(root: HTMLElement, api: FrontendApi, navigation: ObsidianNavigation, initialTarget: string, onMutation?: () => void | Promise<void>): Promise<void> {
   // Abort any previous mount's listeners on this host so exactly one set is ever active.
   mountControllers.get(root)?.abort();
   const controller = new AbortController();
   mountControllers.set(root, controller);
   const { signal } = controller;
 
+  let currentTarget = initialTarget;
   const render = async (target: string) => {
+    currentTarget = target;
     root.innerHTML = await renderRoute(api, target);
     const span = new URL(target).searchParams.get("span");
     if (span) document.getElementById(`span-${span}`)?.scrollIntoView({ block: "center" });
@@ -88,11 +94,18 @@ export async function mountObsidianUi(root: HTMLElement, api: FrontendApi, navig
           });
           if (result) result.innerHTML = `Correction appended: <code>${escapeHtml(correction.correctionId)}</code>`;
         } else if (action === "review") {
-          const reviewed = await api.reviewMemoryObject(String(data.get("memoryId") ?? ""), data.get("decision") === "reject" ? "reject" : "approve");
-          if (result) result.innerHTML = `Memory ${escapeHtml(reviewed.status)}.${reviewed.warning ? ` ${escapeHtml(reviewed.warning)}` : ""}`;
+          // Re-fetch and re-render after the decision so the resolved task disappears and the page
+          // reflects the current memory status — never stale pre-action text or a now-resolved item.
+          // (A just-resolved detail page falls back to the review queue.)
+          await performReviewAction(api, String(data.get("memoryId") ?? ""), data.get("decision") === "reject" ? "reject" : "approve", render, currentTarget);
         } else if (action === "filter") {
           const view = form.dataset.view ?? "dashboard";
           await render(`mv://${view}?${new URLSearchParams(data as never)}`);
+        }
+        // After a successful mutating action, refresh every OTHER open plugin view (the initiating view
+        // already refreshed itself in place above). Never let a refresh failure surface as an action error.
+        if (action && MUTATING_ACTIONS.has(action)) {
+          try { await onMutation?.(); } catch (refreshError) { console.error("Transcript Memory Vault cross-view refresh failed", refreshError); }
         }
       } catch (error) {
         if (result) result.textContent = error instanceof Error ? error.message : String(error);
@@ -106,4 +119,29 @@ export async function mountObsidianUi(root: HTMLElement, api: FrontendApi, navig
 
 export function isInternalNavigationTarget(target: string | null | undefined): target is string {
   return target?.startsWith("mv://") ?? false;
+}
+
+/**
+ * The route to re-render after a mutating action. Normally the current route is re-fetched in place.
+ * A review-detail item that was just approved/rejected no longer exists, so its detail page would show
+ * "not found"; falling back to the review queue is the least confusing result.
+ */
+export function refreshTargetAfterAction(currentTarget: string): string {
+  return matchRoute(currentTarget).id === "review_detail" ? routeHref.reviewQueue() : currentTarget;
+}
+
+/**
+ * Perform an approve/reject decision and then refresh the current view. Extracted (and DOM-free) so the
+ * refresh-after-mutation contract is verifiable offline — the Node test environment cannot dispatch a
+ * real form submit (`new FormData(formElement)` is unavailable there).
+ */
+export async function performReviewAction(
+  api: Pick<FrontendApi, "reviewMemoryObject">,
+  memoryId: string,
+  decision: "approve" | "reject",
+  refresh: (target: string) => Promise<void>,
+  currentTarget: string,
+): Promise<void> {
+  await api.reviewMemoryObject(memoryId, decision);
+  await refresh(refreshTargetAfterAction(currentTarget));
 }

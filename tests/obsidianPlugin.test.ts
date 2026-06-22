@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceLeaf } from "obsidian";
 import { askAI, createDatabaseAskAIDependencies } from "../src/ask-ai/index.js";
 import { createRepositories, openDatabase, type SqliteDatabase } from "../src/db/index.js";
-import { createSqliteFrontendApi, isInternalNavigationTarget, mountObsidianUi, navigateInternal, renderRoute, routeHref, type ObsidianNavigation } from "../src/frontend/index.js";
+import { createSqliteFrontendApi, isInternalNavigationTarget, mountObsidianUi, navigateInternal, refreshTargetAfterAction, renderRoute, routeHref, type ObsidianNavigation } from "../src/frontend/index.js";
 import { importTranscript } from "../src/ingest/index.js";
 import { createObsidianNavigation } from "../src/obsidian/ObsidianNavigation.js";
 import { OBSIDIAN_COMMANDS, OBSIDIAN_RIBBON, OBSIDIAN_VIEW_TYPES } from "../src/obsidian/pluginTypes.js";
@@ -169,5 +169,19 @@ describe("Obsidian UI mount does not stack duplicate listeners", () => {
     // Without listener de-duplication this would be called twice (two stacked click handlers).
     expect(navigation.openMemoryObject).toHaveBeenCalledTimes(1);
     expect(navigation.openMemoryObject).toHaveBeenCalledWith("m1");
+
+    // A second click still routes exactly once: handlers are not recreated by repeated renders/clicks.
+    host.dispatchEvent(new Event("click"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(navigation.openMemoryObject).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes the current route after an action, resolving review-detail pages to the queue", () => {
+    expect(refreshTargetAfterAction("mv://review")).toBe("mv://review");
+    expect(refreshTargetAfterAction("mv://memory/m1")).toBe("mv://memory/m1");
+    expect(refreshTargetAfterAction("mv://dashboard")).toBe("mv://dashboard");
+    // A resolved review-detail item has nothing to show, so the refresh falls back to the review queue.
+    expect(refreshTargetAfterAction("mv://review/memory:m1")).toBe(routeHref.reviewQueue());
+    expect(refreshTargetAfterAction(`mv://review/weak:evp_1`)).toBe(routeHref.reviewQueue());
   });
 });

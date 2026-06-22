@@ -5176,6 +5176,9 @@ function evidenceView(db, id) {
 }
 function reviewItems(db) {
   const items = [];
+  const userReviewedMemoryIds = new Set(
+    db.prepare("SELECT id FROM memory_objects WHERE user_corrected=1").all().map((row) => row.id)
+  );
   const pointers = db.prepare("SELECT evidence_pointer_id,evidence_strength,target_type,target_id,quote_preview,transcript_id,created_at FROM evidence_pointers ORDER BY created_at,evidence_pointer_id").all();
   for (const pointer of pointers) {
     const resolved = resolveEvidencePointer(db, pointer.evidence_pointer_id);
@@ -5195,7 +5198,7 @@ function reviewItems(db) {
         relatedTranscriptIds: [pointer.transcript_id],
         relatedEvidenceIds: [pointer.evidence_pointer_id]
       });
-    } else if (pointer.evidence_strength === "weak" || pointer.evidence_strength === "unknown") {
+    } else if ((pointer.evidence_strength === "weak" || pointer.evidence_strength === "unknown") && !(pointer.target_type === "memory_object" && userReviewedMemoryIds.has(pointer.target_id))) {
       items.push({
         id: `weak:${pointer.evidence_pointer_id}`,
         type: "weak_evidence",
@@ -5255,7 +5258,7 @@ function reviewItems(db) {
       relatedEvidenceIds: conflict.evidenceLinks.map((link) => link.evidencePointerId)
     });
   }
-  for (const row of db.prepare("SELECT id,target_type,target_id,reason,created_at FROM user_corrections ORDER BY created_at,id").all()) {
+  for (const row of db.prepare("SELECT id,target_type,target_id,reason,created_at FROM user_corrections WHERE correction_type NOT IN ('confirm','reject') ORDER BY created_at,id").all()) {
     items.push({
       id: `correction:${String(row.id)}`,
       type: "user_correction",
@@ -5701,12 +5704,15 @@ async function renderRoute(api, url) {
   }
 }
 var mountControllers = /* @__PURE__ */ new WeakMap();
-async function mountObsidianUi(root, api, navigation, initialTarget) {
+var MUTATING_ACTIONS = /* @__PURE__ */ new Set(["upload", "ask", "correction", "review"]);
+async function mountObsidianUi(root, api, navigation, initialTarget, onMutation) {
   mountControllers.get(root)?.abort();
   const controller = new AbortController();
   mountControllers.set(root, controller);
   const { signal } = controller;
+  let currentTarget = initialTarget;
   const render = async (target) => {
+    currentTarget = target;
     root.innerHTML = await renderRoute(api, target);
     const span = new URL(target).searchParams.get("span");
     if (span) document.getElementById(`span-${span}`)?.scrollIntoView({ block: "center" });
@@ -5767,11 +5773,17 @@ async function mountObsidianUi(root, api, navigation, initialTarget) {
           });
           if (result) result.innerHTML = `Correction appended: <code>${escapeHtml(correction.correctionId)}</code>`;
         } else if (action === "review") {
-          const reviewed = await api.reviewMemoryObject(String(data.get("memoryId") ?? ""), data.get("decision") === "reject" ? "reject" : "approve");
-          if (result) result.innerHTML = `Memory ${escapeHtml(reviewed.status)}.${reviewed.warning ? ` ${escapeHtml(reviewed.warning)}` : ""}`;
+          await performReviewAction(api, String(data.get("memoryId") ?? ""), data.get("decision") === "reject" ? "reject" : "approve", render, currentTarget);
         } else if (action === "filter") {
           const view = form.dataset.view ?? "dashboard";
           await render(`mv://${view}?${new URLSearchParams(data)}`);
+        }
+        if (action && MUTATING_ACTIONS.has(action)) {
+          try {
+            await onMutation?.();
+          } catch (refreshError) {
+            console.error("Transcript Memory Vault cross-view refresh failed", refreshError);
+          }
         }
       } catch (error) {
         if (result) result.textContent = error instanceof Error ? error.message : String(error);
@@ -5785,18 +5797,27 @@ async function mountObsidianUi(root, api, navigation, initialTarget) {
 function isInternalNavigationTarget(target) {
   return target?.startsWith("mv://") ?? false;
 }
+function refreshTargetAfterAction(currentTarget) {
+  return matchRoute(currentTarget).id === "review_detail" ? routeHref.reviewQueue() : currentTarget;
+}
+async function performReviewAction(api, memoryId, decision, refresh, currentTarget) {
+  await api.reviewMemoryObject(memoryId, decision);
+  await refresh(refreshTargetAfterAction(currentTarget));
+}
 
 // src/obsidian/TranscriptMemoryItemView.ts
 var TranscriptMemoryItemView = class extends import_obsidian3.ItemView {
-  constructor(leaf, type, getApi, vaultNavigation) {
+  constructor(leaf, type, getApi, vaultNavigation, registry) {
     super(leaf);
     this.type = type;
     this.getApi = getApi;
     this.vaultNavigation = vaultNavigation;
+    this.registry = registry;
   }
   type;
   getApi;
   vaultNavigation;
+  registry;
   state = {};
   getViewType() {
     return this.type;
@@ -5815,16 +5836,22 @@ var TranscriptMemoryItemView = class extends import_obsidian3.ItemView {
     await this.render();
   }
   async onOpen() {
+    this.registry.register(this);
     await this.render();
   }
   async onClose() {
+    this.registry.unregister(this);
     this.contentEl.empty();
+  }
+  /** Re-fetch and re-render this view's current route. Invoked by the registry after a mutation elsewhere. */
+  async refresh() {
+    await this.render();
   }
   async render() {
     this.contentEl.empty();
     this.contentEl.addClass("transcript-memory-vault-host");
     try {
-      await mountObsidianUi(this.contentEl, this.getApi(), this.vaultNavigation, this.state.target ?? defaultTarget(this.type));
+      await mountObsidianUi(this.contentEl, this.getApi(), this.vaultNavigation, this.state.target ?? defaultTarget(this.type), () => this.registry.notifyMutation(this));
     } catch (error) {
       console.error("Transcript Memory Vault view load failed", error);
       this.contentEl.empty();
@@ -6015,6 +6042,31 @@ function createObsidianLlmTransport() {
   };
 }
 
+// src/obsidian/viewRefreshRegistry.ts
+var ViewRefreshRegistry = class {
+  views = /* @__PURE__ */ new Set();
+  register(view) {
+    this.views.add(view);
+  }
+  unregister(view) {
+    this.views.delete(view);
+  }
+  size() {
+    return this.views.size;
+  }
+  /** Refresh every registered view except `origin`. Never throws; logs and continues per view. */
+  async notifyMutation(origin) {
+    for (const view of [...this.views]) {
+      if (view === origin) continue;
+      try {
+        await view.refresh();
+      } catch (error) {
+        console.error("Transcript Memory Vault view refresh failed", error);
+      }
+    }
+  }
+};
+
 // src/obsidian/Plugin.ts
 var TranscriptMemoryVaultPlugin = class extends import_obsidian6.Plugin {
   db = null;
@@ -6023,11 +6075,13 @@ var TranscriptMemoryVaultPlugin = class extends import_obsidian6.Plugin {
   api = createUnavailableFrontendApi(() => this.health);
   // Built once; reused. The transport makes no call until the synthesis adapter actually runs.
   llmTransport = createObsidianLlmTransport();
+  // Tracks open plugin views so a mutating action in one refreshes the others (cross-view invalidation).
+  viewRegistry = new ViewRefreshRegistry();
   async onload() {
     await this.loadSettings();
     const navigation = createObsidianNavigation(this.app);
     for (const type of Object.values(OBSIDIAN_VIEW_TYPES)) {
-      this.registerView(type, (leaf) => new TranscriptMemoryItemView(leaf, type, () => this.api, navigation));
+      this.registerView(type, (leaf) => new TranscriptMemoryItemView(leaf, type, () => this.api, navigation, this.viewRegistry));
     }
     for (const command of OBSIDIAN_COMMANDS) {
       this.addCommand({ id: command.id, name: command.name, callback: () => void navigationForView(navigation, command.viewType) });

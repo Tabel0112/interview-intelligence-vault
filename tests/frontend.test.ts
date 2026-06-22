@@ -218,6 +218,24 @@ describe("SQLite frontend adapter", () => {
     expect(detailHtml).toContain("Reject");
   });
 
+  it("approving a memory from a weak-evidence task resolves it without a new user-correction task", async () => {
+    const seeded = await fixture();
+    const api = createSqliteFrontendApi(db, { now });
+    const weakPointer = linkMemoryObjectToSpan(db, {
+      memoryObjectId: seeded.strong.id, transcriptId: seeded.imported.transcriptId, spanId: seeded.spans[1].id,
+      evidenceRole: "support", evidenceStrength: "weak", confidence: 0.3,
+    });
+    // The weak-evidence task exists and is tied to the memory object.
+    expect((await api.listReviewItems()).some((item) => item.id === `weak:${weakPointer.evidence_pointer_id}` && item.type === "weak_evidence" && item.targetId === seeded.strong.id)).toBe(true);
+
+    // Approve via the same API the review UI uses.
+    expect((await api.reviewMemoryObject(seeded.strong.id, "approve")).status).toBe("approved");
+    const after = await api.listReviewItems();
+    expect(after.some((item) => item.type === "weak_evidence" && item.targetId === seeded.strong.id)).toBe(false); // resolved
+    expect(after.some((item) => item.type === "user_correction")).toBe(false); // confirm correction is not a task
+    expect((db.prepare("SELECT COUNT(*) c FROM user_corrections WHERE target_id=? AND correction_type='confirm'").get(seeded.strong.id) as { c: number }).c).toBeGreaterThanOrEqual(1); // audit retained
+  });
+
   it("limits dashboard and transcript rendering for large vaults", async () => {
     for (let index = 0; index < 12; index += 1) {
       importTranscript(db, { filename: `many-${index}.txt`, rawText: `Speaker: Unique transcript ${index}.` });
