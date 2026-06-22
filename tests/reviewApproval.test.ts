@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDatabase, type SqliteDatabase } from "../src/db/index.js";
 import { askAI, createDatabaseAskAIDependencies } from "../src/ask-ai/index.js";
-import { createSqliteFrontendApi, renderRoute, type FrontendApi } from "../src/frontend/index.js";
+import { createSqliteFrontendApi, performReviewAction, renderRoute, routeHref, type FrontendApi } from "../src/frontend/index.js";
 import { createLlmMemoryExtractor, DeterministicRuleExtractor } from "../src/memory/index.js";
 import { searchMemoryObjects } from "../src/retrieval/index.js";
 import { resolveEvidencePointer } from "../src/provenance/index.js";
 import { MockLlmProvider } from "../src/llm/testing.js";
 import type { LlmCompletion, LlmRequest } from "../src/llm/index.js";
+import { ViewRefreshRegistry } from "../src/obsidian/viewRefreshRegistry.js";
 
 const RAW = "Alex: We decided to use SQLite as the source of truth for the vault.";
 const SECRET = "sk-review-PLANTED-SECRET-1234567890";
@@ -121,5 +122,85 @@ describe("review approval -> evidence bridge / retrieval indexing", () => {
     expect(html).toContain("Approve");
     expect(html).toContain("Reject");
     expect(html).not.toContain(SECRET);
+  });
+
+  it("a review action re-fetches the current route so the resolved item disappears without manual navigation", async () => {
+    const { api, memoryId } = await seedNeedsReview();
+    // The review queue lists the task before the action (its memory id is in the rendered HTML).
+    expect(await renderRoute(api, "mv://review")).toContain(memoryId);
+
+    const refreshed: string[] = [];
+    const refresh = async (target: string) => { refreshed.push(target); };
+
+    // Approve from the review list: the action runs and then refreshes the current (review) route.
+    await performReviewAction(api, memoryId, "approve", refresh, "mv://review");
+    expect(refreshed).toEqual(["mv://review"]);
+    // Re-rendering that route now shows the resolved item gone — no manual navigation required.
+    expect(await renderRoute(api, "mv://review")).not.toContain(memoryId);
+
+    // From a detail page, the refresh falls back to the review queue (the detail item no longer exists).
+    refreshed.length = 0;
+    await performReviewAction(api, memoryId, "reject", refresh, `mv://review/memory:${memoryId}`);
+    expect(refreshed).toEqual([routeHref.reviewQueue()]);
+    expect((db.prepare("SELECT extraction_status FROM memory_objects WHERE id=?").get(memoryId) as { extraction_status: string }).extraction_status).toBe("rejected");
+  });
+
+  it("cross-view refresh: approving in one Review Queue view clears the item in another open view", async () => {
+    const { api, memoryId } = await seedNeedsReview();
+    const registry = new ViewRefreshRegistry();
+    // Two open Review Queue views; each re-renders mv://review when the registry refreshes it.
+    const makeView = () => {
+      const view = { html: "", async refresh() { view.html = await renderRoute(api, "mv://review"); } };
+      return view;
+    };
+    const viewA = makeView();
+    const viewB = makeView();
+    registry.register(viewA);
+    registry.register(viewB);
+    expect(registry.size()).toBe(2);
+
+    // Both views initially show the pending item.
+    await viewA.refresh();
+    await viewB.refresh();
+    expect(viewA.html).toContain(memoryId);
+    expect(viewB.html).toContain(memoryId);
+
+    // Approve from view A: the initiating view refreshes itself, then notifies the others.
+    await api.reviewMemoryObject(memoryId, "approve");
+    await viewA.refresh();
+    await registry.notifyMutation(viewA);
+
+    // Both views drop the resolved item — the OTHER view updated without manual navigation.
+    expect(viewA.html).not.toContain(memoryId);
+    expect(viewB.html).not.toContain(memoryId);
+  });
+
+  it("approve resolves the task without spawning a user-correction item; reject after approve ends rejected", async () => {
+    const { api, memoryId } = await seedNeedsReview();
+    expect((await api.listReviewItems()).some((i) => i.type === "memory_needs_review" && i.targetId === memoryId)).toBe(true);
+
+    // Approve: the task resolves and the append-only confirm correction does NOT become a new review item.
+    expect((await api.reviewMemoryObject(memoryId, "approve")).status).toBe("approved");
+    const afterApprove = await api.listReviewItems();
+    expect(afterApprove.some((i) => i.type === "memory_needs_review" && i.targetId === memoryId)).toBe(false);
+    expect(afterApprove.some((i) => i.type === "weak_evidence" && i.targetId === memoryId)).toBe(false);
+    expect(afterApprove.some((i) => i.type === "user_correction")).toBe(false);
+    expect(count(db, "user_corrections WHERE target_id=? AND correction_type='confirm'", memoryId)).toBeGreaterThan(0); // audit kept
+
+    // Reject after approve: canonical status becomes rejected even though history still holds the confirm.
+    expect((await api.reviewMemoryObject(memoryId, "reject")).status).toBe("rejected");
+    expect((db.prepare("SELECT extraction_status FROM memory_objects WHERE id=?").get(memoryId) as { extraction_status: string }).extraction_status).toBe("rejected");
+    expect((await api.getMemory(memoryId))?.memory.status).toBe("rejected");
+    expect((await api.listReviewItems()).some((i) => i.type === "user_correction")).toBe(false);
+    expect(count(db, "user_corrections WHERE target_id=? AND correction_type='confirm'", memoryId)).toBeGreaterThan(0); // history preserved
+
+    // UI render reflects the current (rejected) state, not stale approved/active text or controls.
+    const html = await renderRoute(api, routeHref.memory(memoryId));
+    expect(html).toContain('data-trust-state="rejected"');
+    expect(html).not.toContain("Review decision");
+
+    // Rejected memory stays out of evidence pointers and retrieval documents.
+    expect(count(db, "evidence_pointers WHERE target_type='memory_object' AND target_id=?", memoryId)).toBe(0);
+    expect(count(db, "retrieval_documents WHERE target_type='memory_object' AND target_id=?", memoryId)).toBe(0);
   });
 });

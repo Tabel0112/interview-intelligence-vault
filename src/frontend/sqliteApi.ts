@@ -79,6 +79,11 @@ function evidenceView(db: SqliteDatabase, id: string): EvidenceView {
 
 function reviewItems(db: SqliteDatabase): ReviewItemView[] {
   const items: ReviewItemView[] = [];
+  // Memory objects the user has explicitly approved/rejected (user_corrected=1) are resolved: their
+  // weak evidence is an accepted, known state and must not resurface as an unresolved review task.
+  const userReviewedMemoryIds = new Set(
+    (db.prepare("SELECT id FROM memory_objects WHERE user_corrected=1").all() as Array<{ id: string }>).map((row) => row.id),
+  );
   const pointers = db.prepare("SELECT evidence_pointer_id,evidence_strength,target_type,target_id,quote_preview,transcript_id,created_at FROM evidence_pointers ORDER BY created_at,evidence_pointer_id").all() as Array<{
     evidence_pointer_id: string; evidence_strength: string; target_type: string; target_id: string; quote_preview: string; transcript_id: string; created_at: string;
   }>;
@@ -91,7 +96,8 @@ function reviewItems(db: SqliteDatabase): ReviewItemView[] {
         trustState: "broken", href: routeHref.evidence(pointer.evidence_pointer_id),
         createdAt: pointer.created_at, severity: "high", status: "open", relatedTranscriptIds: [pointer.transcript_id], relatedEvidenceIds: [pointer.evidence_pointer_id],
       });
-    } else if (pointer.evidence_strength === "weak" || pointer.evidence_strength === "unknown") {
+    } else if ((pointer.evidence_strength === "weak" || pointer.evidence_strength === "unknown")
+      && !(pointer.target_type === "memory_object" && userReviewedMemoryIds.has(pointer.target_id))) {
       items.push({
         id: `weak:${pointer.evidence_pointer_id}`, type: "weak_evidence", title: "Weak evidence",
         detail: preview(pointer.quote_preview), targetType: pointer.target_type, targetId: pointer.target_id,
@@ -126,7 +132,9 @@ function reviewItems(db: SqliteDatabase): ReviewItemView[] {
       relatedEvidenceIds: conflict.evidenceLinks.map((link) => link.evidencePointerId),
     });
   }
-  for (const row of db.prepare("SELECT id,target_type,target_id,reason,created_at FROM user_corrections ORDER BY created_at,id").all() as Row[]) {
+  // confirm/reject corrections are append-only audit records of an approve/reject DECISION, not new
+  // review tasks. They stay in history but must not reappear as unresolved "user correction" items.
+  for (const row of db.prepare("SELECT id,target_type,target_id,reason,created_at FROM user_corrections WHERE correction_type NOT IN ('confirm','reject') ORDER BY created_at,id").all() as Row[]) {
     items.push({
       id: `correction:${String(row.id)}`, type: "user_correction", title: "User correction received",
       detail: String(row.reason ?? "Awaiting review or reprocessing"), targetType: String(row.target_type), targetId: String(row.target_id),
