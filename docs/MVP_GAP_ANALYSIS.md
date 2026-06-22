@@ -2,104 +2,92 @@
 
 > Compares the current implementation against the intended MVP in [`docs/APP_SPEC.md`](./APP_SPEC.md), under the rules in [`CLAUDE.md`](../CLAUDE.md). **No code is changed by this document.**
 >
-> Intended MVP = the full deterministic pipeline **wired end-to-end**, **plus** real external LLM grounded synthesis **plus** real semantic embedding vectors, configurable via settings, with deterministic local mode preserved as fallback. The current deterministic Ask AI and `token-hash-v1` vectors are **fallback/test/local modes**, not the complete MVP.
+> Intended MVP = the full deterministic pipeline wired end-to-end, **plus** real external LLM grounded synthesis **plus** real semantic embedding vectors, configurable via settings, with deterministic local mode preserved as the default/fallback.
 >
-> Reflects the committed state including the embedding-provider abstraction.
+> **State:** reflects the committed code through `b457cf2` (end-to-end smoke test). The earlier "H1/H2/H3 — nothing is wired" findings are **obsolete**: the deterministic *and* LLM pipelines are now wired end-to-end through the live `createSqliteFrontendApi` / Obsidian `Plugin` path, verified by `tests/mvpSmoke.test.ts`. Every "implemented" claim below is code-backed.
 
 ---
 
-## 0. Headline findings (read first)
+## 1. Implemented (verified)
 
-**H1 — the deterministic pipeline is not wired end-to-end.** The live upload path (`sqliteApi.uploadTranscript`) calls **only** `importTranscript`. In production wiring, after upload the app has transcripts/turns/spans and nothing else: no memory extraction (only the unwired orchestration `extractionAgent` calls it), no source/evidence pointers (no live caller of `createSourcePointer*`), and **no retrieval index** (`rebuildRetrievalIndex` and the per-doc index functions have no live caller — only `tests/retrieval.test.ts`). Consequently the live Ask AI queries an empty index and refuses with `no_evidence`. The subsystems are individually implemented and tested; they are simply **not connected**. (Indexing is **not** lazy-at-ask-time — there is no live indexing call at all.)
-
-**H2 — grounding-after-LLM is unverified.** The validation gate enforces **citation provenance** (a claim's pointers are in the selected set; a citation exists) but **never checks that the claim text is entailed by the cited span**. Deterministic mode hides this (claim text *is* the quote). A real LLM could assert anything while citing a valid-but-unrelated selected pointer and render as "supported" — a latent violation of trust rule 5. **Entailment verification is a prerequisite for LLM synthesis.**
-
-**H3 — Hermes is dead in the live path.** The frontend calls `askAI` directly; `askAI` contains no Hermes. Hermes styling + its guardrail exist only in the unwired orchestration `answerSynthesisAgent`. So the live app never personalizes and never runs the guardrail.
-
-This means MVP requires **wiring the deterministic chain first**, and building **grounding-verification + warning surfaces before any external model**.
-
----
-
-## 1. Already complete
-- Transcript ingestion + raw immutability (DB triggers); wired live.
-- Provenance/citation machinery (hash-validated pointers, citation links, insert-then-promote claims).
+**Core trust spine (unchanged, still enforced)**
+- Transcript ingestion + **raw immutability** via DB triggers (`importTranscript`), wired live.
+- Provenance/citation machinery: hash-validated `source_pointers`/`evidence_pointers`, `citation_links`, insert-then-promote claims; `resolveSourcePointer`/`resolveEvidencePointer` re-check raw/span/offset hashes.
 - Evidence scoring + strength caps (deterministic; weak-stays-weak).
-- Ask AI pipeline shape (9-step order, refusal, conflict context, persistence).
-- **Citation-provenance enforcement** (drops uncited/unselected claims; throws on broken pointers). *Provenance only — not entailment (see H2).*
-- Conflict preservation (both sides cited; weak-capped; append-only corrections).
-- Obsidian generated-view safety (manifest-scoped cleanup; user files preserved; output-only); safe startup/health.
-- **Embedding provider abstraction (committed):** `EmbeddingProvider` interface, token-hash-v1 default, `EmbeddingSpace` descriptors, `resolveEmbeddingProvider` (with flagged fallback), **`detectReindexNeeded`**, and the no-mixing helpers.
-- **No-mixing-vectors enforcement** at query (provider+model+dim filter), store (unique per provider+model; `validateVector`/`cosineSimilarity` throw), and via the space helpers.
-- Vector storage metadata (provider/model/dimension/content-hash) already persisted.
-- Deterministic local/test mode (token-hash/noop embeddings, deterministic claim text, rule extractor).
+- Ask AI 9-step pipeline (understand → retrieve → score → select → conflicts → claims → validate → render → persist), refusal/weak/conflict warnings, atomic persistence.
+- Append-only user corrections; both-sides conflict preservation.
+- Obsidian generated-view safety (manifest-scoped cleanup, user files preserved, output-only); safe startup/health.
+- No-mixing-vectors enforcement (query filter by provider+model+dim; `search_embeddings` unique per provider+model; `validateVector`/`cosineSimilarity` throw; `embeddingSpace` helpers).
+- Deterministic local mode preserved as the default/fallback everywhere; **tests are offline-only** (mock/local providers).
 
-## 2. Partially complete
-- **Embedding provider abstraction → real provider:** the abstraction + default + reindex detection are done; **no real semantic provider** behind the interface, and no way to pass a provider into the live ask/index path (live `retrieve()` passes no provider, so vector search is dead in production; `rebuildRetrievalIndex` has no live caller).
-- **LLM provider abstraction (Ask AI):** the `AskAILanguageModel` seam + optional `llm?` exist and the pipeline routes to it; **no concrete client**, no provider/model/key plumbing, no schema-validation/failure semantics for LLM output.
-- **Grounded synthesis:** the citation-provenance gate exists; **entailment verification missing** (H2); answers are per-claim lines, not free prose (a UX constraint to acknowledge).
-- **Memory extraction provider:** `PromptBasedMemoryExtractor` seam exists; **no concrete LLM client**; extraction not wired live.
-- **Reindex on provider/model change:** detection is done (`detectReindexNeeded`); **no trigger to act on it, no stale-vector cleanup, no live caller** to run a reindex.
-- **Hermes guardrail robustness:** exists but warning-preservation is substring-based; harden before LLM prose.
+**Embedding stack**
+- Embedding provider abstraction: `EmbeddingProvider`, `EmbeddingSpace`, `resolveEmbeddingProvider`, `detectReindexNeeded` (`src/retrieval/embeddingSpace.ts`, `reindexStatus.ts`).
+- **External embedding provider** (`src/retrieval/externalEmbeddingProvider.ts`): OpenAI-compatible, **injectable transport**, API key in true `#private` field, redaction, configured-only.
+- **Embedding settings/config adapter** (`src/obsidian/embeddingSettings.ts`) + Obsidian `requestUrl` transport (`embeddingTransport.ts`).
+- **Manual embedding reindex command** (`runEmbeddingReindex` → Plugin "Rebuild Embedding Index").
 
-## 3. Missing
-- Claim↔evidence **entailment verification** (H2) — prerequisite for LLM synthesis.
-- **Hermes wired into the live path** + guardrail invoked live (H3).
-- **API key settings + storage decision** — none exist; Obsidian has no secret store (plaintext `data.json` may sync), so "secure storage" is a decision, not a given.
-- Concrete external **LLM client**, concrete external **embedding provider**, concrete **LLM extraction client** (optional).
-- **Live wiring: upload → extraction → provenance → index** (H1), and a live caller for retrieval indexing.
-- Passing an embedding provider / LLM into the live ask path (deps lack the parameters).
-- **Query-time embedding failure/latency path** and a **retrieval-degradation warning surface** (provider/model mismatch silently yields `[]` today).
-- **LLM structured-output failure semantics** (timeout/malformed/refusal → fallback or refuse) and **evidence token-budget/truncation**.
-- **Network via Obsidian `requestUrl`**; **packaging ship-blocker decision** (single native target; bundle-path migration footgun).
+**LLM stack**
+- **LLM provider abstraction** (`src/llm/`): `LlmProvider`, local-deterministic + mock providers, error hierarchy, timeout/cancellation, redaction; secret-bearing fields are true `#private`.
+- **External LLM provider** (`src/llm/externalLlmProvider.ts`): OpenAI-compatible chat/completions, injectable transport, status→error mapping, redaction.
+- **Settings → LLM resolution** (`src/obsidian/llmSettings.ts`): `resolveLlmProviderFromSettings`, `askAiSynthesisFromSettings`, `memoryExtractorFromSettings`; Obsidian `requestUrl` transport (`llmTransport.ts`).
 
-## 4. Implemented incorrectly / not wired
-1. The deterministic processing pipeline is **disconnected from the UI** (H1).
-2. Live Ask AI is **keyword-only over an empty index** → refuses; the vector path is dead in production.
-3. **Hermes + guardrail unreachable** in the live path (H3).
-4. **Two Ask AI execution paths** (direct `ask-ai/pipeline` used by the UI; orchestration `askAiPipeline` unwired) — pick one canonical before adding providers, and account for the Hermes consequence.
-5. Wiring will write into **two evidence systems** (`memory_object_evidence` + `evidence_pointers`) unless a canonical is declared.
-6. `retrieval_index_status` provider/model bookkeeping is inconsistent (COALESCE vs hard SET) — matters once reindexing is live.
+**Ask AI grounded LLM synthesis**
+- **Grounded validation layer** (`src/ask-ai/llmSynthesis.ts`): structured-output parse + shape-check + **quote-anchoring grounding** (each claim must carry a `supportingQuote` that substring-matches a *selected* evidence snippet) + discard-ungrounded.
+- **Live wiring**: `getSynthesis` threaded `Plugin → ObsidianAppApi → createSqliteFrontendApi → askAI`. Deterministic by default; the external LLM is used **only when settings resolve to a valid provider**; LLM failure/malformed/timeout/all-discarded → deterministic fallback.
+- **Runtime-accurate synthesis metadata** persisted (non-secret `{mode, provider, model, usedFallback}` via the `onSynthesis` hook) — reflects the *actual* path (llm vs deterministic), not just the configured intent.
 
-## 5. Should remain fallback / test-only (do not promote or delete)
-| Item | Keep as | Why |
-|---|---|---|
-| `DeterministicTestEmbeddingProvider` (token-hash-v1) | offline/test/local default | deterministic, no network; never present as semantic |
-| `NoopEmbeddingProvider` | "embeddings disabled" mode | keyword-only retrieval with no vectors |
-| Deterministic templated claim text | fallback when no LLM | proves grounding without a model |
-| `DeterministicRuleExtractor` | fallback extractor | offline extraction; LLM extraction stays optional |
-| Deterministic local mode overall | always-available default | tests always run here; real providers injected/mockable; no network in tests |
+**Memory extraction**
+- **Grounded LLM extraction** (`src/memory/extraction/llmExtractor.ts`): quote-anchored, span-membership-checked, deterministic per-window fallback.
+- **Automatic extraction after import** (`uploadTranscript` runs the settings-resolved extractor; deterministic by default, LLM when configured), idempotent (skips duplicate uploads / already-extracted transcripts).
+- **LLM-extracted memory is capped to `needs_review`** (never auto-`active`).
+- **Prompt-version metadata** recorded per extractor on the run + objects.
 
-Real providers go **behind the existing seams**; a mock must reproduce today's deterministic behavior. Mixed configs (e.g. real embeddings + no LLM) must each be coherent and tested.
+**Post-import discovery + review**
+- **Provenance bridge** (`src/retrieval/transcriptIndex.ts`): after import/extraction, **usable/active** memory (`isUsableAsEvidence`, Policy A) is bridged to hash-validated `evidence_pointers`; `needs_review` is **not** bridged.
+- **Local keyword indexing runs automatically** after import/extraction (`rebuildRetrievalIndex` with no provider — offline, idempotent).
+- **Review approve/reject actions** (`reviewMemoryObject` + UI Approve/Reject buttons): approve promotes through the **append-only correction/trust gate** (`user_corrected=1`, evidence-required) then bridges + indexes → memory becomes Ask-AI-visible; reject marks rejected, deletes its `evidence_pointers`, and removes its `memory_object` retrieval doc/index rows → removed from Ask AI evidence **and** normal memory search, while keeping `memory_object_evidence`/`source_pointers` for audit.
+- **End-to-end MVP smoke test** (`tests/mvpSmoke.test.ts`): upload → auto-extract → needs_review → approve → grounded **LLM** Ask AI with validated citation → reject → cleanup, with a whole-table secret sweep and a `renderRoute` UI check.
 
-## 6. Recommended implementation order
-Verification and warning surfaces precede any external model. Each step is its own focused branch (`inspect → plan → approve → implement → test`). Approval required before any step that adds network/providers/keys or touches a trust boundary.
+## 2. Partially implemented
+- **Semantic embeddings in retrieval.** The external embedding provider, settings adapter, and manual reindex command exist — but **post-import indexing is keyword-only** (no embedding provider passed), so real semantic vectors populate **only** via the manual "Rebuild Embedding Index" command. Automatic semantic retrieval is opt-in/manual, not on by default.
+- **Grounding ≠ entailment.** Both Ask AI synthesis and extraction enforce **quote-anchoring** (a verbatim quote from a cited span). This is a real guard, but **not** full semantic entailment/NLI — a claim could wrap a real quote in a misleading paraphrase.
+- **Reindex-needed status freshness.** `detectReindexNeeded` + a status surface exist; the Plugin refreshes it on DB-ready and `saveSettings`, but **not after upload/approval**, so it can read stale after new content lands.
+- **LLM failure semantics.** Timeout/malformed/error/empty → deterministic fallback is implemented (Ask AI + extraction). Not handled: **evidence token-budget/truncation** when selected evidence exceeds the model's context window.
+- **Search surfaces are not unified.** Ask AI and memory discovery use the retrieval engine (`retrieval_documents`/`evidence_pointers`); the user-facing **Search view still uses a separate `transcript_spans LIKE` / `ask_ai_runs LIKE` scan** (`sqliteApi.searchVault`).
 
-**Phase A — make the deterministic MVP work end-to-end (no external services).**
-1. Characterization test pinning the current live disconnect (upload → ask → refuses).
-2. Choose the canonical Ask AI path and resolve the Hermes consequence (port Hermes + guardrail into it, or mark deferred).
-3. Wire upload → processing as a tracked **async job** (use the existing `pipeline_runs`/`agent_runs`/`reprocessing_jobs` infra — **not** a single transaction): source pointers → deterministic extraction → evidence pointers → retrieval indexing; idempotent; canonical evidence system declared.
-4. Invoke retrieval indexing live; verify grounded, cited answers in deterministic mode.
-5. Add the retrieval-degradation warning surface (provider/model mismatch, vector unavailable, query-embed failure).
-6. Unify user-facing Search onto the retrieval engine (required).
+## 3. Still missing
+- **Full entailment/NLI verification** of LLM claims/memories (beyond quote-anchoring) — the deeper grounding guarantee.
+- **Automatic semantic embedding** after import/approval, plus **auto-refresh of reindex-needed status** after upload/approval.
+- **Hermes in the live path.** Hermes + its guardrail exist and are tested but are **not invoked by the live frontend Ask AI** (only the unwired orchestration `answerSynthesisAgent`). Personalization is inert in the live app. *(Verified: no Hermes reference in `src/frontend` or `ask-ai/pipeline.ts`.)*
+- **Conflict detection on new memory.** The conflicts subsystem exists, but no live path **runs detection** on newly extracted/approved memory; the live code only *lists* existing conflicts (`listConflictsForTarget`). *(Verified.)*
+- **Unified Search** routed through the retrieval engine.
+- **Retrieval-degradation warning surface** (a provider/model-mismatch vector query silently yields no matches; no user-facing warning).
+- **Incremental indexing.** `rebuildRetrievalIndex` re-scans the whole corpus per import/approval (idempotent, content-hash-skipped, but O(corpus)); vector search is full-scan JS cosine — see Deferred for ANN.
+- **Real packaged Obsidian smoke test.** The smoke test is in-memory through `createSqliteFrontendApi`; there is **no run of the bundled plugin in real Obsidian against a real key**, and **no DOM click-dispatch test** (the test infra has no jsdom; the smoke covers `renderRoute` HTML only, with the `app.ts` dispatch verified by inspection).
 
-**Phase B — settings & provider plumbing (no behavior change).**
-7. Make the API-key storage decision, then add settings (provider/model selection, key handling, mode indicator, offline fallback); key validation lazy/async, never blocking `onload`.
-8. Thread provider/model selection through DI (optional embedding provider + optional `llm` on the ask deps); default deterministic; use Obsidian `requestUrl` for network.
-
-**Phase C — real semantic embeddings.**
-9. Implement a real `EmbeddingProvider` (configured-only; query-embed failure → keyword fallback + warning; mind full-scan cosine cost).
-10. Implement reindex-on-change using `detectReindexNeeded` (reindex into the new space, optional stale-vector cleanup, reconcile `retrieval_index_status`); preserve no-mixing.
-
-**Phase D — real grounded LLM synthesis (gated).**
-11. Build claim↔evidence **entailment verification first** (H2).
-12. Harden the Hermes warning guardrail (structural, not substring).
-13. Implement a real `AskAILanguageModel` (query + selected evidence only; cites only selected pointers; output shape-validated; routed through entailment + the unchanged provenance/citation gate).
-
-**Phase E — optional LLM memory extraction.**
-14. Concrete `MemoryExtractionClient` behind `PromptBasedMemoryExtractor`; optional with deterministic fallback; insert-then-promote preserved.
-
-**Cross-cutting invariants:** tests deterministic/offline; no external model before its grounding check; never network inside a SQLite transaction; raw immutability + provenance untouched; no mixing vector spaces (warn on degradation); no new duplicated search/citation systems; keys never logged/persisted; migrations additive with tests.
+## 4. Deferred / non-MVP
+- **API keys are plaintext in `data.json`** (Obsidian has no secret store; may sync). Documented, warned, redacted everywhere else — but OS-keychain/outside-vault storage is a deliberate future decision.
+- **Native packaging / ABI portability.** Only `native/darwin-arm64-abi140` is packaged; no ABI/arch fallback. Distribution beyond Apple Silicon needs added targets + verification.
+- **Legacy/duplicated systems** (don't revive; clean opportunistically): orphaned `search_documents`(+FTS) path, dead `ai_answer_citations`, `embedding_records` superseded by `search_embeddings`, dual answer tables (`ai_answers` + `ask_ai_runs`, co-written).
+- **Vector scaling**: ANN index / packed vector storage / multi-provider simultaneous indexing / provider-migration tooling.
+- **Ask AI depth**: streaming, multi-turn, tool-use, answer caching.
+- **Extraction depth**: cross-span synthesis, entity resolution, summary objects.
 
 ---
 
-*Analysis only — no implementation performed. Phase A (wiring) is the prerequisite for everything else; grounding-verification and warning surfaces must precede any external model.*
+## 5. Recommended next steps (planning)
+Each is its own focused branch (`inspect → plan → approve → implement → test`); approval required before anything touching network/providers/keys or a trust boundary. Tests stay offline.
+
+1. **Make semantic retrieval real-by-default** — pass the configured embedding provider into post-import indexing *or* auto-flag reindex-needed after upload/approval (low risk, biggest MVP-completeness win). Keep external embedding opt-in; never auto-call external APIs without configuration.
+2. **Decide Hermes** — wire it into the live Ask AI path with the (hardened, structural) warning guardrail, or formally mark it out-of-MVP.
+3. **Evidence token-budget/truncation** for the external LLM (real correctness risk once large transcripts hit the context window).
+4. **Unify the Search view** onto the retrieval engine + **incremental per-target indexing** (consistency + scaling).
+5. **Conflict detection on new/approved memory** (run detection, preserve both sides, append-only).
+6. **Entailment verifier pass** (deeper grounding beyond quote-anchoring).
+7. **Shipping**: native-target fallback, key-storage decision, and a real end-to-end run of the packaged plugin against a real key.
+
+**Cross-cutting invariants (must hold for every step):** raw transcripts immutable; generated objects separate from raw text; every memory/answer traceable to transcript spans; **evidence-first Ask AI** (never answer from the LLM alone); append-only corrections; **rejected/unapproved memory cannot be Ask-AI evidence**; no mixing vector spaces; deterministic local default; tests offline with mock/injected providers; never a network call inside a SQLite transaction; API keys never logged/persisted into vault data or surfaced in errors/health/Markdown; migrations additive with tests.
+
+---
+
+*Analysis only — no implementation performed. The MVP backbone is wired end-to-end; the remaining work is automatic semantic embeddings, deeper grounding, live Hermes/conflict decisions, search unification, scaling, and packaging.*
