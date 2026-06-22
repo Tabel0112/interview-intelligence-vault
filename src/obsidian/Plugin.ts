@@ -16,6 +16,7 @@ import { embeddingReindexStatus, runEmbeddingReindex } from "./embeddingSettings
 import { createObsidianEmbeddingTransport } from "./embeddingTransport.js";
 import { askAiSynthesisFromSettings, memoryExtractorFromSettings } from "./llmSettings.js";
 import { createObsidianLlmTransport } from "./llmTransport.js";
+import { ViewRefreshRegistry } from "./viewRefreshRegistry.js";
 
 export default class TranscriptMemoryVaultPlugin extends Plugin {
   private db: SqliteDatabase | null = null;
@@ -24,12 +25,14 @@ export default class TranscriptMemoryVaultPlugin extends Plugin {
   private api: FrontendApi = createUnavailableFrontendApi(() => this.health);
   // Built once; reused. The transport makes no call until the synthesis adapter actually runs.
   private readonly llmTransport = createObsidianLlmTransport();
+  // Tracks open plugin views so a mutating action in one refreshes the others (cross-view invalidation).
+  private readonly viewRegistry = new ViewRefreshRegistry();
 
   async onload(): Promise<void> {
     await this.loadSettings();
     const navigation = createObsidianNavigation(this.app);
     for (const type of Object.values(OBSIDIAN_VIEW_TYPES)) {
-      this.registerView(type, (leaf) => new TranscriptMemoryItemView(leaf, type as TranscriptMemoryViewType, () => this.api, navigation));
+      this.registerView(type, (leaf) => new TranscriptMemoryItemView(leaf, type as TranscriptMemoryViewType, () => this.api, navigation, this.viewRegistry));
     }
     for (const command of OBSIDIAN_COMMANDS) {
       this.addCommand({ id: command.id, name: command.name, callback: () => void navigationForView(navigation, command.viewType) });
