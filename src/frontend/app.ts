@@ -15,7 +15,18 @@ export async function renderRoute(api: FrontendApi, url: string): Promise<string
   }
 }
 
+// Tracks the active listener set per host element. Obsidian calls the view's render on both onOpen
+// and setState, so mountObsidianUi can run repeatedly on the same contentEl; without this, each run
+// would stack another set of delegated listeners and every click would open duplicate views.
+const mountControllers = new WeakMap<HTMLElement, AbortController>();
+
 export async function mountObsidianUi(root: HTMLElement, api: FrontendApi, navigation: ObsidianNavigation, initialTarget: string): Promise<void> {
+  // Abort any previous mount's listeners on this host so exactly one set is ever active.
+  mountControllers.get(root)?.abort();
+  const controller = new AbortController();
+  mountControllers.set(root, controller);
+  const { signal } = controller;
+
   const render = async (target: string) => {
     root.innerHTML = await renderRoute(api, target);
     const span = new URL(target).searchParams.get("span");
@@ -31,9 +42,12 @@ export async function mountObsidianUi(root: HTMLElement, api: FrontendApi, navig
     const routeControl = (event.target as Element).closest<HTMLElement>("[data-route], a[href]");
     const target = routeControl?.dataset.route ?? routeControl?.getAttribute("href");
     if (!isInternalNavigationTarget(target)) return;
+    // We own internal plugin routes: prevent the default anchor action and stop the event from also
+    // reaching Obsidian's document-level link handler, so the route opens exactly one plugin view.
     event.preventDefault();
+    event.stopPropagation();
     void navigateInternal(navigation, target);
-  });
+  }, { signal });
   root.addEventListener("change", (event) => {
     const input = event.target as HTMLInputElement;
     if (input.name !== "file" || !input.files?.[0]) return;
@@ -47,7 +61,7 @@ export async function mountObsidianUi(root: HTMLElement, api: FrontendApi, navig
       if (filename) filename.value = file.name;
       if (rawText) rawText.value = text;
     });
-  });
+  }, { signal });
   root.addEventListener("submit", (event) => {
     event.preventDefault();
     const form = event.target as HTMLFormElement;
@@ -86,7 +100,7 @@ export async function mountObsidianUi(root: HTMLElement, api: FrontendApi, navig
         if (loading) loading.hidden = true;
       }
     })();
-  });
+  }, { signal });
   await render(initialTarget);
 }
 

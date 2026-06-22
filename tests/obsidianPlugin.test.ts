@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceLeaf } from "obsidian";
 import { askAI, createDatabaseAskAIDependencies } from "../src/ask-ai/index.js";
 import { createRepositories, openDatabase, type SqliteDatabase } from "../src/db/index.js";
-import { createSqliteFrontendApi, isInternalNavigationTarget, navigateInternal, renderRoute, routeHref } from "../src/frontend/index.js";
+import { createSqliteFrontendApi, isInternalNavigationTarget, mountObsidianUi, navigateInternal, renderRoute, routeHref, type ObsidianNavigation } from "../src/frontend/index.js";
 import { importTranscript } from "../src/ingest/index.js";
 import { createObsidianNavigation } from "../src/obsidian/ObsidianNavigation.js";
 import { OBSIDIAN_COMMANDS, OBSIDIAN_RIBBON, OBSIDIAN_VIEW_TYPES } from "../src/obsidian/pluginTypes.js";
@@ -130,5 +130,44 @@ describe("Obsidian internal provenance navigation", () => {
     const html = await renderRoute(api, routeHref.evidence(seeded.pointer.evidence_pointer_id));
     expect(html).toContain('data-trust-state="broken"');
     expect(html).not.toContain("Open exact transcript span");
+  });
+});
+
+describe("Obsidian UI mount does not stack duplicate listeners", () => {
+  // Minimal host backed by Node's built-in EventTarget so addEventListener({ signal }) + dispatchEvent
+  // work without jsdom; closest() is stubbed to return the clicked internal-route control.
+  class FakeHost extends EventTarget {
+    innerHTML = "";
+    routeControl: { dataset: { route?: string }; getAttribute: (name: string) => string | null } | null = null;
+    closest(selector: string): unknown {
+      if (selector.includes("data-copy-quote")) return null;
+      if (selector.includes("data-route") || selector.includes("a[href]")) return this.routeControl;
+      return null;
+    }
+  }
+
+  it("opens exactly one view per internal link click after re-mounting the same host", async () => {
+    const host = new FakeHost();
+    const navigation = {
+      openDashboard: vi.fn(async () => undefined), openUpload: vi.fn(async () => undefined),
+      openTranscript: vi.fn(async () => undefined), openAskAI: vi.fn(async () => undefined),
+      openAnswer: vi.fn(async () => undefined), openEvidence: vi.fn(async () => undefined),
+      openMemoryObject: vi.fn(async () => undefined), openGraph: vi.fn(async () => undefined),
+      openSearch: vi.fn(async () => undefined), openReviewQueue: vi.fn(async () => undefined),
+    } satisfies ObsidianNavigation;
+    const api = createSqliteFrontendApi(db); // the upload route renders without DB rows
+    const el = host as unknown as HTMLElement;
+
+    // Obsidian re-renders on both onOpen and setState, so the same host is mounted twice.
+    await mountObsidianUi(el, api, navigation, "mv://upload");
+    await mountObsidianUi(el, api, navigation, "mv://upload");
+
+    host.routeControl = { dataset: { route: "mv://memory/m1" }, getAttribute: () => null };
+    host.dispatchEvent(new Event("click"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Without listener de-duplication this would be called twice (two stacked click handlers).
+    expect(navigation.openMemoryObject).toHaveBeenCalledTimes(1);
+    expect(navigation.openMemoryObject).toHaveBeenCalledWith("m1");
   });
 });

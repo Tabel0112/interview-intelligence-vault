@@ -5554,17 +5554,29 @@ function transcriptView(transcript, selectedSpanId) {
 function memoryView(view) {
   const memory = view.memory;
   const warning = view.trustState === "strong" ? "" : `<aside class="trust-warning">${trustBadge(view.trustState)} This memory is not independent strong truth.</aside>`;
+  const reviewable = memory.status === "needs_review" || memory.status === "weak";
+  const reviewSection = reviewable ? section("Review decision", `<p>Approve to promote this memory to active, citable evidence, or Reject to remove it from Ask AI and search. Both are append-only and never edit raw transcript text.</p>${memoryReviewControls(memory.id)}`) : "";
   return `${warning}<article class="memory-object">
     <p>${trustBadge(view.trustState)} ${escapeHtml(memory.type)} \xB7 confidence ${score(memory.confidence)} (${escapeHtml(memory.confidenceLabel)})</p>
     <h2>${escapeHtml(memory.title || memory.type)}</h2><p>${escapeHtml(memory.body)}</p>
     <dl><dt>Canonical status</dt><dd>${escapeHtml(memory.status)}</dd><dt>Evidence spans</dt><dd>${memory.evidenceSpanIds.length}</dd><dt>User corrected</dt><dd>${memory.userCorrected ? "yes" : "no"}</dd><dt>Duplicate of</dt><dd>${escapeHtml(memory.duplicateOfId ?? "none")}</dd></dl>
   </article>${section("Evidence", view.evidence.map(evidenceCard).join("") || emptyState("No linked evidence pointers", "This memory cannot be treated as strong."))}
   ${view.conflicts.length ? section("Conflicts", view.conflicts.map((item) => `<article>${trustBadge("conflicting")} <strong>${escapeHtml(item.summary)}</strong><p>${escapeHtml(item.explanation)}</p></article>`).join("")) : ""}
+  ${reviewSection}
   ${section("Submit a correction", correctionForm("memory_object", memory.id))}`;
 }
-var reviewActions = (item) => item.type === "memory_needs_review" && item.targetType === "memory_object" ? `<form data-action="review"><input type="hidden" name="memoryId" value="${escapeHtml(item.targetId)}">
-        <button type="submit" name="decision" value="approve">Approve</button>
-        <button type="submit" name="decision" value="reject">Reject</button></form><div data-form-result></div>` : "";
+var memoryReviewControls = (memoryId) => `<form data-action="review" class="review-actions"><input type="hidden" name="memoryId" value="${escapeHtml(memoryId)}">
+      <button type="submit" name="decision" value="approve">Approve</button>
+      <button type="submit" name="decision" value="reject">Reject</button></form><div data-form-result></div>`;
+var reviewActions = (item) => {
+  if (item.targetType === "memory_object" && (item.type === "memory_needs_review" || item.type === "weak_evidence")) {
+    return memoryReviewControls(item.targetId);
+  }
+  if (item.type === "weak_evidence") {
+    return `<p class="trust-warning">This weak-evidence item is attached to a ${escapeHtml(item.targetType)}, not a memory object, so it has no direct Approve/Reject. Open the linked evidence and use the append-only correction below.</p>`;
+  }
+  return "";
+};
 function reviewCard(item) {
   return `<article class="review-card">${trustBadge(item.trustState)}<h3><a href="${escapeHtml(item.href)}">${escapeHtml(item.title)}</a></h3>
     <p>${escapeHtml(item.detail)}</p><small>${escapeHtml(item.severity)} severity \xB7 ${escapeHtml(item.status)} \xB7 ${escapeHtml(item.type)} \xB7 ${escapeHtml(item.targetType)}:${escapeHtml(item.targetId)}</small>
@@ -5688,7 +5700,12 @@ async function renderRoute(api, url) {
     return appShell("Unable to load view", `<section class="trust-warning"><h2>Transcript Memory Vault could not load this view</h2><p>${escapeHtml(detail)}</p><p>The plugin did not continue as if unavailable data were trustworthy. Open the dashboard or plugin settings for database health details.</p></section>`);
   }
 }
+var mountControllers = /* @__PURE__ */ new WeakMap();
 async function mountObsidianUi(root, api, navigation, initialTarget) {
+  mountControllers.get(root)?.abort();
+  const controller = new AbortController();
+  mountControllers.set(root, controller);
+  const { signal } = controller;
   const render = async (target) => {
     root.innerHTML = await renderRoute(api, target);
     const span = new URL(target).searchParams.get("span");
@@ -5705,8 +5722,9 @@ async function mountObsidianUi(root, api, navigation, initialTarget) {
     const target = routeControl?.dataset.route ?? routeControl?.getAttribute("href");
     if (!isInternalNavigationTarget(target)) return;
     event.preventDefault();
+    event.stopPropagation();
     void navigateInternal(navigation, target);
-  });
+  }, { signal });
   root.addEventListener("change", (event) => {
     const input = event.target;
     if (input.name !== "file" || !input.files?.[0]) return;
@@ -5720,7 +5738,7 @@ async function mountObsidianUi(root, api, navigation, initialTarget) {
       if (filename) filename.value = file.name;
       if (rawText) rawText.value = text;
     });
-  });
+  }, { signal });
   root.addEventListener("submit", (event) => {
     event.preventDefault();
     const form = event.target;
@@ -5761,7 +5779,7 @@ async function mountObsidianUi(root, api, navigation, initialTarget) {
         if (loading) loading.hidden = true;
       }
     })();
-  });
+  }, { signal });
   await render(initialTarget);
 }
 function isInternalNavigationTarget(target) {

@@ -75,21 +75,41 @@ function transcriptView(transcript: TranscriptView, selectedSpanId?: string): st
 function memoryView(view: MemoryView): string {
   const memory = view.memory;
   const warning = view.trustState === "strong" ? "" : `<aside class="trust-warning">${trustBadge(view.trustState)} This memory is not independent strong truth.</aside>`;
+  // A memory in a reviewable state gets the same Approve/Reject controls here as in the review queue,
+  // so following a review item to its memory page is never a dead end.
+  const reviewable = memory.status === "needs_review" || memory.status === "weak";
+  const reviewSection = reviewable
+    ? section("Review decision", `<p>Approve to promote this memory to active, citable evidence, or Reject to remove it from Ask AI and search. Both are append-only and never edit raw transcript text.</p>${memoryReviewControls(memory.id)}`)
+    : "";
   return `${warning}<article class="memory-object">
     <p>${trustBadge(view.trustState)} ${escapeHtml(memory.type)} · confidence ${score(memory.confidence)} (${escapeHtml(memory.confidenceLabel)})</p>
     <h2>${escapeHtml(memory.title || memory.type)}</h2><p>${escapeHtml(memory.body)}</p>
     <dl><dt>Canonical status</dt><dd>${escapeHtml(memory.status)}</dd><dt>Evidence spans</dt><dd>${memory.evidenceSpanIds.length}</dd><dt>User corrected</dt><dd>${memory.userCorrected ? "yes" : "no"}</dd><dt>Duplicate of</dt><dd>${escapeHtml(memory.duplicateOfId ?? "none")}</dd></dl>
   </article>${section("Evidence", view.evidence.map(evidenceCard).join("") || emptyState("No linked evidence pointers", "This memory cannot be treated as strong."))}
   ${view.conflicts.length ? section("Conflicts", view.conflicts.map((item) => `<article>${trustBadge("conflicting")} <strong>${escapeHtml(item.summary)}</strong><p>${escapeHtml(item.explanation)}</p></article>`).join("")) : ""}
+  ${reviewSection}
   ${section("Submit a correction", correctionForm("memory_object", memory.id))}`;
 }
 
-const reviewActions = (item: ReviewItemView): string =>
-  item.type === "memory_needs_review" && item.targetType === "memory_object"
-    ? `<form data-action="review"><input type="hidden" name="memoryId" value="${escapeHtml(item.targetId)}">
-        <button type="submit" name="decision" value="approve">Approve</button>
-        <button type="submit" name="decision" value="reject">Reject</button></form><div data-form-result></div>`
-    : "";
+// Approve/Reject operate on a memory object's review status via reviewMemoryObject. They are shown
+// only when the review item is safely tied to a real memory_object id — never creating fake evidence
+// or editing raw transcript text. The submit handler reads memoryId from this form.
+const memoryReviewControls = (memoryId: string): string =>
+  `<form data-action="review" class="review-actions"><input type="hidden" name="memoryId" value="${escapeHtml(memoryId)}">
+      <button type="submit" name="decision" value="approve">Approve</button>
+      <button type="submit" name="decision" value="reject">Reject</button></form><div data-form-result></div>`;
+
+const reviewActions = (item: ReviewItemView): string => {
+  // memory_needs_review is always a memory_object; weak_evidence may be attached to a memory_object.
+  if (item.targetType === "memory_object" && (item.type === "memory_needs_review" || item.type === "weak_evidence")) {
+    return memoryReviewControls(item.targetId);
+  }
+  // Weak evidence not tied to a memory object: no safe direct Approve/Reject — explain instead.
+  if (item.type === "weak_evidence") {
+    return `<p class="trust-warning">This weak-evidence item is attached to a ${escapeHtml(item.targetType)}, not a memory object, so it has no direct Approve/Reject. Open the linked evidence and use the append-only correction below.</p>`;
+  }
+  return "";
+};
 
 function reviewCard(item: ReviewItemView): string {
   return `<article class="review-card">${trustBadge(item.trustState)}<h3><a href="${escapeHtml(item.href)}">${escapeHtml(item.title)}</a></h3>

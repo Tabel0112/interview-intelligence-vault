@@ -189,6 +189,35 @@ describe("SQLite frontend adapter", () => {
     expect((db.prepare("SELECT raw_text FROM transcripts WHERE id=?").get(seeded.imported.transcriptId) as { raw_text: string }).raw_text).toBe(seeded.rawText);
   });
 
+  it("exposes Approve/Reject for reviewable memory objects on the memory page and weak-evidence detail", async () => {
+    const seeded = await fixture();
+    const api = createSqliteFrontendApi(db, { now });
+
+    // The memory page of a needs_review memory now offers Approve/Reject, so following a review item
+    // to its memory page is not a dead end. Append-only correction is preserved alongside.
+    const memoryHtml = await renderRoute(api, routeHref.memory(seeded.weak.id));
+    expect(memoryHtml).toContain("Review decision");
+    expect(memoryHtml).toContain('data-action="review"');
+    expect(memoryHtml).toContain(`name="memoryId" value="${seeded.weak.id}"`);
+    expect(memoryHtml).toContain("Approve");
+    expect(memoryHtml).toContain("Reject");
+    expect(memoryHtml).toContain("Submit a correction");
+
+    // A weak-evidence review item tied to a memory object exposes Approve/Reject on its detail page,
+    // wired to that memory id (not the evidence pointer id).
+    const weakPointer = linkMemoryObjectToSpan(db, {
+      memoryObjectId: seeded.strong.id, transcriptId: seeded.imported.transcriptId, spanId: seeded.spans[1].id,
+      evidenceRole: "support", evidenceStrength: "weak", confidence: 0.3,
+    });
+    const weakItems = await api.listReviewItems({ type: "weak_evidence" });
+    expect(weakItems.some((item) => item.id === `weak:${weakPointer.evidence_pointer_id}` && item.targetType === "memory_object" && item.targetId === seeded.strong.id)).toBe(true);
+    const detailHtml = await renderRoute(api, `/review/weak:${weakPointer.evidence_pointer_id}`);
+    expect(detailHtml).toContain('data-action="review"');
+    expect(detailHtml).toContain(`name="memoryId" value="${seeded.strong.id}"`);
+    expect(detailHtml).toContain("Approve");
+    expect(detailHtml).toContain("Reject");
+  });
+
   it("limits dashboard and transcript rendering for large vaults", async () => {
     for (let index = 0; index < 12; index += 1) {
       importTranscript(db, { filename: `many-${index}.txt`, rawText: `Speaker: Unique transcript ${index}.` });
