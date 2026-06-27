@@ -1,16 +1,8 @@
 import { describe, expect, it } from "vitest";
-import {
-  externalLlmConfigFromSettings, llmResolutionSummary, resolveLlmProviderFromSettings,
-} from "../src/obsidian/llmSettings.js";
-import { DEFAULT_SETTINGS, setApiKey, type TranscriptMemorySettings } from "../src/obsidian/settings.js";
-import { ExternalLlmProvider, LocalDeterministicLlmProvider, type LlmTransport } from "../src/llm/index.js";
+import { externalLlmConfigFromSettings } from "../src/obsidian/llmSettings.js";
+import { DEFAULT_SETTINGS, isLlmConfigured, setApiKey, type TranscriptMemorySettings } from "../src/obsidian/settings.js";
 
 const SECRET = "sk-llm-settings-SECRET-1234567890";
-
-// A transport that would FAIL the test if ever called — proves the adapter makes no network call.
-const forbiddenTransport: LlmTransport = async () => {
-  throw new Error("network must not be called from the adapter");
-};
 
 const externalSettings = (overrides: Partial<TranscriptMemorySettings["llm"]> = {}, withKey = true): TranscriptMemorySettings => {
   const base: TranscriptMemorySettings = {
@@ -29,8 +21,8 @@ describe("externalLlmConfigFromSettings", () => {
     expect(config).toEqual({ id: "openai", model: "gpt-4o-mini", apiKey: SECRET, baseUrl: "https://api.test/v1", timeoutMs: 5000 });
   });
 
-  it("returns null when not external, unsupported provider, missing model, or missing key", () => {
-    expect(externalLlmConfigFromSettings(DEFAULT_SETTINGS)).toBeNull(); // mode local
+  it("returns null when not external, unsupported provider, missing model, or missing key (never a local fallback)", () => {
+    expect(externalLlmConfigFromSettings(DEFAULT_SETTINGS)).toBeNull(); // mode local / unconfigured
     expect(externalLlmConfigFromSettings({ ...externalSettings(), mode: "local" })).toBeNull();
     expect(externalLlmConfigFromSettings(externalSettings({ provider: "anthropic" }))).toBeNull(); // unsupported
     expect(externalLlmConfigFromSettings(externalSettings({ model: "  " }))).toBeNull(); // blank model
@@ -38,52 +30,16 @@ describe("externalLlmConfigFromSettings", () => {
   });
 });
 
-describe("resolveLlmProviderFromSettings", () => {
-  it("defaults to the local deterministic provider (no network)", () => {
-    const resolution = resolveLlmProviderFromSettings(DEFAULT_SETTINGS, { transport: forbiddenTransport });
-    expect(resolution.provider).toBeInstanceOf(LocalDeterministicLlmProvider);
-    expect(resolution.usedFallback).toBe(false);
+describe("isLlmConfigured (live-app readiness)", () => {
+  it("is false for the default (unconfigured) settings", () => {
+    expect(isLlmConfigured(DEFAULT_SETTINGS)).toBe(false);
   });
 
-  it("resolves the external provider when fully configured, without calling the transport", () => {
-    const resolution = resolveLlmProviderFromSettings(externalSettings(), { transport: forbiddenTransport });
-    expect(resolution.provider).toBeInstanceOf(ExternalLlmProvider);
-    expect(resolution.provider.id).toBe("openai");
-    expect(resolution.provider.isLocal).toBe(false);
-    expect(resolution.usedFallback).toBe(false);
-  });
-
-  it("falls back to local with a clear non-secret reason when the key is missing", () => {
-    const resolution = resolveLlmProviderFromSettings(externalSettings({}, false));
-    expect(resolution.provider).toBeInstanceOf(LocalDeterministicLlmProvider);
-    expect(resolution.usedFallback).toBe(true);
-    expect(resolution.reason).toContain("openai");
-    expect(resolution.reason).not.toContain(SECRET);
-  });
-
-  it("falls back to local when the model is missing", () => {
-    expect(resolveLlmProviderFromSettings(externalSettings({ model: "" })).usedFallback).toBe(true);
-  });
-
-  it("treats an unsupported or local provider as local (not external)", () => {
-    expect(resolveLlmProviderFromSettings(externalSettings({ provider: "anthropic" })).usedFallback).toBe(false);
-    expect(resolveLlmProviderFromSettings(externalSettings({ provider: "anthropic" })).provider).toBeInstanceOf(LocalDeterministicLlmProvider);
-    expect(resolveLlmProviderFromSettings({ ...externalSettings(), mode: "local" }).provider).toBeInstanceOf(LocalDeterministicLlmProvider);
-  });
-});
-
-describe("llmResolutionSummary", () => {
-  it("is non-secret and contains no live provider object", () => {
-    const summary = llmResolutionSummary(resolveLlmProviderFromSettings(externalSettings()));
-    expect(summary).toEqual({ requestedId: "openai", providerId: "openai", model: "gpt-4o-mini", isLocal: false, usedFallback: false, reason: undefined });
-    expect(JSON.stringify(summary)).not.toContain(SECRET);
-    expect((summary as unknown as Record<string, unknown>).provider).toBeUndefined();
-  });
-
-  it("summarizes a fallback with a non-secret reason", () => {
-    const summary = llmResolutionSummary(resolveLlmProviderFromSettings(externalSettings({}, false)));
-    expect(summary.usedFallback).toBe(true);
-    expect(summary.isLocal).toBe(true);
-    expect(JSON.stringify(summary)).not.toContain(SECRET);
+  it("is true only when an external provider, model, and API key are all set", () => {
+    expect(isLlmConfigured(externalSettings())).toBe(true);
+    expect(isLlmConfigured(externalSettings({}, false))).toBe(false); // missing key
+    expect(isLlmConfigured(externalSettings({ model: "" }))).toBe(false); // missing model
+    expect(isLlmConfigured({ ...externalSettings(), mode: "local" })).toBe(false); // not external
+    expect(isLlmConfigured(externalSettings({ provider: "none" }))).toBe(false); // not an external provider
   });
 });

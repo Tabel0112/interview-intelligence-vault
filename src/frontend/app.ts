@@ -82,7 +82,7 @@ export async function mountObsidianUi(root: HTMLElement, api: FrontendApi, navig
           const imported = await api.uploadTranscript({ filename: String(data.get("filename") ?? ""), rawText: String(data.get("rawText") ?? "") });
           if (result) {
             result.innerHTML = `${imported.status === "duplicate" ? '<strong>Duplicate transcript:</strong> existing immutable source reused.' : "<strong>Transcript imported successfully.</strong>"}
-              <a href="${escapeHtml(routeHref.transcript(imported.transcriptId))}">Open transcript</a> <a href="${routeHref.dashboard()}">Dashboard</a>`;
+              <a href="${escapeHtml(routeHref.transcript(imported.transcriptId))}">Open transcript</a> <a href="${routeHref.dashboard()}">Dashboard</a>${imported.warning ? `<p class="trust-warning">${escapeHtml(imported.warning)}</p>` : ""}`;
           }
         } else if (action === "ask") {
           const answer = await api.ask(String(data.get("question") ?? ""), { transcriptIds: data.getAll("transcriptIds").map(String) });

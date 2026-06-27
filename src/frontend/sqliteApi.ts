@@ -1,4 +1,4 @@
-import { askAI, createDatabaseAskAIDependencies, getAskAIResponse, type AskAILanguageModel, type SynthesisInfo } from "../ask-ai/index.js";
+import { askAI, createDatabaseAskAIDependencies, getAskAIResponse, SynthesisSetupRequiredError, type AskAILanguageModel, type SynthesisInfo } from "../ask-ai/index.js";
 import { createConflictRepository } from "../conflicts/index.js";
 import type { SqliteDatabase } from "../db/connection.js";
 import { createCorrectionsRepo } from "../db/repositories/correctionsRepo.js";
@@ -174,7 +174,16 @@ function normalizeCorrectionTarget(db: SqliteDatabase, input: Parameters<Fronten
 
 export function createSqliteFrontendApi(
   db: SqliteDatabase,
-  options: { now?: () => Date; health?: PluginHealth; getSynthesis?: () => { llm?: AskAILanguageModel; info: SynthesisInfo } | undefined; getMemoryExtractor?: () => MemoryExtractor } = {},
+  options: {
+    now?: () => Date;
+    health?: PluginHealth;
+    getSynthesis?: () => { llm?: AskAILanguageModel; info: SynthesisInfo } | undefined;
+    getMemoryExtractor?: () => MemoryExtractor | undefined;
+    /** Live app: require a configured LLM for generation; never fall back to deterministic output. */
+    llmRequired?: boolean;
+    /** Current-settings readiness (no construction); used for setup-required UI. */
+    getLlmReady?: () => boolean;
+  } = {},
 ): FrontendApi {
   return {
     async getDashboard(): Promise<DashboardView> {
@@ -189,6 +198,8 @@ export function createSqliteFrontendApi(
         conflictCount: review.filter((item) => item.trustState === "conflicting").length,
         brokenCount: review.filter((item) => item.trustState === "broken").length,
         health: options.health,
+        llmRequired: !!options.llmRequired,
+        llmReady: options.getLlmReady ? options.getLlmReady() : !options.llmRequired,
       };
     },
     async listTranscripts() { return transcriptList(db); },
@@ -200,6 +211,10 @@ export function createSqliteFrontendApi(
       // Automatically extract memory only after a successful NEW import, and never twice for the same
       // transcript. Extraction failure must never lose/roll back the imported transcript.
       const extractor = result.status === "imported" ? options.getMemoryExtractor?.() : undefined;
+      // LLM-required: a new import with no configured LLM keeps the raw transcript but skips AI extraction.
+      if (result.status === "imported" && !extractor && options.llmRequired) {
+        warning = warning ?? "Transcript imported. AI memory extraction needs a configured LLM — set one up in Settings, then run \"Run AI extraction\".";
+      }
       if (extractor && !db.prepare("SELECT 1 FROM extraction_runs WHERE transcript_id=? AND status='completed' LIMIT 1").get(result.transcriptId)) {
         try {
           const extraction = await extractMemoryObjectsForTranscript(db, { transcriptId: result.transcriptId, extractor });
@@ -238,11 +253,14 @@ export function createSqliteFrontendApi(
     },
     async ask(question, askOptions) {
       const synth = options.getSynthesis?.();
-      return askAI({ question, transcriptIds: askOptions?.transcriptIds }, createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, synthesisInfo: synth?.info }));
+      // LLM-required: with no LLM configured, refuse with setup-required before answering (no deterministic answer).
+      if (options.llmRequired && !synth?.llm) throw new SynthesisSetupRequiredError();
+      return askAI({ question, transcriptIds: askOptions?.transcriptIds }, createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, synthesisInfo: synth?.info, requireLlm: options.llmRequired }));
     },
     async askAI(question, askOptions) {
       const synth = options.getSynthesis?.();
-      return askAI({ question, transcriptIds: askOptions?.transcriptIds }, createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, synthesisInfo: synth?.info }));
+      if (options.llmRequired && !synth?.llm) throw new SynthesisSetupRequiredError();
+      return askAI({ question, transcriptIds: askOptions?.transcriptIds }, createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, synthesisInfo: synth?.info, requireLlm: options.llmRequired }));
     },
     async getAnswer(id) {
       try {
@@ -351,6 +369,25 @@ export function createSqliteFrontendApi(
         return { status: "rejected", warning: "Memory rejected, but evidence cleanup did not complete." };
       }
       return { status: "rejected" };
+    },
+    async getLlmStatus() {
+      const required = !!options.llmRequired;
+      return { required, ready: options.getLlmReady ? options.getLlmReady() : !required };
+    },
+    async runExtraction(transcriptId) {
+      if (!db.prepare("SELECT 1 FROM transcripts WHERE id=?").get(transcriptId)) return { status: "failed", warning: "Transcript not found." };
+      if (db.prepare("SELECT 1 FROM extraction_runs WHERE transcript_id=? AND status='completed' LIMIT 1").get(transcriptId)) return { status: "skipped" };
+      const extractor = options.getMemoryExtractor?.();
+      if (!extractor) return { status: "setup_required", warning: "AI memory extraction needs a configured LLM — set one up in Settings." };
+      try {
+        const extraction = await extractMemoryObjectsForTranscript(db, { transcriptId, extractor });
+        const runStatus = db.prepare("SELECT status FROM extraction_runs WHERE id=?").get(extraction.extractionRunId) as { status: string } | undefined;
+        if (runStatus?.status !== "completed") return { status: "failed", warning: "AI memory extraction did not complete. Please try again." };
+      } catch {
+        return { status: "failed", warning: "AI memory extraction did not complete. Please try again." };
+      }
+      try { await indexTranscriptForRetrieval(db, transcriptId); } catch { /* indexing is best-effort */ }
+      return { status: "extracted" };
     },
   };
 }

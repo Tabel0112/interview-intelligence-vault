@@ -1,20 +1,16 @@
-// Pure adapter from plugin settings to an LLM provider configuration / resolution.
+// Pure adapter from plugin settings to the external LLM used for generation.
 //
-// PURE: no Obsidian runtime, no network, no Date/random. Resolving an external provider only
-// CONSTRUCTS it (which validates the key) — it never calls the network. The local deterministic
-// provider is the default and the safe fallback. A future Ask AI wiring will pass the Obsidian
-// requestUrl transport (src/obsidian/llmTransport.ts); nothing here makes a call.
+// The live app is LLM-REQUIRED: there is no local/deterministic product mode and no live fallback.
+// When settings do not fully configure an external (OpenAI-compatible) provider, these resolvers return
+// `undefined`, and the frontend renders a setup-required state instead of fabricating local output.
 //
-// The returned config carries the API key only because that is its purpose (configuring the
-// provider). The key is never logged here, and llmResolutionSummary is non-secret and contains
-// no live provider object.
+// PURE: no Obsidian runtime, no network, no Date/random. Resolving only CONSTRUCTS the provider (which
+// validates the key) — it never calls the network until synthesis/extraction actually runs. The API key
+// is never logged here, and only non-secret summaries are exposed to health/UI.
 
 import { createLlmAskAILanguageModel, type AskAILanguageModel, type SynthesisInfo } from "../ask-ai/index.js";
-import {
-  ExternalLlmProvider, LocalDeterministicLlmProvider,
-  type ExternalLlmProviderConfig, type LlmProvider, type LlmTransport,
-} from "../llm/index.js";
-import { createLlmMemoryExtractor, DeterministicRuleExtractor, type MemoryExtractor } from "../memory/index.js";
+import { ExternalLlmProvider, type ExternalLlmProviderConfig, type LlmTransport } from "../llm/index.js";
+import { createLlmMemoryExtractor, type MemoryExtractor } from "../memory/index.js";
 import { isExternalLlmProvider, type TranscriptMemorySettings } from "./settings.js";
 
 /**
@@ -23,7 +19,7 @@ import { isExternalLlmProvider, type TranscriptMemorySettings } from "./settings
  *   - the LLM provider is an external (OpenAI-compatible) provider,
  *   - the model is non-blank, and
  *   - a non-blank API key exists for that provider.
- * Otherwise returns null, so callers fall back to the local deterministic provider.
+ * Otherwise returns null (the caller treats this as setup-required — never a deterministic fallback).
  */
 export function externalLlmConfigFromSettings(settings: TranscriptMemorySettings): ExternalLlmProviderConfig | null {
   if (settings.mode !== "external") return null;
@@ -39,96 +35,41 @@ export function externalLlmConfigFromSettings(settings: TranscriptMemorySettings
   return config;
 }
 
-export interface LlmProviderResolution {
-  /** Live provider — holds the API key. Do not serialize; use llmResolutionSummary instead. */
-  provider: LlmProvider;
-  requestedId: string;
-  usedFallback: boolean;
-  reason?: string;
-}
-
-/**
- * Resolve the LLM provider implied by settings. Network-free (construction only). A mock transport
- * may be injected for tests; production passes the Obsidian requestUrl transport. When external is
- * selected but not fully configured, falls back to the local deterministic provider with a clear,
- * non-secret reason.
- */
-export function resolveLlmProviderFromSettings(
-  settings: TranscriptMemorySettings,
-  options: { transport?: LlmTransport } = {},
-): LlmProviderResolution {
+/** Construct the configured external LLM provider, or null when not fully configured. Network-free. */
+function externalProviderFromSettings(settings: TranscriptMemorySettings, options: { transport?: LlmTransport }): ExternalLlmProvider | null {
   const external = externalLlmConfigFromSettings(settings);
-  if (external) {
-    const config: ExternalLlmProviderConfig = options.transport ? { ...external, transport: options.transport } : external;
-    return { provider: new ExternalLlmProvider(config), requestedId: external.id, usedFallback: false };
-  }
-  if (settings.mode === "external" && isExternalLlmProvider(settings.llm.provider)) {
-    return {
-      provider: new LocalDeterministicLlmProvider(),
-      requestedId: settings.llm.provider,
-      usedFallback: true,
-      reason: `External LLM provider "${settings.llm.provider}" is not fully configured (needs a model and a non-blank API key); using the local deterministic LLM provider.`,
-    };
-  }
-  return {
-    provider: new LocalDeterministicLlmProvider(),
-    requestedId: settings.llm.provider || "local-deterministic",
-    usedFallback: false,
-  };
-}
-
-/** Non-secret summary of an LLM resolution. Safe for health/status: no key, no live provider object. */
-export interface LlmResolutionSummary {
-  requestedId: string;
-  providerId: string;
-  model: string;
-  isLocal: boolean;
-  usedFallback: boolean;
-  reason?: string;
-}
-
-export function llmResolutionSummary(resolution: LlmProviderResolution): LlmResolutionSummary {
-  return {
-    requestedId: resolution.requestedId,
-    providerId: resolution.provider.id,
-    model: resolution.provider.model,
-    isLocal: resolution.provider.isLocal,
-    usedFallback: resolution.usedFallback,
-    reason: resolution.reason,
-  };
+  if (!external) return null;
+  return new ExternalLlmProvider(options.transport ? { ...external, transport: options.transport } : external);
 }
 
 export interface AskAiSynthesis {
-  /** Set ONLY when a valid external LLM is configured; otherwise undefined (deterministic path). */
-  llm?: AskAILanguageModel;
+  /** The grounded LLM synthesis adapter. Present only when an external LLM is configured. */
+  llm: AskAILanguageModel;
   /** Non-secret configured-synthesis summary recorded with the answer. No keys/provider objects. */
   info: SynthesisInfo;
 }
 
 /**
- * Build the Ask AI synthesis dependency from settings. Resolving constructs a provider (no network);
- * the LLM is wrapped in the grounded synthesis adapter ONLY when the resolved provider is external.
- * For local/unconfigured/incomplete settings, llm is undefined so Ask AI uses deterministic synthesis.
+ * Build the Ask AI synthesis dependency from settings, or `undefined` when no external LLM is configured.
+ * The live wiring treats `undefined` as setup-required (no deterministic synthesis in the live app).
+ * Resolving only constructs a provider — no network call happens here.
  */
-export function askAiSynthesisFromSettings(settings: TranscriptMemorySettings, options: { transport?: LlmTransport } = {}): AskAiSynthesis {
-  const resolution = resolveLlmProviderFromSettings(settings, options);
-  const external = !resolution.provider.isLocal;
-  const info: SynthesisInfo = {
-    mode: external ? "external_llm" : "deterministic",
-    provider: resolution.provider.id,
-    model: resolution.provider.model,
-    usedFallback: resolution.usedFallback,
+export function askAiSynthesisFromSettings(settings: TranscriptMemorySettings, options: { transport?: LlmTransport } = {}): AskAiSynthesis | undefined {
+  const provider = externalProviderFromSettings(settings, options);
+  if (!provider) return undefined;
+  return {
+    llm: createLlmAskAILanguageModel(provider),
+    info: { mode: "external_llm", provider: provider.id, model: provider.model, usedFallback: false },
   };
-  return { llm: external ? createLlmAskAILanguageModel(resolution.provider) : undefined, info };
 }
 
 /**
- * Resolve the memory extractor from settings. Deterministic is the default; the grounded LLM
- * extractor (with a deterministic per-window fallback) is used ONLY when the resolved provider is a
- * valid external LLM. Resolving only constructs a provider — no network call happens here.
+ * Resolve the memory extractor from settings, or `undefined` when no external LLM is configured.
+ * The returned LLM extractor has NO deterministic fallback (the live app must not fabricate memory).
+ * Resolving only constructs a provider — no network call happens here.
  */
-export function memoryExtractorFromSettings(settings: TranscriptMemorySettings, options: { transport?: LlmTransport } = {}): MemoryExtractor {
-  const resolution = resolveLlmProviderFromSettings(settings, options);
-  if (resolution.provider.isLocal) return new DeterministicRuleExtractor();
-  return createLlmMemoryExtractor(resolution.provider, { fallback: new DeterministicRuleExtractor() });
+export function memoryExtractorFromSettings(settings: TranscriptMemorySettings, options: { transport?: LlmTransport } = {}): MemoryExtractor | undefined {
+  const provider = externalProviderFromSettings(settings, options);
+  if (!provider) return undefined;
+  return createLlmMemoryExtractor(provider);
 }

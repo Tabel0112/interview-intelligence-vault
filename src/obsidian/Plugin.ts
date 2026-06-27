@@ -11,7 +11,7 @@ import { TranscriptMemoryItemView } from "./TranscriptMemoryItemView.js";
 import { createObsidianAppApi } from "./services/ObsidianAppApi.js";
 import { OBSIDIAN_COMMANDS, OBSIDIAN_REINDEX_COMMAND, OBSIDIAN_RIBBON, OBSIDIAN_VIEW_TYPES, type TranscriptMemoryViewType } from "./pluginTypes.js";
 import { createUnavailableFrontendApi, DESKTOP_ONLY_MESSAGE, initialPluginHealth, readableStartupError, startupSupport, type PluginHealth } from "./startup.js";
-import { DEFAULT_SETTINGS, normalizeSettings, settingsHealthSummary, type TranscriptMemorySettings } from "./settings.js";
+import { DEFAULT_SETTINGS, isLlmConfigured, normalizeSettings, settingsHealthSummary, type TranscriptMemorySettings } from "./settings.js";
 import { embeddingReindexStatus, runEmbeddingReindex } from "./embeddingSettings.js";
 import { createObsidianEmbeddingTransport } from "./embeddingTransport.js";
 import { askAiSynthesisFromSettings, memoryExtractorFromSettings } from "./llmSettings.js";
@@ -38,6 +38,7 @@ export default class TranscriptMemoryVaultPlugin extends Plugin {
       this.addCommand({ id: command.id, name: command.name, callback: () => void navigationForView(navigation, command.viewType) });
     }
     this.addCommand({ id: OBSIDIAN_REINDEX_COMMAND.id, name: OBSIDIAN_REINDEX_COMMAND.name, callback: () => void this.rebuildEmbeddingIndex() });
+    this.addCommand({ id: "run-ai-extraction", name: "Run AI extraction for transcripts missing it", callback: () => void this.runPendingExtraction() });
     this.addRibbonIcon(OBSIDIAN_RIBBON.icon, OBSIDIAN_RIBBON.title, () => void navigation.openDashboard());
     this.addSettingTab(new TranscriptMemorySettingsTab(this.app, this, () => this.health, navigation, () => this.pluginSettings, (next) => this.saveSettings(next)));
 
@@ -80,11 +81,13 @@ export default class TranscriptMemoryVaultPlugin extends Plugin {
         ...this.health, status: "ready", databaseConnected: true, migrationStatus: "current", appliedMigrationCount,
         realSqliteStorage: true, firstRun, lastInitializationError: null,
       };
-      // Per-ask getter: resolves the LLM synthesis from CURRENT settings (no network until synthesis runs).
-      // Ask AI stays deterministic unless settings resolve to a valid external LLM provider.
+      // Per-call getters resolve the LLM from CURRENT settings (no network until synthesis/extraction runs).
+      // The live app is LLM-REQUIRED: when no external LLM is configured the getters return undefined and
+      // the UI shows setup-required instead of generating deterministic output.
       this.api = createObsidianAppApi(this.db, this.app.vault, this.health,
         () => askAiSynthesisFromSettings(this.pluginSettings, { transport: this.llmTransport }),
-        () => memoryExtractorFromSettings(this.pluginSettings, { transport: this.llmTransport }));
+        () => memoryExtractorFromSettings(this.pluginSettings, { transport: this.llmTransport }),
+        { llmRequired: true, getLlmReady: () => isLlmConfigured(this.pluginSettings) });
       this.refreshReindexStatus();
       if (firstRun) new Notice("Transcript Memory Vault is ready. Upload a transcript to begin.");
     } catch (error) {
@@ -139,6 +142,22 @@ export default class TranscriptMemoryVaultPlugin extends Plugin {
       // Status is best-effort and must never break the plugin.
       this.health = { ...this.health, reindexSummary: "Reindex status unavailable." };
     }
+  }
+
+  /** Run AI extraction for any transcript imported before the LLM was configured. Requires a configured LLM. */
+  private async runPendingExtraction(): Promise<void> {
+    if (!this.db || this.health.status !== "ready") { new Notice("Transcript Memory Vault is not ready."); return; }
+    if (!isLlmConfigured(this.pluginSettings)) { new Notice("Configure an LLM provider, model, and API key in Settings first."); return; }
+    new Notice("Running AI extraction…");
+    let extracted = 0, failed = 0, skipped = 0;
+    for (const transcript of await this.api.listTranscripts()) {
+      const result = await this.api.runExtraction(transcript.id);
+      if (result.status === "extracted") extracted += 1;
+      else if (result.status === "failed") failed += 1;
+      else skipped += 1;
+    }
+    new Notice(`AI extraction: ${extracted} processed, ${skipped} already done, ${failed} failed.`);
+    await this.viewRegistry.notifyMutation();
   }
 
   /** EXPLICIT manual action. The only path that may make a network call (when external is configured). */

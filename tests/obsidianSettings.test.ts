@@ -137,8 +137,15 @@ describe("transcript memory settings foundation", () => {
       embeddingProvider: "deterministic-test",
       embeddingModel: "token-hash-v1",
       apiKeyConfigured: true,
+      llmReady: false, // "anthropic" is not an OpenAI-compatible external provider -> not LLM-ready
     });
     expect(JSON.stringify(summary)).not.toContain(SECRET);
+  });
+
+  it("settingsHealthSummary reports llmReady true only for a fully-configured OpenAI-compatible LLM", () => {
+    const ready = setApiKey({ ...DEFAULT_SETTINGS, mode: "external", llm: { provider: "openai", model: "gpt-4o-mini" } }, "openai", SECRET);
+    expect(settingsHealthSummary(ready).llmReady).toBe(true);
+    expect(settingsHealthSummary(DEFAULT_SETTINGS).llmReady).toBe(false);
   });
 
   it("reports apiKeyConfigured false when no non-empty keys exist", () => {

@@ -88,12 +88,16 @@ export function parseAndGroundMemoryCandidates(rawText: string, window: Extracti
 }
 
 export interface LlmMemoryExtractorOptions {
-  /** Deterministic extractor used per-window when the LLM fails, returns malformed/empty, or all candidates are discarded. */
-  fallback: MemoryExtractor;
+  /**
+   * OPTIONAL deterministic extractor used per-window when the LLM fails or returns malformed output.
+   * The live app does NOT pass a fallback — it must not fabricate deterministic memory; failures throw
+   * (key-free) and the run is recorded as failed. Pass a fallback only from explicit dev/test seams.
+   */
+  fallback?: MemoryExtractor;
   timeoutMs?: number;
 }
 
-export function createLlmMemoryExtractor(provider: LlmProvider, options: LlmMemoryExtractorOptions): MemoryExtractor {
+export function createLlmMemoryExtractor(provider: LlmProvider, options: LlmMemoryExtractorOptions = {}): MemoryExtractor {
   const fallback = options.fallback;
   return {
     kind: "llm",
@@ -106,16 +110,19 @@ export function createLlmMemoryExtractor(provider: LlmProvider, options: LlmMemo
       try {
         text = (await provider.complete({ system: MEMORY_EXTRACTION_LLM_SYSTEM, prompt: buildLlmMemoryExtractionPrompt(window), responseFormat: "json" }, requestOptions)).text;
       } catch {
-        // Provider/transport/timeout failure -> deterministic fallback for this window. Never surface keys/internals.
-        return fallback.extract(window);
+        // Provider/transport/timeout failure. Never surface keys/internals.
+        if (fallback) return fallback.extract(window);
+        throw new MemoryExtractionError("LLM memory extraction request failed");
       }
       let grounded: ExtractedMemoryCandidate[];
       try {
         grounded = parseAndGroundMemoryCandidates(text, window);
       } catch {
-        return fallback.extract(window); // malformed JSON -> fallback
+        if (fallback) return fallback.extract(window); // malformed JSON -> fallback (test seam only)
+        throw new MemoryExtractionError("LLM memory extraction output was not valid");
       }
-      return grounded.length ? grounded : fallback.extract(window); // empty / all-discarded -> fallback
+      // Empty / all-discarded is a legitimate "nothing groundable in this window" -> no memory (not an error).
+      return grounded.length ? grounded : fallback ? fallback.extract(window) : grounded;
     },
   };
 }

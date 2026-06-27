@@ -54,6 +54,18 @@ export const EXTERNAL_EMBEDDING_PROVIDERS = ["openai"] as const;
 export const isExternalEmbeddingProvider = (providerId: string): boolean =>
   (EXTERNAL_EMBEDDING_PROVIDERS as readonly string[]).includes(providerId);
 
+/**
+ * The live app is LLM-required. An LLM is "configured" only when an external (OpenAI-compatible)
+ * provider is selected with a non-blank model and a non-blank API key. There is no local/deterministic
+ * product mode — when this is false, the UI shows setup-required and generation is disabled.
+ */
+export function isLlmConfigured(settings: TranscriptMemorySettings): boolean {
+  return settings.mode === "external"
+    && isExternalLlmProvider(settings.llm.provider)
+    && settings.llm.model.trim().length > 0
+    && (settings.apiKeys[settings.llm.provider]?.trim().length ?? 0) > 0;
+}
+
 export const DEFAULT_SETTINGS: TranscriptMemorySettings = {
   schemaVersion: 1,
   mode: "local",
@@ -165,6 +177,8 @@ export interface SettingsHealthSummary {
   embeddingProvider: string;
   embeddingModel: string;
   apiKeyConfigured: boolean;
+  /** True when a usable external LLM is configured (provider + model + key). Generation requires this. */
+  llmReady: boolean;
 }
 
 /**
@@ -179,5 +193,6 @@ export function settingsHealthSummary(settings: TranscriptMemorySettings): Setti
     embeddingProvider: settings.embedding.provider,
     embeddingModel: settings.embedding.model,
     apiKeyConfigured: Object.values(settings.apiKeys).some((value) => value.trim().length > 0),
+    llmReady: isLlmConfigured(settings),
   };
 }

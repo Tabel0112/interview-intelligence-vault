@@ -2,10 +2,9 @@ import { PluginSettingTab, Setting, type App, type Plugin } from "obsidian";
 import type { ObsidianNavigation } from "../frontend/index.js";
 import type { PluginHealth } from "./startup.js";
 import {
-  EMBEDDING_PROVIDER_OPTIONS, isExternalEmbeddingProvider, LLM_PROVIDER_OPTIONS, redactApiKey, setApiKey,
+  EMBEDDING_PROVIDER_OPTIONS, isExternalEmbeddingProvider, isLlmConfigured, LLM_PROVIDER_OPTIONS, redactApiKey, setApiKey,
   type TranscriptMemorySettings,
 } from "./settings.js";
-import { llmResolutionSummary, resolveLlmProviderFromSettings } from "./llmSettings.js";
 
 export class TranscriptMemorySettingsTab extends PluginSettingTab {
   constructor(
@@ -31,26 +30,23 @@ export class TranscriptMemorySettingsTab extends PluginSettingTab {
     });
     warning.addClass("setting-item-description");
 
-    new Setting(this.containerEl)
-      .setName("Mode")
-      .setDesc("Local deterministic runs fully offline and is the default. External providers are recorded but not active yet.")
-      .addDropdown((dropdown) =>
-        dropdown
-          .addOption("local", "Local deterministic (default)")
-          .addOption("external", "External providers (not active yet)")
-          .setValue(settings.mode)
-          .onChange(async (value) => {
-            await this.onSave({ ...this.getSettings(), mode: value === "external" ? "external" : "local" });
-          }),
-      );
+    const required = this.containerEl.createEl("p", {
+      text: isLlmConfigured(settings)
+        ? `AI is configured: ${settings.llm.provider} / ${settings.llm.model}. Ask AI and AI memory extraction are enabled.`
+        : "AI is NOT configured. Ask AI and AI memory extraction require an external LLM provider, model, and API key. Configure one below to enable AI features.",
+    });
+    required.addClass("setting-item-description");
 
     new Setting(this.containerEl)
       .setName("LLM provider")
-      .setDesc("For future Ask AI synthesis. Not called yet.")
+      .setDesc("Required. Ask AI and AI memory extraction use this external provider. Select \"none\" to disable AI features.")
       .addDropdown((dropdown) => {
         for (const option of LLM_PROVIDER_OPTIONS) dropdown.addOption(option, option);
         dropdown.setValue(settings.llm.provider).onChange(async (value) => {
-          await this.onSave({ ...this.getSettings(), llm: { ...this.getSettings().llm, provider: value } });
+          // Selecting an external provider enables external mode; "none" disables AI features. There is
+          // no user-facing local/deterministic mode.
+          const mode = value !== "none" ? ("external" as const) : ("local" as const);
+          await this.onSave({ ...this.getSettings(), mode, llm: { ...this.getSettings().llm, provider: value } });
           this.display();
         });
       });
@@ -194,14 +190,11 @@ export class TranscriptMemorySettingsTab extends PluginSettingTab {
 
     this.containerEl.createEl("h3", { text: "Status" });
     new Setting(this.containerEl).setName("Plugin status").setDesc(health.status);
-    new Setting(this.containerEl).setName("Provider mode").setDesc(health.providerMode ?? settings.mode);
     new Setting(this.containerEl).setName("API key").setDesc(health.apiKeyConfigured ? "configured" : "not configured");
-    // Read-only, non-secret. Resolving constructs a provider (no network) and we surface only strings.
-    const llmStatus = llmResolutionSummary(resolveLlmProviderFromSettings(settings));
-    new Setting(this.containerEl).setName("LLM provider").setDesc(
-      llmStatus.usedFallback
-        ? `Using local deterministic LLM (fallback). ${llmStatus.reason ?? ""}`.trim()
-        : `${llmStatus.providerId}${llmStatus.model ? ` / ${llmStatus.model}` : ""}${llmStatus.isLocal ? " (local deterministic)" : " (external)"}`,
+    new Setting(this.containerEl).setName("AI (LLM)").setDesc(
+      isLlmConfigured(settings)
+        ? `Configured: ${settings.llm.provider}${settings.llm.model ? ` / ${settings.llm.model}` : ""} (external).`
+        : "Not configured. Ask AI and AI memory extraction are disabled until you set an LLM provider, model, and API key.",
     );
     new Setting(this.containerEl).setName("Embedding index").setDesc(
       health.reindexNeeded === undefined

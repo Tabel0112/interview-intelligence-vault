@@ -14,9 +14,10 @@ export function createObsidianAppApi(
   vault: Pick<Vault, "read">,
   health?: PluginHealth,
   getSynthesis?: () => { llm?: AskAILanguageModel; info: SynthesisInfo } | undefined,
-  getMemoryExtractor?: () => MemoryExtractor,
+  getMemoryExtractor?: () => MemoryExtractor | undefined,
+  options?: { llmRequired?: boolean; getLlmReady?: () => boolean },
 ): ObsidianAppApi {
-  const api = createSqliteFrontendApi(db, { health, getSynthesis, getMemoryExtractor });
+  const api = createSqliteFrontendApi(db, { health, getSynthesis, getMemoryExtractor, llmRequired: options?.llmRequired, getLlmReady: options?.getLlmReady });
   return {
     ...api,
     async uploadVaultFile(file) {

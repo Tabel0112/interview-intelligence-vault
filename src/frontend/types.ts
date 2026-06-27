@@ -80,6 +80,10 @@ export interface DashboardView {
   conflictCount: number;
   brokenCount: number;
   health?: PluginHealth;
+  /** Live app requires a configured LLM for generation. */
+  llmRequired?: boolean;
+  /** Whether a usable external LLM is currently configured. */
+  llmReady?: boolean;
 }
 
 export interface SearchResultView {
@@ -141,6 +145,10 @@ export interface FrontendApi {
   getReviewItem(id: string): Promise<ReviewItemView | null>;
   submitCorrection(input: CorrectionDraft): Promise<{ correctionId: string; status: "received" }>;
   reviewMemoryObject(memoryId: string, decision: "approve" | "reject"): Promise<{ status: "approved" | "rejected"; warning?: string }>;
+  /** Whether the live app requires an LLM and whether one is currently configured. */
+  getLlmStatus(): Promise<{ required: boolean; ready: boolean }>;
+  /** Run AI extraction for a transcript that has no completed run yet (e.g. imported before LLM setup). */
+  runExtraction(transcriptId: string): Promise<{ status: "extracted" | "skipped" | "setup_required" | "failed"; warning?: string }>;
 }
 
 export interface FrontendAnswerView extends AskAIResponse {

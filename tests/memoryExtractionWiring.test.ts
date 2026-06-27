@@ -22,17 +22,17 @@ afterEach(() => db.close());
 const memoryCount = () => (db.prepare("SELECT COUNT(*) c FROM memory_objects").get() as { c: number }).c;
 const runCount = () => (db.prepare("SELECT COUNT(*) c FROM extraction_runs").get() as { c: number }).c;
 
-describe("memoryExtractorFromSettings", () => {
-  it("returns the deterministic extractor for local/unconfigured settings", () => {
-    expect(memoryExtractorFromSettings(DEFAULT_SETTINGS).kind).toBe("deterministic");
+describe("memoryExtractorFromSettings (LLM-required)", () => {
+  it("returns undefined for local/unconfigured settings (no deterministic fallback in the live app)", () => {
+    expect(memoryExtractorFromSettings(DEFAULT_SETTINGS)).toBeUndefined();
     const noKey: TranscriptMemorySettings = { ...DEFAULT_SETTINGS, mode: "external", llm: { provider: "openai", model: "gpt-4o-mini" } };
-    expect(memoryExtractorFromSettings(noKey).kind).toBe("deterministic"); // missing key -> fallback
+    expect(memoryExtractorFromSettings(noKey)).toBeUndefined(); // missing key -> setup-required, not deterministic
   });
 
-  it("returns the LLM extractor when a valid external provider is configured (no network on resolution)", () => {
+  it("returns an LLM extractor (no fallback) when a valid external provider is configured (no network on resolution)", () => {
     const settings = setApiKey({ ...DEFAULT_SETTINGS, mode: "external", llm: { provider: "openai", model: "gpt-4o-mini" } }, "openai", SECRET);
     const transport: LlmTransport = async () => { throw new Error("should not be called during resolution"); };
-    expect(memoryExtractorFromSettings(settings, { transport }).kind).toBe("llm");
+    expect(memoryExtractorFromSettings(settings, { transport })?.kind).toBe("llm");
   });
 });
 

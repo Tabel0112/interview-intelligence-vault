@@ -26,10 +26,10 @@ async function retrieve(db: SqliteDatabase, query: QueryUnderstanding): Promise<
 
 export function createDatabaseAskAIDependencies(
   db: SqliteDatabase,
-  options: { now?: () => Date; llm?: AskAILanguageModel; synthesisInfo?: SynthesisInfo } = {},
+  options: { now?: () => Date; llm?: AskAILanguageModel; synthesisInfo?: SynthesisInfo; requireLlm?: boolean } = {},
 ): AskAIDependencies {
   return {
-    db, now: options.now, llm: options.llm, synthesisInfo: options.synthesisInfo,
+    db, now: options.now, llm: options.llm, synthesisInfo: options.synthesisInfo, requireLlm: options.requireLlm,
     retrieveCandidates: (query) => retrieve(db, query),
     scoreEvidence: async (question, candidates, query) => scoreEvidenceBundle({
       claimText: question, candidates, useType: useType(query.requestedClaimKinds[0] ?? "fact"), now: options.now?.().toISOString(),

@@ -5,6 +5,7 @@ import { linkMemoryObjectToSpan } from "../src/provenance/index.js";
 import { indexEvidencePointerForSearch } from "../src/retrieval/index.js";
 import {
   askAI, createDatabaseAskAIDependencies, createLlmAskAILanguageModel, getAskAIResponse,
+  SynthesisFailedError, SynthesisSetupRequiredError,
 } from "../src/ask-ai/index.js";
 import { askAiSynthesisFromSettings } from "../src/obsidian/llmSettings.js";
 import { DEFAULT_SETTINGS, setApiKey, type TranscriptMemorySettings } from "../src/obsidian/settings.js";
@@ -40,38 +41,43 @@ const externalSettings = (overrides: Partial<TranscriptMemorySettings["llm"]> = 
   return withKey ? setApiKey(base, "openai", SECRET) : base;
 };
 
-describe("askAiSynthesisFromSettings (no network)", () => {
+describe("askAiSynthesisFromSettings (LLM-required, no network)", () => {
   const forbidden: LlmTransport = async () => { throw new Error("network must not be called"); };
 
-  it("returns no llm and deterministic info for local/default settings", () => {
-    const synth = askAiSynthesisFromSettings(DEFAULT_SETTINGS, { transport: forbidden });
-    expect(synth.llm).toBeUndefined();
-    expect(synth.info).toMatchObject({ mode: "deterministic", usedFallback: false });
+  it("returns undefined for local/default settings (setup-required, never deterministic)", () => {
+    expect(askAiSynthesisFromSettings(DEFAULT_SETTINGS, { transport: forbidden })).toBeUndefined();
   });
 
   it("returns an llm adapter and external info when fully configured (no network on resolve)", () => {
     const synth = askAiSynthesisFromSettings(externalSettings(), { transport: forbidden });
-    expect(synth.llm).toBeDefined();
-    expect(synth.info).toEqual({ mode: "external_llm", provider: "openai", model: "gpt-4o-mini", usedFallback: false });
+    expect(synth?.llm).toBeDefined();
+    expect(synth?.info).toEqual({ mode: "external_llm", provider: "openai", model: "gpt-4o-mini", usedFallback: false });
   });
 
-  it("falls back to deterministic (no llm) with usedFallback when the key is missing", () => {
-    const synth = askAiSynthesisFromSettings(externalSettings({}, false), { transport: forbidden });
-    expect(synth.llm).toBeUndefined();
-    expect(synth.info.mode).toBe("deterministic");
-    expect(synth.info.usedFallback).toBe(true);
-    expect(JSON.stringify(synth.info)).not.toContain(SECRET);
+  it("returns undefined when the key is missing (no deterministic fallback)", () => {
+    expect(askAiSynthesisFromSettings(externalSettings({}, false), { transport: forbidden })).toBeUndefined();
   });
 });
 
-describe("live Ask AI wiring through createDatabaseAskAIDependencies", () => {
-  it("defaults to deterministic synthesis (no llm injected)", async () => {
+describe("LLM-required Ask AI through createDatabaseAskAIDependencies", () => {
+  it("throws setup-required (no answer persisted) when evidence exists but no LLM is configured", async () => {
     await seedEvidence();
-    const response = await askAI({ question: "SQLite source of truth" }, createDatabaseAskAIDependencies(db, { now }));
-    expect(response.notEnoughEvidence).toBe(false);
-    expect(response.synthesis).toMatchObject({ mode: "deterministic", usedFallback: false });
-    const reloaded = getAskAIResponse(db, response.id);
-    expect(reloaded.synthesis).toMatchObject({ mode: "deterministic" });
+    await expect(
+      askAI({ question: "SQLite source of truth" }, createDatabaseAskAIDependencies(db, { now, requireLlm: true })),
+    ).rejects.toBeInstanceOf(SynthesisSetupRequiredError);
+    expect((db.prepare("SELECT COUNT(*) c FROM ask_ai_runs").get() as { c: number }).c).toBe(0); // no fake answer
+  });
+
+  it("throws a generic failure (no answer persisted) when the configured LLM fails after evidence is selected", async () => {
+    await seedEvidence();
+    const transport: LlmTransport = async () => ({ status: 401, body: { error: "bad key" } }); // provider rejects -> adapter throws
+    const provider = new ExternalLlmProvider({ id: "openai", model: "gpt-4o-mini", apiKey: SECRET, transport });
+    const llm = createLlmAskAILanguageModel(provider);
+    const synthesisInfo = { mode: "external_llm" as const, provider: "openai", model: "gpt-4o-mini", usedFallback: false };
+    const promise = askAI({ question: "SQLite source of truth" }, createDatabaseAskAIDependencies(db, { now, llm, synthesisInfo, requireLlm: true }));
+    await expect(promise).rejects.toBeInstanceOf(SynthesisFailedError);
+    await expect(promise).rejects.not.toThrow(SECRET); // generic, key-free message
+    expect((db.prepare("SELECT COUNT(*) c FROM ask_ai_runs").get() as { c: number }).c).toBe(0); // no fake answer
   });
 });
 

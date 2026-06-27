@@ -2,9 +2,9 @@
 
 > Compares the current implementation against the intended MVP in [`docs/APP_SPEC.md`](./APP_SPEC.md), under the rules in [`CLAUDE.md`](../CLAUDE.md). **No code is changed by this document.**
 >
-> Intended MVP = the full deterministic pipeline wired end-to-end, **plus** real external LLM grounded synthesis **plus** real semantic embedding vectors, configurable via settings, with deterministic local mode preserved as the default/fallback.
+> Intended MVP = real external LLM grounded synthesis and AI memory extraction (the live app is **LLM-required**), evidence-first retrieval, plus real semantic embedding vectors, configurable via settings. Deterministic/local providers are dev/test seams only — never a live product mode or fallback.
 >
-> **State:** reflects the committed code through `b457cf2` (end-to-end smoke test). The earlier "H1/H2/H3 — nothing is wired" findings are **obsolete**: the deterministic *and* LLM pipelines are now wired end-to-end through the live `createSqliteFrontendApi` / Obsidian `Plugin` path, verified by `tests/mvpSmoke.test.ts`. Every "implemented" claim below is code-backed.
+> **State:** the live app is **LLM-required** — Ask AI and AI memory extraction run only through a configured external LLM (`createSqliteFrontendApi`/`Plugin` wired with `llmRequired: true`); when none is configured the UI shows setup-required, and when the LLM fails it shows a generic failure (no deterministic output). Verified by `tests/mvpSmoke.test.ts` (mock external LLM) and `tests/llmRequired.test.ts`. Every "implemented" claim below is code-backed.
 
 ---
 
@@ -18,7 +18,7 @@
 - Append-only user corrections; both-sides conflict preservation.
 - Obsidian generated-view safety (manifest-scoped cleanup, user files preserved, output-only); safe startup/health.
 - No-mixing-vectors enforcement (query filter by provider+model+dim; `search_embeddings` unique per provider+model; `validateVector`/`cosineSimilarity` throw; `embeddingSpace` helpers).
-- Deterministic local mode preserved as the default/fallback everywhere; **tests are offline-only** (mock/local providers).
+- **LLM-required live app**: no deterministic generation fallback; deterministic/local providers remain only as explicitly-injected dev/test seams. **Tests are offline-only** (mock external LLM transports or injected deterministic providers).
 
 **Embedding stack**
 - Embedding provider abstraction: `EmbeddingProvider`, `EmbeddingSpace`, `resolveEmbeddingProvider`, `detectReindexNeeded` (`src/retrieval/embeddingSpace.ts`, `reindexStatus.ts`).
@@ -33,12 +33,12 @@
 
 **Ask AI grounded LLM synthesis**
 - **Grounded validation layer** (`src/ask-ai/llmSynthesis.ts`): structured-output parse + shape-check + **quote-anchoring grounding** (each claim must carry a `supportingQuote` that substring-matches a *selected* evidence snippet) + discard-ungrounded.
-- **Live wiring**: `getSynthesis` threaded `Plugin → ObsidianAppApi → createSqliteFrontendApi → askAI`. Deterministic by default; the external LLM is used **only when settings resolve to a valid provider**; LLM failure/malformed/timeout/all-discarded → deterministic fallback.
+- **Live wiring (LLM-required)**: `getSynthesis` threaded `Plugin → ObsidianAppApi → createSqliteFrontendApi → askAI` with `llmRequired: true`. No LLM configured → `SynthesisSetupRequiredError` (setup-required UI); LLM failure/empty after evidence → `SynthesisFailedError` (generic failure). Neither persists an answer; no deterministic claims in the live path.
 - **Runtime-accurate synthesis metadata** persisted (non-secret `{mode, provider, model, usedFallback}` via the `onSynthesis` hook) — reflects the *actual* path (llm vs deterministic), not just the configured intent.
 
 **Memory extraction**
-- **Grounded LLM extraction** (`src/memory/extraction/llmExtractor.ts`): quote-anchored, span-membership-checked, deterministic per-window fallback.
-- **Automatic extraction after import** (`uploadTranscript` runs the settings-resolved extractor; deterministic by default, LLM when configured), idempotent (skips duplicate uploads / already-extracted transcripts).
+- **Grounded LLM extraction** (`src/memory/extraction/llmExtractor.ts`): quote-anchored, span-membership-checked; in the live app a failure throws a key-free `MemoryExtractionError` (the per-window deterministic `fallback` is optional, injected only by dev/test seams).
+- **Automatic LLM extraction after import** (`uploadTranscript`), **only when an LLM is configured** (`memoryExtractorFromSettings` returns `undefined` otherwise → import succeeds, raw kept, no memory + a setup-required warning). The **"Run AI extraction"** command (`api.runExtraction`) processes transcripts imported before LLM setup. Idempotent.
 - **LLM-extracted memory is capped to `needs_review`** (never auto-`active`).
 - **Prompt-version metadata** recorded per extractor on the run + objects.
 
@@ -52,7 +52,7 @@
 - **Semantic embeddings in retrieval.** The external embedding provider, settings adapter, and manual reindex command exist — but **post-import indexing is keyword-only** (no embedding provider passed), so real semantic vectors populate **only** via the manual "Rebuild Embedding Index" command. Automatic semantic retrieval is opt-in/manual, not on by default.
 - **Grounding ≠ entailment.** Both Ask AI synthesis and extraction enforce **quote-anchoring** (a verbatim quote from a cited span). This is a real guard, but **not** full semantic entailment/NLI — a claim could wrap a real quote in a misleading paraphrase.
 - **Reindex-needed status freshness.** `detectReindexNeeded` + a status surface exist; the Plugin refreshes it on DB-ready and `saveSettings`, but **not after upload/approval**, so it can read stale after new content lands.
-- **LLM failure semantics.** Timeout/malformed/error/empty → deterministic fallback is implemented (Ask AI + extraction). Not handled: **evidence token-budget/truncation** when selected evidence exceeds the model's context window.
+- **LLM failure semantics.** Timeout/malformed/error/empty → typed setup-required / generic-failure in the live app (Ask AI + extraction), with no deterministic fallback and no fake output persisted. Not handled: **evidence token-budget/truncation** when selected evidence exceeds the model's context window.
 - **Search surfaces are not unified.** Ask AI and memory discovery use the retrieval engine (`retrieval_documents`/`evidence_pointers`); the user-facing **Search view still uses a separate `transcript_spans LIKE` / `ask_ai_runs LIKE` scan** (`sqliteApi.searchVault`).
 - **Review reject UI scope.** `reviewMemoryObject(id, "reject")` works for any memory at the API level, but the Review UI renders the Reject button **only for `memory_needs_review` items** (`render.ts` `reviewActions`). There is **no UI path today to reject an already-approved/active memory**. The approve → ask → reject lifecycle is covered at the API/smoke-test level (`tests/reviewApproval.test.ts`, `tests/mvpSmoke.test.ts`); until an active-memory reject UI is added, the manual packaged checklist rejects a *separate* `needs_review` item. *(Verified.)*
 
@@ -88,7 +88,7 @@ Each is its own focused branch (`inspect → plan → approve → implement → 
 6. **Entailment verifier pass** (deeper grounding beyond quote-anchoring).
 7. **Shipping**: native-target fallback, key-storage decision, and a real end-to-end run of the packaged plugin against a real key.
 
-**Cross-cutting invariants (must hold for every step):** raw transcripts immutable; generated objects separate from raw text; every memory/answer traceable to transcript spans; **evidence-first Ask AI** (never answer from the LLM alone); append-only corrections; **rejected/unapproved memory cannot be Ask-AI evidence**; no mixing vector spaces; deterministic local default; tests offline with mock/injected providers; never a network call inside a SQLite transaction; API keys never logged/persisted into vault data or surfaced in errors/health/Markdown; migrations additive with tests.
+**Cross-cutting invariants (must hold for every step):** raw transcripts immutable; generated objects separate from raw text; every memory/answer traceable to transcript spans; **evidence-first Ask AI** (never answer from the LLM alone); append-only corrections; **rejected/unapproved memory cannot be Ask-AI evidence**; no mixing vector spaces; LLM-required live generation (deterministic only as an injected dev/test seam); tests offline with mock/injected providers; never a network call inside a SQLite transaction; API keys never logged/persisted into vault data or surfaced in errors/health/Markdown; migrations additive with tests.
 
 ---
 

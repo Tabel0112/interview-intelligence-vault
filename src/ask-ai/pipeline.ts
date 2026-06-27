@@ -46,7 +46,7 @@ export async function askAI(request: AskAIRequest, deps: AskAIDependencies): Pro
   const selectedConfidence = confidenceWithConflicts(selection.confidence, conflicts);
   let actualMode: "llm" | "deterministic" | "conflict" = "deterministic";
   const claims = await generateClaimsFromEvidence(query, selectedEvidence, citations, {
-    confidence: selectedConfidence, llm: deps.llm, onSynthesis: (mode) => { actualMode = mode; },
+    confidence: selectedConfidence, llm: deps.llm, requireLlm: deps.requireLlm, onSynthesis: (mode) => { actualMode = mode; },
   });
   const confidence = claims.length ? selectedConfidence : "no_evidence";
   const usedPointers = new Set(claims.flatMap((claim) => claim.evidencePointerIds));

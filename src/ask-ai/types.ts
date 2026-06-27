@@ -129,6 +129,8 @@ export interface AskAIDependencies {
   llm?: AskAILanguageModel;
   /** Non-secret configured-synthesis summary, recorded with the answer. */
   synthesisInfo?: SynthesisInfo;
+  /** Live app: require an LLM for synthesis (no deterministic fallback). Throws typed errors instead. */
+  requireLlm?: boolean;
   now?: () => Date;
   db?: SqliteDatabase;
 }

@@ -26,6 +26,8 @@ export interface PluginHealth {
   embeddingProvider?: string;
   embeddingModel?: string;
   apiKeyConfigured?: boolean;
+  /** True when a usable external LLM is configured. The live app requires this for generation. */
+  llmReady?: boolean;
   // Embedding reindex status (read-only, network-free). No secret material.
   reindexNeeded?: boolean;
   reindexSummary?: string;
@@ -79,6 +81,8 @@ export function createUnavailableFrontendApi(getHealth: () => PluginHealth): Fro
     async getReviewItem() { return unavailable(getHealth()); },
     async submitCorrection() { return unavailable(getHealth()); },
     async reviewMemoryObject() { return unavailable(getHealth()); },
+    async getLlmStatus() { return { required: true, ready: Boolean(getHealth().llmReady) }; },
+    async runExtraction() { return unavailable(getHealth()); },
   };
 }
 

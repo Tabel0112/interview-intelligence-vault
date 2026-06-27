@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDatabase, type SqliteDatabase } from "../src/db/index.js";
 import { createSqliteFrontendApi, renderRoute, type FrontendApi } from "../src/frontend/index.js";
-import { createLlmMemoryExtractor, DeterministicRuleExtractor } from "../src/memory/index.js";
+import { createLlmMemoryExtractor } from "../src/memory/index.js";
 import { searchMemoryObjects } from "../src/retrieval/index.js";
 import { resolveEvidencePointer } from "../src/provenance/index.js";
 import { createLlmAskAILanguageModel } from "../src/ask-ai/index.js";
@@ -36,8 +36,11 @@ const synthesisTransport: LlmTransport = async (req) => {
 const makeApi = (db: SqliteDatabase): FrontendApi => {
   const extractionProvider = new ExternalLlmProvider({ id: "openai", model: "gpt-extract", apiKey: SECRET, transport: extractionTransport });
   const synthesisProvider = new ExternalLlmProvider({ id: "openai", model: "gpt-synth", apiKey: SECRET, transport: synthesisTransport });
+  // The live LLM-required config: a mock external LLM for extraction + synthesis, no deterministic fallback.
   return createSqliteFrontendApi(db, {
-    getMemoryExtractor: () => createLlmMemoryExtractor(extractionProvider, { fallback: new DeterministicRuleExtractor() }),
+    llmRequired: true,
+    getLlmReady: () => true,
+    getMemoryExtractor: () => createLlmMemoryExtractor(extractionProvider),
     getSynthesis: () => ({ llm: createLlmAskAILanguageModel(synthesisProvider), info: { mode: "external_llm", provider: "openai", model: "gpt-synth", usedFallback: false } }),
   });
 };

@@ -69,11 +69,11 @@ Missing or incompatible native bindings, missing migrations, unsupported environ
 
 ## Providers, Keys, And Secret Safety
 
-The plugin runs in **local deterministic mode by default** — no API key, no network. External LLM synthesis and external embeddings are used **only when explicitly configured with a valid key** in plugin settings; otherwise the app falls back to deterministic local mode.
+The plugin is **LLM-required**: Ask AI and AI memory extraction need a configured external (OpenAI-compatible) LLM (provider + model + API key in plugin settings). Until one is configured, the dashboard and Ask AI show a **setup-required** state and AI features are disabled — the plugin does **not** generate deterministic/local output, and it does not silently fall back if the LLM fails (it shows a generic failure). Uploading a transcript still imports the immutable raw text; run the **Run AI extraction for transcripts missing it** command after configuring the LLM to extract memory from transcripts imported earlier. External **embeddings are optional** — retrieval uses a local keyword index until you configure and rebuild an embedding provider.
 
 - Obsidian has no secret store, so the API key lives in the plugin's `data.json` (plaintext, and it may sync). This is a deliberate, documented decision.
-- The key is never logged, never persisted into vault data or SQLite, and never surfaced in errors, health, or generated Markdown. Settings and health expose only whether a key is configured.
-- Changing the embedding provider/model creates a new vector space. Run the **Rebuild Embedding Index** command (command palette) to re-embed; it is the only action that may make a network call, and only when an external embedding provider is configured. In local mode it rebuilds the keyword / token-hash index with no network call.
+- The key is never logged, never persisted into vault data or SQLite, and never surfaced in errors, health, or generated Markdown. Settings and health expose only whether a key is configured and whether the LLM is ready.
+- Changing the embedding provider/model creates a new vector space. Run the **Rebuild Embedding Index** command (command palette) to re-embed; it is the only action that may make an embedding network call, and only when an external embedding provider is configured. Otherwise it rebuilds the local keyword index with no network call.
 
 ## Trust Model
 

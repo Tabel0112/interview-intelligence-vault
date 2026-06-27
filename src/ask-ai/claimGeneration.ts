@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { SynthesisFailedError, SynthesisSetupRequiredError } from "./errors.js";
 import type { AskAILanguageModel, AskAIClaim, AskAICitation, AskAIEvidenceItem, ClaimKind, ClaimSupportStatus, EvidenceConfidence, QueryUnderstanding } from "./types.js";
 
 const stableId = (value: string) => `aiclaim_${createHash("sha256").update(value).digest("hex").slice(0, 24)}`;
@@ -17,7 +18,7 @@ export async function generateClaimsFromEvidence(
   query: QueryUnderstanding,
   evidence: AskAIEvidenceItem[],
   citations: AskAICitation[],
-  options: { confidence: EvidenceConfidence; llm?: AskAILanguageModel; onSynthesis?: (mode: "llm" | "deterministic" | "conflict") => void } ,
+  options: { confidence: EvidenceConfidence; llm?: AskAILanguageModel; requireLlm?: boolean; onSynthesis?: (mode: "llm" | "deterministic" | "conflict") => void } ,
 ): Promise<AskAIClaim[]> {
   if (!evidence.length || options.confidence === "no_evidence") return [];
   const citationByPointer = new Map(citations.map((item) => [item.evidencePointerId, item]));
@@ -35,17 +36,24 @@ export async function generateClaimsFromEvidence(
     options.onSynthesis?.("conflict");
     proposed = conflictEvidence.map((item) => ({ kind: kinds[0] ?? "fact", text: defaultClaimText(kinds[0] ?? "fact", [item]), evidencePointerIds: [item.evidencePointerId] }));
   } else if (options.llm) {
-    // Grounded LLM synthesis, with a deterministic fallback when it fails, errors, times out, or
-    // produces no grounded claims. This never refuses on its own — refusal stays driven by the
-    // evidence pipeline (no_evidence / empty evidence handled above).
+    // Grounded LLM synthesis. When requireLlm (the live app), there is NO deterministic fallback: a
+    // failure/timeout/empty result throws a typed error so the UI shows a generic failure instead of
+    // fabricating local output. When NOT required (injected dev/test seam), it falls back deterministically.
+    // Refusal stays evidence-driven (no_evidence / empty evidence handled above), never LLM-driven.
     try {
       const llmClaims = await options.llm.generateClaims({ query, evidence });
       if (llmClaims.length) { options.onSynthesis?.("llm"); proposed = llmClaims; }
+      else if (options.requireLlm) { throw new SynthesisFailedError(); }
       else { options.onSynthesis?.("deterministic"); proposed = deterministicClaims(); }
-    } catch {
+    } catch (error) {
+      if (error instanceof SynthesisFailedError) throw error;
+      if (options.requireLlm) throw new SynthesisFailedError();
       options.onSynthesis?.("deterministic");
       proposed = deterministicClaims();
     }
+  } else if (options.requireLlm) {
+    // Evidence exists but no LLM is configured: the live app does not produce deterministic answers.
+    throw new SynthesisSetupRequiredError();
   } else {
     options.onSynthesis?.("deterministic");
     proposed = deterministicClaims();
