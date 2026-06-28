@@ -21,7 +21,7 @@ export function generateMemoryNotes(db: SqliteDatabase, maxQuoteLength = 300): G
       : strongest === "conflicting" || conflicts.some((item) => item.status === "active")
         ? "> [!warning] Conflicting evidence\n> Both sides must be reviewed." : "";
     const title = canonical.title || canonical.body.slice(0, 80) || row.id;
-    const conflictLinks = conflicts.map((item) => `- ${wikiLink(conflictPath(item.id), item.summary)}`).join("\n") || "_None._";
+    const conflictLinks = conflicts.map((item) => `- ${wikiLink(conflictPath(item.summary, item.id), item.summary)}`).join("\n") || "_None._";
     const content = `${frontmatter({ mv_entity_type: "memory", mv_entity_id: row.id, mv_generated: true, mv_source_of_truth: "sqlite", mv_support_status: strongest, mv_confidence: canonical.confidence })}
 # ${title}
 

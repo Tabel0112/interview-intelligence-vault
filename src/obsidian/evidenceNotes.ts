@@ -11,7 +11,7 @@ export function generateEvidenceNotes(db: SqliteDatabase, maxQuoteLength = 300):
     const resolved = resolveEvidencePointer(db, evidence_pointer_id);
     if (!resolved.ok) {
       warnings.push(`Broken evidence pointer ${evidence_pointer_id}: ${resolved.reason}`);
-      return makeGeneratedFile("evidence_note", evidencePath(evidence_pointer_id), `${frontmatter({ mv_entity_type: "evidence", mv_entity_id: evidence_pointer_id, mv_generated: true, mv_source_of_truth: "sqlite" })}\n# Evidence ${evidence_pointer_id}\n\n${generatedWarning}\n\n> [!danger] Broken evidence pointer\n> ${resolved.reason}`, "evidence", evidence_pointer_id);
+      return makeGeneratedFile("evidence_note", evidencePath("Broken evidence", evidence_pointer_id), `${frontmatter({ mv_entity_type: "evidence", mv_entity_id: evidence_pointer_id, mv_generated: true, mv_source_of_truth: "sqlite" })}\n# Evidence ${evidence_pointer_id}\n\n${generatedWarning}\n\n> [!danger] Broken evidence pointer\n> ${resolved.reason}`, "evidence", evidence_pointer_id);
     }
     const title = (db.prepare("SELECT title FROM transcripts WHERE id=?").get(resolved.evidence.transcript_id) as { title: string }).title;
     const content = `${frontmatter({ mv_entity_type: "evidence", mv_entity_id: evidence_pointer_id, mv_generated: true, mv_source_of_truth: "sqlite", mv_support_status: resolved.evidence.evidence_strength, mv_confidence: resolved.evidence.confidence })}
@@ -29,7 +29,7 @@ ${generatedWarning}
 ## Immutable Source Quote
 
 ${quote(resolved.spanText, maxQuoteLength)}`;
-    return makeGeneratedFile("evidence_note", evidencePath(evidence_pointer_id), content, "evidence", evidence_pointer_id);
+    return makeGeneratedFile("evidence_note", evidencePath(resolved.spanText, evidence_pointer_id), content, "evidence", evidence_pointer_id);
   });
   return { files, warnings };
 }

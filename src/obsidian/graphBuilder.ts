@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { SqliteDatabase } from "../db/connection.js";
 import { resolveEvidencePointer } from "../provenance/index.js";
-import { answerPath, conflictPath, entityPath, evidencePath, memoryPath, transcriptPath } from "./paths.js";
+import { answerPath, conflictPath, entityPath, evidencePath, labelFromText, memoryPath, transcriptPath } from "./paths.js";
 import type { ObsidianGraph, ObsidianGraphEdge, ObsidianGraphEdgeType, ObsidianGraphNode } from "./types.js";
 
 const edgeId = (source: string, target: string, type: string, evidence = "") => `ov_edge_${createHash("sha256").update(`${source}:${target}:${type}:${evidence}`).digest("hex").slice(0, 24)}`;
@@ -22,7 +22,10 @@ export function buildObsidianGraph(db: SqliteDatabase): { graph: ObsidianGraph; 
   const pointers = db.prepare("SELECT * FROM evidence_pointers ORDER BY evidence_pointer_id").all() as Array<Record<string, unknown>>;
   for (const pointer of pointers) {
     const id = String(pointer.evidence_pointer_id), resolved = resolveEvidencePointer(db, id);
-    addNode({ id: evidenceNodeId(id), type: "evidence", label: id, notePath: evidencePath(id), evidenceUri: String(pointer.pointer_uri), transcriptId: String(pointer.transcript_id), spanId: String(pointer.span_id), confidence: Number(pointer.confidence), supportStatus: String(pointer.evidence_strength) });
+    // Readable label/notePath from the resolved span text (must match evidenceNotes.ts so wikilinks resolve);
+    // broken pointers fall back to a fixed label, identical to the evidence-note builder.
+    const evidenceLabel = resolved.ok ? labelFromText(resolved.spanText) || id : "Broken evidence";
+    addNode({ id: evidenceNodeId(id), type: "evidence", label: resolved.ok ? evidenceLabel : id, notePath: evidencePath(evidenceLabel, id), evidenceUri: String(pointer.pointer_uri), transcriptId: String(pointer.transcript_id), spanId: String(pointer.span_id), confidence: Number(pointer.confidence), supportStatus: String(pointer.evidence_strength) });
     if (!resolved.ok) { warnings.push(`Broken evidence pointer ${id}: ${resolved.reason}`); continue; }
     const spanId = String(pointer.span_id), transcriptId = String(pointer.transcript_id);
     addNode({ id: spanNodeId(spanId), type: "span", label: spanId, sourceUri: String(pointer.source_pointer_uri), transcriptId, spanId });
@@ -30,7 +33,10 @@ export function buildObsidianGraph(db: SqliteDatabase): { graph: ObsidianGraph; 
     addEdge({ source: evidenceNodeId(id), target: spanNodeId(spanId), type: "derived_from", evidencePointerId: id, confidence: Number(pointer.confidence) });
     const targetType = String(pointer.target_type), targetId = String(pointer.target_id);
     const target = targetType === "memory_object" || targetType === "claim" || targetType === "summary" ? memoryNodeId(targetId) : targetType === "answer" ? `answer:${targetId}` : targetType === "answer_claim" ? `claim:${targetId}` : `graph:${targetId}`;
-    if (targetType === "answer") addNode({ id: target, type: "answer", label: targetId, notePath: answerPath(targetId) });
+    if (targetType === "answer") {
+      const ans = db.prepare("SELECT question_text FROM ai_answers WHERE id=?").get(targetId) as { question_text: string } | undefined;
+      addNode({ id: target, type: "answer", label: ans?.question_text ?? targetId, notePath: answerPath(ans?.question_text ?? targetId, targetId) });
+    }
     if (targetType === "answer_claim") {
       const claim = db.prepare("SELECT claim_text,support_status FROM answer_claims WHERE answer_claim_id=?").get(targetId) as { claim_text: string; support_status: string } | undefined;
       if (claim) addNode({ id: target, type: "claim", label: claim.claim_text, supportStatus: claim.support_status });
@@ -44,7 +50,7 @@ export function buildObsidianGraph(db: SqliteDatabase): { graph: ObsidianGraph; 
     if (nodes.has(target)) addEdge({ source: target, target: evidenceNodeId(id), type: targetType === "answer_claim" || targetType === "answer" ? "cites" : "derived_from", evidencePointerId: id, confidence: Number(pointer.confidence) });
   }
   const answers = db.prepare("SELECT id,question_text,answer_status FROM ai_answers ORDER BY id").all() as Array<{ id: string; question_text: string; answer_status: string }>;
-  answers.forEach((row) => addNode({ id: `answer:${row.id}`, type: "answer", label: row.question_text, notePath: answerPath(row.id), supportStatus: row.answer_status }));
+  answers.forEach((row) => addNode({ id: `answer:${row.id}`, type: "answer", label: row.question_text, notePath: answerPath(row.question_text, row.id), supportStatus: row.answer_status }));
   const claims = db.prepare("SELECT * FROM answer_claims ORDER BY answer_claim_id").all() as Array<Record<string, unknown>>;
   claims.forEach((row) => {
     const pointer = db.prepare("SELECT evidence_pointer_id FROM evidence_pointers WHERE target_type='answer_claim' AND target_id=? ORDER BY evidence_pointer_id LIMIT 1").get(row.answer_claim_id) as { evidence_pointer_id: string } | undefined;
@@ -54,7 +60,7 @@ export function buildObsidianGraph(db: SqliteDatabase): { graph: ObsidianGraph; 
   const conflicts = db.prepare("SELECT * FROM conflict_assessments ORDER BY id").all() as Array<Record<string, unknown>>;
   conflicts.forEach((row) => {
     const id = String(row.id), conflictNode = `conflict:${id}`;
-    addNode({ id: conflictNode, type: "conflict", label: String(row.summary), notePath: conflictPath(id), confidence: Number(row.confidence), supportStatus: String(row.status) });
+    addNode({ id: conflictNode, type: "conflict", label: String(row.summary), notePath: conflictPath(String(row.summary), id), confidence: Number(row.confidence), supportStatus: String(row.status) });
     for (const side of ["left", "right"] as const) {
       const type = String(row[`${side}_target_type`]), targetId = String(row[`${side}_target_id`]);
       const target = type === "memory_object" || type === "claim" || type === "summary" ? memoryNodeId(targetId) : type === "answer_claim" ? `claim:${targetId}` : type === "evidence_pointer" ? evidenceNodeId(targetId) : `graph:${targetId}`;

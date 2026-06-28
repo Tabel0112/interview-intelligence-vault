@@ -3221,14 +3221,24 @@ function safeName(value, fallback = "Untitled") {
   const clean = value.replace(/[<>:"/\\|?*\u0000-\u001F]/g, " ").replace(/\s+/g, " ").trim().replace(/[. ]+$/g, "");
   return (clean || fallback).slice(0, 100);
 }
-var stableNoteName = (label, id) => `${safeName(label)}--${safeName(id)}`;
-var transcriptPath = (title, id) => `Transcripts/${stableNoteName(title, id)}.md`;
+var labelFromText = (text, max = 60) => {
+  const clean = (text ?? "").replace(/\s+/g, " ").trim();
+  if (clean.length <= max) return clean;
+  const cut = clean.slice(0, max), lastSpace = cut.lastIndexOf(" ");
+  return (lastSpace > 20 ? cut.slice(0, lastSpace) : cut).trim();
+};
+var shortId = (id, bodyChars = 6) => {
+  const sep = id.indexOf("_");
+  return sep > 0 && sep < id.length - 1 ? `${id.slice(0, sep + 1)}${id.slice(sep + 1, sep + 1 + bodyChars)}` : id.slice(0, bodyChars + 4);
+};
+var readableNoteName = (label, id) => `${safeName(labelFromText(label))} - ${shortId(id)}`;
+var transcriptPath = (title, id) => `Transcripts/${readableNoteName(title, id)}.md`;
 var memoryFolder = (type) => type === "decision" ? "Decisions" : type === "preference" ? "Preferences" : type === "task" ? "Tasks" : type === "question" ? "Questions" : type === "claim" ? "Facts" : "Other";
-var memoryPath = (title, id, type) => `Memories/${memoryFolder(type)}/${stableNoteName(title, id)}.md`;
-var evidencePath = (id) => `Evidence/${safeName(id)}.md`;
-var answerPath = (id) => `Answers/${safeName(id)}.md`;
-var conflictPath = (id) => `Conflicts/${safeName(id)}.md`;
-var entityPath = (kind, label, id) => `${kind === "person" ? "People" : kind === "topic" ? "Topics" : "Decisions"}/${stableNoteName(label, id)}.md`;
+var memoryPath = (title, id, type) => `Memories/${memoryFolder(type)}/${readableNoteName(title, id)}.md`;
+var evidencePath = (label, id) => `Evidence/${readableNoteName(label, id)}.md`;
+var answerPath = (label, id) => `Answers/${readableNoteName(label, id)}.md`;
+var conflictPath = (label, id) => `Conflicts/${readableNoteName(label, id)}.md`;
+var entityPath = (kind, label, id) => `${kind === "person" ? "People" : kind === "topic" ? "Topics" : "Decisions"}/${readableNoteName(label, id)}.md`;
 
 // src/obsidian/graphBuilder.ts
 var edgeId = (source, target, type, evidence = "") => `ov_edge_${(0, import_node_crypto6.createHash)("sha256").update(`${source}:${target}:${type}:${evidence}`).digest("hex").slice(0, 24)}`;
@@ -3251,7 +3261,8 @@ function buildObsidianGraph(db) {
   const pointers = db.prepare("SELECT * FROM evidence_pointers ORDER BY evidence_pointer_id").all();
   for (const pointer of pointers) {
     const id = String(pointer.evidence_pointer_id), resolved = resolveEvidencePointer(db, id);
-    addNode({ id: evidenceNodeId(id), type: "evidence", label: id, notePath: evidencePath(id), evidenceUri: String(pointer.pointer_uri), transcriptId: String(pointer.transcript_id), spanId: String(pointer.span_id), confidence: Number(pointer.confidence), supportStatus: String(pointer.evidence_strength) });
+    const evidenceLabel = resolved.ok ? labelFromText(resolved.spanText) || id : "Broken evidence";
+    addNode({ id: evidenceNodeId(id), type: "evidence", label: resolved.ok ? evidenceLabel : id, notePath: evidencePath(evidenceLabel, id), evidenceUri: String(pointer.pointer_uri), transcriptId: String(pointer.transcript_id), spanId: String(pointer.span_id), confidence: Number(pointer.confidence), supportStatus: String(pointer.evidence_strength) });
     if (!resolved.ok) {
       warnings.push(`Broken evidence pointer ${id}: ${resolved.reason}`);
       continue;
@@ -3262,7 +3273,10 @@ function buildObsidianGraph(db) {
     addEdge({ source: evidenceNodeId(id), target: spanNodeId(spanId), type: "derived_from", evidencePointerId: id, confidence: Number(pointer.confidence) });
     const targetType = String(pointer.target_type), targetId = String(pointer.target_id);
     const target = targetType === "memory_object" || targetType === "claim" || targetType === "summary" ? memoryNodeId(targetId) : targetType === "answer" ? `answer:${targetId}` : targetType === "answer_claim" ? `claim:${targetId}` : `graph:${targetId}`;
-    if (targetType === "answer") addNode({ id: target, type: "answer", label: targetId, notePath: answerPath(targetId) });
+    if (targetType === "answer") {
+      const ans = db.prepare("SELECT question_text FROM ai_answers WHERE id=?").get(targetId);
+      addNode({ id: target, type: "answer", label: ans?.question_text ?? targetId, notePath: answerPath(ans?.question_text ?? targetId, targetId) });
+    }
     if (targetType === "answer_claim") {
       const claim = db.prepare("SELECT claim_text,support_status FROM answer_claims WHERE answer_claim_id=?").get(targetId);
       if (claim) addNode({ id: target, type: "claim", label: claim.claim_text, supportStatus: claim.support_status });
@@ -3274,7 +3288,7 @@ function buildObsidianGraph(db) {
     if (nodes.has(target)) addEdge({ source: target, target: evidenceNodeId(id), type: targetType === "answer_claim" || targetType === "answer" ? "cites" : "derived_from", evidencePointerId: id, confidence: Number(pointer.confidence) });
   }
   const answers = db.prepare("SELECT id,question_text,answer_status FROM ai_answers ORDER BY id").all();
-  answers.forEach((row) => addNode({ id: `answer:${row.id}`, type: "answer", label: row.question_text, notePath: answerPath(row.id), supportStatus: row.answer_status }));
+  answers.forEach((row) => addNode({ id: `answer:${row.id}`, type: "answer", label: row.question_text, notePath: answerPath(row.question_text, row.id), supportStatus: row.answer_status }));
   const claims = db.prepare("SELECT * FROM answer_claims ORDER BY answer_claim_id").all();
   claims.forEach((row) => {
     const pointer = db.prepare("SELECT evidence_pointer_id FROM evidence_pointers WHERE target_type='answer_claim' AND target_id=? ORDER BY evidence_pointer_id LIMIT 1").get(row.answer_claim_id);
@@ -3284,7 +3298,7 @@ function buildObsidianGraph(db) {
   const conflicts = db.prepare("SELECT * FROM conflict_assessments ORDER BY id").all();
   conflicts.forEach((row) => {
     const id = String(row.id), conflictNode = `conflict:${id}`;
-    addNode({ id: conflictNode, type: "conflict", label: String(row.summary), notePath: conflictPath(id), confidence: Number(row.confidence), supportStatus: String(row.status) });
+    addNode({ id: conflictNode, type: "conflict", label: String(row.summary), notePath: conflictPath(String(row.summary), id), confidence: Number(row.confidence), supportStatus: String(row.status) });
     for (const side of ["left", "right"]) {
       const type = String(row[`${side}_target_type`]), targetId = String(row[`${side}_target_id`]);
       const target = type === "memory_object" || type === "claim" || type === "summary" ? memoryNodeId(targetId) : type === "answer_claim" ? `claim:${targetId}` : type === "evidence_pointer" ? evidenceNodeId(targetId) : `graph:${targetId}`;

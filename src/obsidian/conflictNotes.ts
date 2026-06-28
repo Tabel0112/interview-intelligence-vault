@@ -18,7 +18,7 @@ export function generateConflictNotes(db: SqliteDatabase, maxQuoteLength = 300):
 
 ${links || "> [!danger] Missing side evidence"}`;
     };
-    return makeGeneratedFile("conflict_note", conflictPath(id), `${frontmatter({ mv_entity_type: "conflict", mv_entity_id: id, mv_generated: true, mv_source_of_truth: "sqlite", mv_support_status: conflict.status, mv_confidence: conflict.confidence })}
+    return makeGeneratedFile("conflict_note", conflictPath(conflict.summary, id), `${frontmatter({ mv_entity_type: "conflict", mv_entity_id: id, mv_generated: true, mv_source_of_truth: "sqlite", mv_support_status: conflict.status, mv_confidence: conflict.confidence })}
 # ${conflict.summary}
 
 ${generatedWarning}

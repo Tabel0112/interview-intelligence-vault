@@ -105,6 +105,7 @@ Obsidian's built-in graph is intentionally Markdown-only — it has no way to re
   ```
 
 - Generated notes carry **frontmatter** (`mv_entity_type`, `mv_entity_id`, `mv_source_of_truth: sqlite`), **`[[wiki links]]`** between transcripts, evidence, memories, answers, conflicts, and entities (so the native graph has edges, not isolated dots), and **explicit warnings** for weak / conflicting / broken evidence. Each generated note states that the database is the source of truth and that editing the Markdown does not change memory.
+- **Filenames are human-readable** so the native graph's node names are legible: `<readable title> - <short id>.md` — e.g. `Answers/Source of truth for this app - ask_nXZM2v.md`, `Evidence/Use SQLite as the source of truth - evp_a3d6b2.md`, `Memories/Decisions/SQLite truth - mem_91ab4c.md`. A short, stable id suffix (type prefix + a few chars) keeps paths deterministic and collision-resistant and disambiguates same-titled notes. The **full id always stays in the note's frontmatter (`mv_entity_id`) and body** — the filename is a disposable view, never the only identifier, and is never read back into SQLite.
 - After a sync, open Obsidian's ribbon graph — you'll see the generated notes and the provenance chains (transcript ↔ evidence ↔ memory/answer, plus conflicts and entities). New files may take a moment for Obsidian to index.
 
 ### When to resync

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { askAI, createDatabaseAskAIDependencies } from "../src/ask-ai/index.js";
 import { createRepositories, openDatabase, type SqliteDatabase } from "../src/db/index.js";
 import { importTranscript } from "../src/ingest/index.js";
-import { GENERATED_VAULT_FOLDER, OBSIDIAN_SYNC_GRAPH_COMMAND, generateObsidianVault } from "../src/obsidian/index.js";
+import { GENERATED_VAULT_FOLDER, OBSIDIAN_SYNC_GRAPH_COMMAND, generateObsidianVault, shortId } from "../src/obsidian/index.js";
 import { linkMemoryObjectToSpan } from "../src/provenance/index.js";
 import { indexEvidencePointerForSearch } from "../src/retrieval/index.js";
 import { createSqliteFrontendApi, renderRoute, type GeneratedSyncResult } from "../src/frontend/index.js";
@@ -50,19 +50,19 @@ describe("Generated Obsidian graph sync (Phase 3 wiring)", () => {
 
   it("emits wiki links between transcript/evidence/memory/answer notes so the native graph has edges", async () => {
     const data = await seed();
-    await generateObsidianVault(db, { outputRoot: root, now: fixedNow });
+    const result = await generateObsidianVault(db, { outputRoot: root, now: fixedNow });
+    const find = (entityId: string, logicalType: string) => result.files.find((f) => f.entityId === entityId && f.logicalType === logicalType)!;
     // memory -> evidence and memory -> transcript span (native graph edges, not just mv:// text)
-    const memoryFile = `Memories/Decisions/SQLite truth--${data.strong.id}.md`;
-    const memory = await read(root, memoryFile);
-    expect(memory).toContain(`[[Evidence/${data.strongPtr.evidence_pointer_id}`);
+    const memory = await read(root, find(data.strong.id, "memory_note").relativePath);
+    expect(memory).toContain("[[Evidence/");
+    expect(memory).toContain(shortId(data.strongPtr.evidence_pointer_id)); // readable evidence link carries the short id
     expect(memory).toContain("[[Transcripts/");
     // evidence -> transcript span
-    expect(await read(root, `Evidence/${data.strongPtr.evidence_pointer_id}.md`)).toContain("[[Transcripts/");
+    expect(await read(root, find(data.strongPtr.evidence_pointer_id, "evidence_note").relativePath)).toContain("[[Transcripts/");
     // home note links the section/graph notes together
     expect(await read(root, "00 Home.md")).toContain("[[Graphs/Source Evidence Graph");
     // answer note exists and carries claim-level citations (links into the graph)
-    const answerNote = await read(root, `Answers/${data.answer.id}.md`);
-    expect(answerNote).toContain("Claim-Level Citations");
+    expect(await read(root, find(data.answer.id, "answer_note").relativePath)).toContain("Claim-Level Citations");
   });
 
   it("preserves weak/broken evidence warnings in generated notes", async () => {
@@ -70,9 +70,48 @@ describe("Generated Obsidian graph sync (Phase 3 wiring)", () => {
     // Break the strong pointer's source hash AFTER seeding so its evidence note must warn.
     db.prepare("UPDATE source_pointers SET span_text_sha256='broken' WHERE pointer_uri=?").run(data.strongPtr.source_pointer_uri);
     const result = await generateObsidianVault(db, { outputRoot: root, now: fixedNow });
+    const find = (entityId: string, logicalType: string) => result.files.find((f) => f.entityId === entityId && f.logicalType === logicalType)!;
     expect(result.warnings.some((w) => w.startsWith(`Broken evidence pointer ${data.strongPtr.evidence_pointer_id}`))).toBe(true);
-    expect(await read(root, `Evidence/${data.strongPtr.evidence_pointer_id}.md`)).toContain("Broken evidence pointer");
-    expect(await read(root, `Memories/Preferences/Maybe avoid--${data.weak.id}.md`)).toContain("Weak or review-only evidence");
+    expect(await read(root, find(data.strongPtr.evidence_pointer_id, "evidence_note").relativePath)).toContain("Broken evidence pointer");
+    expect(await read(root, find(data.weak.id, "memory_note").relativePath)).toContain("Weak or review-only evidence");
+  });
+
+  it("uses readable filenames (slug + short id), not raw long ids, and keeps full ids in frontmatter/body", async () => {
+    const data = await seed();
+    const result = await generateObsidianVault(db, { outputRoot: root, now: fixedNow });
+    const find = (entityId: string, logicalType: string) => result.files.find((f) => f.entityId === entityId && f.logicalType === logicalType)!;
+
+    const answer = find(data.answer.id, "answer_note");
+    expect(answer.relativePath).toContain(" - ");                       // readable "<slug> - <shortId>" form
+    expect(answer.relativePath).not.toContain(data.answer.id);          // full long id NOT the filename
+    expect(answer.relativePath).toContain(shortId(data.answer.id));     // short stable suffix kept
+    expect(await read(root, answer.relativePath)).toContain(`mv_entity_id: ${JSON.stringify(data.answer.id)}`); // full id in frontmatter
+
+    const evidence = find(data.strongPtr.evidence_pointer_id, "evidence_note");
+    expect(evidence.relativePath).not.toContain(data.strongPtr.evidence_pointer_id);
+    expect(evidence.relativePath).toContain(shortId(data.strongPtr.evidence_pointer_id));
+    expect(await read(root, evidence.relativePath)).toContain(data.strongPtr.evidence_pointer_id); // full id preserved in note body/frontmatter
+
+    const memory = find(data.strong.id, "memory_note");
+    expect(memory.relativePath).toContain("SQLite truth - ");           // human-readable title
+    expect(memory.relativePath).not.toContain(data.strong.id);
+    expect(memory.relativePath).toContain(shortId(data.strong.id));
+  });
+
+  it("disambiguates duplicate titles via the short id suffix and sanitizes unsafe characters", async () => {
+    const data = await seed();
+    const repos = createRepositories(db);
+    const mk = (gen: string) => repos.memoryObjects.createMemoryObject(
+      { type: "decision", title: "A/B: choice?", generated_text: gen, confidence: 0.9, created_by: "agent" },
+      [{ span_id: data.spans[0].id, role: "supports", evidence_score: 0.9 }]);
+    const a = mk("first"), b = mk("second");
+    const result = await generateObsidianVault(db, { outputRoot: root, now: fixedNow });
+    const pathOf = (id: string) => result.files.find((f) => f.entityId === id && f.logicalType === "memory_note")!.relativePath;
+    expect(pathOf(a.id)).not.toBe(pathOf(b.id));                        // identical titles -> distinct files
+    expect(pathOf(a.id)).not.toMatch(/[:?]/);                          // ':' and '?' sanitized out of the path
+    expect(pathOf(a.id).startsWith("Memories/Decisions/")).toBe(true); // the '/' inside the title did NOT create a stray folder
+    expect(pathOf(a.id)).toContain(shortId(a.id));
+    expect(pathOf(b.id)).toContain(shortId(b.id));
   });
 
   it("dashboard reports never-synced before, and last-synced status after a sync", async () => {

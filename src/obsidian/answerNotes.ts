@@ -19,7 +19,7 @@ ${pointers.map((pointer) => renderEvidenceCitation(db, pointer.evidence_pointer_
     const warning = answer.answer_status === "weak_evidence" || answer.answer_status === "refused_no_evidence"
       ? "> [!caution] Weak or missing evidence\n> This answer is limited by its evidence."
       : answer.answer_status === "conflicting_evidence" ? "> [!warning] Conflicting evidence\n> The answer must preserve both sides." : "";
-    return makeGeneratedFile("answer_note", answerPath(String(answer.id)), `${frontmatter({ mv_entity_type: "answer", mv_entity_id: String(answer.id), mv_generated: true, mv_source_of_truth: "sqlite", mv_support_status: String(answer.answer_status), mv_confidence: String(answer.confidence) })}
+    return makeGeneratedFile("answer_note", answerPath(String(answer.question_text), String(answer.id)), `${frontmatter({ mv_entity_type: "answer", mv_entity_id: String(answer.id), mv_generated: true, mv_source_of_truth: "sqlite", mv_support_status: String(answer.answer_status), mv_confidence: String(answer.confidence) })}
 # Ask AI Answer
 
 ${generatedWarning}
