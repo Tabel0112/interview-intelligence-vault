@@ -13,7 +13,7 @@ import { buildObsidianGraph } from "../obsidian/graphBuilder.js";
 import { resolveEvidencePointer, type EvidencePointer } from "../provenance/index.js";
 import { routeHref } from "./router.js";
 import type {
-  DashboardView, EvidenceView, FrontendApi, MemoryView, ReviewItemView, SearchResultView, TranscriptListItem, TranscriptView, TrustState,
+  DashboardView, EvidenceView, FrontendApi, GeneratedSyncResult, GeneratedSyncStatus, MemoryView, ReviewItemView, SearchResultView, TranscriptListItem, TranscriptView, TrustState,
 } from "./types.js";
 import type { PluginHealth } from "../obsidian/startup.js";
 
@@ -175,6 +175,27 @@ function normalizeCorrectionTarget(db: SqliteDatabase, input: Parameters<Fronten
   throw new Error(`Correction target ${input.targetType}:${input.targetId} has no supported append-only owner`);
 }
 
+/**
+ * Best-effort status of the last generated-Markdown view sync (powers Obsidian's native graph). Read-only;
+ * `obsidian_view_runs` is a generation audit log, never source truth. Any error -> "never synced" (the
+ * dashboard must never break because the optional view layer was never written).
+ */
+function generatedSyncStatus(db: SqliteDatabase): GeneratedSyncStatus {
+  try {
+    const run = db.prepare(`SELECT created_at,file_count,graph_node_count,graph_edge_count,status,error_message
+      FROM obsidian_view_runs ORDER BY created_at DESC,id DESC LIMIT 1`).get() as Row | undefined;
+    if (!run) return { synced: false };
+    return {
+      synced: true, lastSyncedAt: String(run.created_at), fileCount: Number(run.file_count),
+      graphNodeCount: Number(run.graph_node_count), graphEdgeCount: Number(run.graph_edge_count),
+      status: run.status === "failed" ? "failed" : "completed",
+      error: run.error_message ? String(run.error_message) : undefined,
+    };
+  } catch {
+    return { synced: false };
+  }
+}
+
 export function createSqliteFrontendApi(
   db: SqliteDatabase,
   options: {
@@ -186,6 +207,11 @@ export function createSqliteFrontendApi(
     llmRequired?: boolean;
     /** Current-settings readiness (no construction); used for setup-required UI. */
     getLlmReady?: () => boolean;
+    /**
+     * Injected by the Obsidian plugin (which knows the on-disk vault path) to write the generated
+     * Markdown view layer. Headless/MCP callers leave this unset -> syncGeneratedGraphNotes is unavailable.
+     */
+    syncGeneratedViews?: () => Promise<GeneratedSyncResult>;
   } = {},
 ): FrontendApi {
   return {
@@ -203,6 +229,7 @@ export function createSqliteFrontendApi(
         health: options.health,
         llmRequired: !!options.llmRequired,
         llmReady: options.getLlmReady ? options.getLlmReady() : !options.llmRequired,
+        generatedSync: generatedSyncStatus(db),
       };
     },
     async listTranscripts() { return transcriptList(db); },
@@ -391,6 +418,13 @@ export function createSqliteFrontendApi(
       }
       try { await indexTranscriptForRetrieval(db, transcriptId); } catch { /* indexing is best-effort */ }
       return { status: "extracted" };
+    },
+    async syncGeneratedGraphNotes(): Promise<GeneratedSyncResult> {
+      // File writing + on-disk vault path live in the Obsidian plugin; headless/MCP callers have neither.
+      if (!options.syncGeneratedViews) {
+        return { status: "unavailable", message: "Generated graph notes can only be synced inside the Obsidian plugin. Use the \"Sync generated graph notes\" command." };
+      }
+      return options.syncGeneratedViews();
     },
   };
 }

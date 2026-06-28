@@ -71,6 +71,24 @@ export interface MemoryView {
   conflicts: ConflictAssessment[];
 }
 
+/** Status of the disposable generated-Markdown view layer that powers Obsidian's native (ribbon) graph. */
+export interface GeneratedSyncStatus {
+  /** False => never synced (no generated notes written yet). */
+  synced: boolean;
+  lastSyncedAt?: string;
+  fileCount?: number;
+  graphNodeCount?: number;
+  graphEdgeCount?: number;
+  status?: "completed" | "failed";
+  error?: string;
+}
+
+/** Outcome of a generated-notes sync triggered from the UI. Navigation/view layer only — never truth. */
+export type GeneratedSyncResult =
+  | { status: "synced"; filesWritten: number; filesSkipped: number; graphNodeCount: number; graphEdgeCount: number; warnings: string[]; errors: string[] }
+  | { status: "unavailable"; message: string }
+  | { status: "failed"; message: string };
+
 export interface DashboardView {
   totalTranscriptCount: number;
   transcripts: TranscriptListItem[];
@@ -84,6 +102,8 @@ export interface DashboardView {
   llmRequired?: boolean;
   /** Whether a usable external LLM is currently configured. */
   llmReady?: boolean;
+  /** Last generated-graph-notes sync (for Obsidian's native graph); omitted in unavailable-DB states. */
+  generatedSync?: GeneratedSyncStatus;
 }
 
 export interface SearchResultView {
@@ -149,6 +169,12 @@ export interface FrontendApi {
   getLlmStatus(): Promise<{ required: boolean; ready: boolean }>;
   /** Run AI extraction for a transcript that has no completed run yet (e.g. imported before LLM setup). */
   runExtraction(transcriptId: string): Promise<{ status: "extracted" | "skipped" | "setup_required" | "failed"; warning?: string }>;
+  /**
+   * Write the disposable generated-Markdown view layer that powers Obsidian's native (ribbon) graph.
+   * Optional: only the Obsidian plugin injects a real implementation (it needs the on-disk vault path).
+   * Headless/MCP contexts return `{ status: "unavailable" }`. Never reads generated Markdown back as truth.
+   */
+  syncGeneratedGraphNotes?(): Promise<GeneratedSyncResult>;
 }
 
 export interface FrontendAnswerView extends AskAIResponse {

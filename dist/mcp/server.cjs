@@ -3541,6 +3541,24 @@ function normalizeCorrectionTarget(db, input) {
   }
   throw new Error(`Correction target ${input.targetType}:${input.targetId} has no supported append-only owner`);
 }
+function generatedSyncStatus(db) {
+  try {
+    const run = db.prepare(`SELECT created_at,file_count,graph_node_count,graph_edge_count,status,error_message
+      FROM obsidian_view_runs ORDER BY created_at DESC,id DESC LIMIT 1`).get();
+    if (!run) return { synced: false };
+    return {
+      synced: true,
+      lastSyncedAt: String(run.created_at),
+      fileCount: Number(run.file_count),
+      graphNodeCount: Number(run.graph_node_count),
+      graphEdgeCount: Number(run.graph_edge_count),
+      status: run.status === "failed" ? "failed" : "completed",
+      error: run.error_message ? String(run.error_message) : void 0
+    };
+  } catch {
+    return { synced: false };
+  }
+}
 function createSqliteFrontendApi(db, options = {}) {
   return {
     async getDashboard() {
@@ -3556,7 +3574,8 @@ function createSqliteFrontendApi(db, options = {}) {
         brokenCount: review.filter((item) => item.trustState === "broken").length,
         health: options.health,
         llmRequired: !!options.llmRequired,
-        llmReady: options.getLlmReady ? options.getLlmReady() : !options.llmRequired
+        llmReady: options.getLlmReady ? options.getLlmReady() : !options.llmRequired,
+        generatedSync: generatedSyncStatus(db)
       };
     },
     async listTranscripts() {
@@ -3760,6 +3779,12 @@ function createSqliteFrontendApi(db, options = {}) {
       } catch {
       }
       return { status: "extracted" };
+    },
+    async syncGeneratedGraphNotes() {
+      if (!options.syncGeneratedViews) {
+        return { status: "unavailable", message: 'Generated graph notes can only be synced inside the Obsidian plugin. Use the "Sync generated graph notes" command.' };
+      }
+      return options.syncGeneratedViews();
     }
   };
 }

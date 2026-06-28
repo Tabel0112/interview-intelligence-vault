@@ -3,13 +3,15 @@ import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { openDatabase, type SqliteDatabase } from "../db/index.js";
 import { validateMigrationPackage } from "../db/migrations/index.js";
-import { navigateInternal, obsidianRouteFromProtocol, OBSIDIAN_PROTOCOL_ACTION, type FrontendApi } from "../frontend/index.js";
+import { navigateInternal, obsidianRouteFromProtocol, OBSIDIAN_PROTOCOL_ACTION, type FrontendApi, type GeneratedSyncResult } from "../frontend/index.js";
 import { createObsidianNavigation } from "./ObsidianNavigation.js";
+import { generateObsidianVault } from "./generateVault.js";
+import type { ObsidianViewResult } from "./types.js";
 import { nativeBindingLoadError, resolveNativeBinding } from "./nativeBindings.js";
 import { TranscriptMemorySettingsTab } from "./SettingsTab.js";
 import { TranscriptMemoryItemView } from "./TranscriptMemoryItemView.js";
 import { createObsidianAppApi } from "./services/ObsidianAppApi.js";
-import { OBSIDIAN_COMMANDS, OBSIDIAN_REINDEX_COMMAND, OBSIDIAN_RIBBON, OBSIDIAN_VIEW_TYPES, type TranscriptMemoryViewType } from "./pluginTypes.js";
+import { GENERATED_VAULT_FOLDER, OBSIDIAN_COMMANDS, OBSIDIAN_REINDEX_COMMAND, OBSIDIAN_RIBBON, OBSIDIAN_SYNC_GRAPH_COMMAND, OBSIDIAN_VIEW_TYPES, type TranscriptMemoryViewType } from "./pluginTypes.js";
 import { createUnavailableFrontendApi, DESKTOP_ONLY_MESSAGE, initialPluginHealth, readableStartupError, startupSupport, type PluginHealth } from "./startup.js";
 import { DEFAULT_SETTINGS, isLlmConfigured, normalizeSettings, settingsHealthSummary, type TranscriptMemorySettings } from "./settings.js";
 import { embeddingReindexStatus, runEmbeddingReindex } from "./embeddingSettings.js";
@@ -20,6 +22,8 @@ import { ViewRefreshRegistry } from "./viewRefreshRegistry.js";
 
 export default class TranscriptMemoryVaultPlugin extends Plugin {
   private db: SqliteDatabase | null = null;
+  // Absolute on-disk vault root (desktop only); the generated Markdown view layer is written under it.
+  private vaultBasePath: string | null = null;
   private pluginSettings: TranscriptMemorySettings = DEFAULT_SETTINGS;
   private health: PluginHealth = initialPluginHealth();
   private api: FrontendApi = createUnavailableFrontendApi(() => this.health);
@@ -39,6 +43,7 @@ export default class TranscriptMemoryVaultPlugin extends Plugin {
     }
     this.addCommand({ id: OBSIDIAN_REINDEX_COMMAND.id, name: OBSIDIAN_REINDEX_COMMAND.name, callback: () => void this.rebuildEmbeddingIndex() });
     this.addCommand({ id: "run-ai-extraction", name: "Run AI extraction for transcripts missing it", callback: () => void this.runPendingExtraction() });
+    this.addCommand({ id: OBSIDIAN_SYNC_GRAPH_COMMAND.id, name: OBSIDIAN_SYNC_GRAPH_COMMAND.name, callback: () => void this.syncGeneratedGraphNotesCommand() });
     this.addRibbonIcon(OBSIDIAN_RIBBON.icon, OBSIDIAN_RIBBON.title, () => void navigation.openDashboard());
     // External deep links (e.g. from Claude Desktop): obsidian://transcript-memory-vault?route=<mv://...>.
     // Navigation only — the route is allowlist-validated to a known mv:// view, then opened via the existing
@@ -60,7 +65,8 @@ export default class TranscriptMemoryVaultPlugin extends Plugin {
       return;
     }
 
-    const pluginDirectory = join(fileSystemAdapter!.getBasePath(), this.app.vault.configDir, "plugins", this.manifest.id);
+    this.vaultBasePath = fileSystemAdapter!.getBasePath();
+    const pluginDirectory = join(this.vaultBasePath, this.app.vault.configDir, "plugins", this.manifest.id);
     const databasePath = join(pluginDirectory, "transcript-memory.sqlite");
     const migrationDirectory = join(pluginDirectory, "migrations");
     const nativeBinding = resolveNativeBinding(pluginDirectory);
@@ -95,7 +101,7 @@ export default class TranscriptMemoryVaultPlugin extends Plugin {
       this.api = createObsidianAppApi(this.db, this.app.vault, this.health,
         () => askAiSynthesisFromSettings(this.pluginSettings, { transport: this.llmTransport }),
         () => memoryExtractorFromSettings(this.pluginSettings, { transport: this.llmTransport }),
-        { llmRequired: true, getLlmReady: () => isLlmConfigured(this.pluginSettings) });
+        { llmRequired: true, getLlmReady: () => isLlmConfigured(this.pluginSettings), syncGeneratedViews: () => this.syncGeneratedGraphNotesForApi() });
       this.refreshReindexStatus();
       if (firstRun) new Notice("Transcript Memory Vault is ready. Upload a transcript to begin.");
     } catch (error) {
@@ -183,6 +189,47 @@ export default class TranscriptMemoryVaultPlugin extends Plugin {
     } catch (error) {
       new Notice(`Embedding index rebuild failed: ${readableStartupError(error)}`);
       console.error("Transcript Memory Vault embedding reindex failed", error);
+    }
+  }
+
+  /**
+   * Core generated-Markdown sync (no UI side effects). Writes the disposable view layer under
+   * `<vault>/Transcript Memory Vault/` so Obsidian's native ribbon graph has notes + wikilinks.
+   * `cleanBeforeWrite` removes ONLY previously-generated files (tracked in the manifest) and never
+   * touches user-created notes. SQLite stays the source of truth; generated Markdown is never read back.
+   */
+  private async runGeneratedVaultSync(): Promise<ObsidianViewResult> {
+    if (!this.db || this.health.status !== "ready") throw new Error("Transcript Memory Vault is not ready.");
+    if (!this.vaultBasePath) throw new Error("Vault filesystem path is unavailable.");
+    return generateObsidianVault(this.db, { outputRoot: join(this.vaultBasePath, GENERATED_VAULT_FOLDER), cleanBeforeWrite: true });
+  }
+
+  /** EXPLICIT manual action (command palette). Writes generated graph notes and reports via Notices. */
+  private async syncGeneratedGraphNotesCommand(): Promise<void> {
+    if (!this.db || this.health.status !== "ready") { new Notice("Transcript Memory Vault is not ready; cannot sync graph notes."); return; }
+    new Notice("Syncing generated graph notes…");
+    try {
+      const result = await this.runGeneratedVaultSync();
+      new Notice(result.errors.length
+        ? `Graph notes synced with ${result.errors.length} file error(s); see "${GENERATED_VAULT_FOLDER}/_system/generation-log.md".`
+        : `Graph notes synced into "${GENERATED_VAULT_FOLDER}/": ${result.filesWritten} written, ${result.filesSkipped} unchanged, ${result.graphNodeCount} nodes, ${result.graphEdgeCount} edges. Open Obsidian's graph view to see them.`);
+      await this.viewRegistry.notifyMutation();
+    } catch (error) {
+      new Notice(`Graph notes sync failed: ${readableStartupError(error)}`);
+      console.error("Transcript Memory Vault generated graph sync failed", error);
+    }
+  }
+
+  /** Same sync, triggered from the dashboard button. Returns a frontend-friendly summary (no Notices). */
+  private async syncGeneratedGraphNotesForApi(): Promise<GeneratedSyncResult> {
+    try {
+      const result = await this.runGeneratedVaultSync();
+      return {
+        status: "synced", filesWritten: result.filesWritten, filesSkipped: result.filesSkipped,
+        graphNodeCount: result.graphNodeCount, graphEdgeCount: result.graphEdgeCount, warnings: result.warnings, errors: result.errors,
+      };
+    } catch (error) {
+      return { status: "failed", message: readableStartupError(error) };
     }
   }
 }

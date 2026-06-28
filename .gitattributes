@@ -1,0 +1,6 @@
+# Generated build artifacts (esbuild output). They are committed for distribution but must not be
+# whitespace-linted by `git diff --check` / `git apply`: the bundles inline note-builder Markdown
+# templates that legitimately end lines with two spaces (Markdown hard breaks). Source files are
+# still linted normally — only these generated bundles are exempt.
+/main.js -whitespace
+/dist/** -whitespace

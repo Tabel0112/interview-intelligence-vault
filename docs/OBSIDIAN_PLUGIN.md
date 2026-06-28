@@ -80,6 +80,44 @@ obsidian://transcript-memory-vault?route=<encodeURIComponent(mv://…)>[&vault=<
 - **Failure mode:** an unrecognized, malformed, non-`mv://` (e.g. `file://`, `https://`), or unknown-route link shows a readable **Notice** and does **not** navigate. Nothing is opened or changed.
 - **Canonical routing is unchanged.** `mv://…` remains the source-of-truth route inside the plugin; `obsidian://…` is only an OS-openable wrapper around it. **SQLite remains the source of truth.**
 
+## Two graphs: plugin Graph page vs. Obsidian's native graph
+
+There are **two** graph surfaces, and they are populated differently:
+
+| Surface | Reads from | When it updates |
+|---|---|---|
+| **Plugin Graph page** (a Transcript Memory Vault view) | **SQLite, live** (`buildObsidianGraph`) | Always current — rebuilt on every open. No sync needed. |
+| **Obsidian's native (ribbon) graph** | **Markdown files + `[[wiki links]]`** only | Only after you run **Sync generated graph notes** (it cannot see SQLite). |
+
+Obsidian's built-in graph is intentionally Markdown-only — it has no way to read the plugin's SQLite tables. To make it meaningful you generate a **disposable Markdown view layer** from SQLite.
+
+### Sync generated graph notes
+
+- **Command palette:** **Transcript Memory Vault: Sync generated graph notes**.
+- **Dashboard:** the **“Sync Obsidian graph notes”** button (with a status line showing never-synced / last-synced timestamp, file count, and node/edge counts).
+- Both write the same files into a single folder at the **vault root**:
+
+  ```txt
+  <vault>/Transcript Memory Vault/
+    00 Home.md
+    Transcripts/  Memories/  People/  Topics/  Decisions/  Evidence/  Answers/  Conflicts/  Graphs/
+    _system/view-manifest.json   _system/generation-log.md
+  ```
+
+- Generated notes carry **frontmatter** (`mv_entity_type`, `mv_entity_id`, `mv_source_of_truth: sqlite`), **`[[wiki links]]`** between transcripts, evidence, memories, answers, conflicts, and entities (so the native graph has edges, not isolated dots), and **explicit warnings** for weak / conflicting / broken evidence. Each generated note states that the database is the source of truth and that editing the Markdown does not change memory.
+- After a sync, open Obsidian's ribbon graph — you'll see the generated notes and the provenance chains (transcript ↔ evidence ↔ memory/answer, plus conflicts and entities). New files may take a moment for Obsidian to index.
+
+### When to resync
+
+The generated notes are a **snapshot**. Re-run the sync after you **import a transcript, run AI extraction, or ask AI** (in the plugin or via Claude Desktop/MCP) — otherwise the native graph is stale. There is **no auto-sync yet** (the command is explicit/manual, like Rebuild Embedding Index).
+
+### Safety
+
+- Writes happen **only inside** `Transcript Memory Vault/`. The path is guarded against escaping that folder.
+- Cleanup is **manifest-based**: a resync removes only files it previously generated (tracked in `_system/view-manifest.json`) and **never deletes user-created notes** — even ones placed inside the generated folder are left alone unless they were generated.
+- Regeneration is **deterministic** (same SQLite → byte-identical files); a user edit to a generated note is overwritten on the next sync.
+- **Generated Markdown is never read back into SQLite** and is never treated as truth. No API keys, provider config, prompts, Authorization headers, or raw upstream errors are written. The only SQLite writes a sync makes are to the generation **audit log** (`obsidian_view_runs` / `obsidian_generated_files`) — never to truth-bearing data, and never to raw transcripts.
+
 ## Providers, Keys, And Secret Safety
 
 The plugin is **LLM-required**: Ask AI and AI memory extraction need a configured external (OpenAI-compatible) LLM (provider + model + API key in plugin settings). Until one is configured, the dashboard and Ask AI show a **setup-required** state and AI features are disabled — the plugin does **not** generate deterministic/local output, and it does not silently fall back if the LLM fails (it shows a generic failure). Uploading a transcript still imports the immutable raw text; run the **Run AI extraction for transcripts missing it** command after configuring the LLM to extract memory from transcripts imported earlier. External **embeddings are optional** — retrieval uses a local keyword index until you configure and rebuild an embedding provider.

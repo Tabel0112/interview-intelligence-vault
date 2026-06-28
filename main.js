@@ -78,7 +78,7 @@ var require_sqlite_error = __commonJS({
 // node_modules/file-uri-to-path/index.js
 var require_file_uri_to_path = __commonJS({
   "node_modules/file-uri-to-path/index.js"(exports2, module2) {
-    var sep = require("path").sep || "/";
+    var sep2 = require("path").sep || "/";
     module2.exports = fileUriToPath;
     function fileUriToPath(uri) {
       if ("string" != typeof uri || uri.length <= 7 || "file://" != uri.substring(0, 7)) {
@@ -90,15 +90,15 @@ var require_file_uri_to_path = __commonJS({
       var path = rest.substring(firstSlash + 1);
       if ("localhost" == host) host = "";
       if (host) {
-        host = sep + sep + host;
+        host = sep2 + sep2 + host;
       }
       path = path.replace(/^(.+)\|/, "$1:");
-      if (sep == "\\") {
+      if (sep2 == "\\") {
         path = path.replace(/\//g, "\\");
       }
       if (/^.+\:/.test(path)) {
       } else {
-        path = sep + path;
+        path = sep2 + path;
       }
       return host + path;
     }
@@ -112,7 +112,7 @@ var require_bindings = __commonJS({
     var path = require("path");
     var fileURLToPath2 = require_file_uri_to_path();
     var join4 = path.join;
-    var dirname2 = path.dirname;
+    var dirname3 = path.dirname;
     var exists = fs.accessSync && function(path2) {
       try {
         fs.accessSync(path2);
@@ -121,7 +121,7 @@ var require_bindings = __commonJS({
       }
       return true;
     } || fs.existsSync || path.existsSync;
-    var defaults = {
+    var defaults2 = {
       arrow: process.env.NODE_BINDINGS_ARROW || " \u2192 ",
       compiled: process.env.NODE_BINDINGS_COMPILED_DIR || "compiled",
       platform: process.platform,
@@ -159,8 +159,8 @@ var require_bindings = __commonJS({
       } else if (!opts) {
         opts = {};
       }
-      Object.keys(defaults).map(function(i2) {
-        if (!(i2 in opts)) opts[i2] = defaults[i2];
+      Object.keys(defaults2).map(function(i2) {
+        if (!(i2 in opts)) opts[i2] = defaults2[i2];
       });
       if (!opts.module_root) {
         opts.module_root = exports2.getRoot(exports2.getFileName());
@@ -227,7 +227,7 @@ var require_bindings = __commonJS({
       return fileName;
     };
     exports2.getRoot = function getRoot(file) {
-      var dir = dirname2(file), prev;
+      var dir = dirname3(file), prev;
       while (true) {
         if (dir === ".") {
           dir = process.cwd();
@@ -429,13 +429,13 @@ var require_backup = __commonJS({
     var runBackup = (backup, handler) => {
       let rate = 0;
       let useDefault = true;
-      return new Promise((resolve, reject) => {
+      return new Promise((resolve3, reject) => {
         setImmediate(function step() {
           try {
             const progress = backup.transfer(rate);
             if (!progress.remainingPages) {
               backup.close();
-              resolve(progress);
+              resolve3(progress);
               return;
             }
             if (useDefault) {
@@ -816,7 +816,7 @@ module.exports = __toCommonJS(main_exports);
 // src/obsidian/Plugin.ts
 var import_obsidian5 = require("obsidian");
 var import_node_fs3 = require("node:fs");
-var import_node_path4 = require("node:path");
+var import_node_path6 = require("node:path");
 
 // src/db/connection.ts
 var import_better_sqlite3 = __toESM(require_lib(), 1);
@@ -1632,10 +1632,10 @@ function selectEvidenceForAnswer(assessment, options = {}) {
   const materialized = (options.materializedEvidence ?? assessment.scoredEvidence.map(scoredCandidateToEvidence).filter((item) => item != null)).filter((item) => validSpans.has(item.spanId));
   const seenSpans = /* @__PURE__ */ new Set(), seenQuotes = /* @__PURE__ */ new Set();
   const evidence = [...materialized].sort((a, b) => rank[b.evidenceConfidence] - rank[a.evidenceConfidence] || sourceRank[b.sourceKind] - sourceRank[a.sourceKind] || b.evidenceScore - a.evidenceScore || a.spanId.localeCompare(b.spanId)).filter((item) => {
-    const quote = item.quotePreview.toLowerCase().replace(/\s+/g, " ").trim();
-    if (!item.evidencePointerId || !item.transcriptId || !item.spanId || seenSpans.has(item.spanId) || seenQuotes.has(quote)) return false;
+    const quote2 = item.quotePreview.toLowerCase().replace(/\s+/g, " ").trim();
+    if (!item.evidencePointerId || !item.transcriptId || !item.spanId || seenSpans.has(item.spanId) || seenQuotes.has(quote2)) return false;
     seenSpans.add(item.spanId);
-    seenQuotes.add(quote);
+    seenQuotes.add(quote2);
     return true;
   }).slice(0, max);
   return { evidence, confidence: evidence.length ? assessment.strength : "no_evidence", assessment };
@@ -1646,11 +1646,11 @@ var import_node_crypto2 = require("node:crypto");
 var stableId = (value) => `aiclaim_${(0, import_node_crypto2.createHash)("sha256").update(value).digest("hex").slice(0, 24)}`;
 var supportStatus = (confidence) => confidence === "strong" || confidence === "mixed" ? "supported" : confidence === "conflicting" ? "conflicting" : confidence === "weak" ? "weakly_supported" : "unsupported";
 function defaultClaimText(kind, evidence) {
-  const quote = evidence[0]?.quotePreview.replace(/^[^:]{1,80}:\s*/, "").trim() ?? "";
-  if (kind === "inference") return `Inference: ${quote}`;
-  if (kind === "recommendation") return `Recommendation based on the available transcript evidence: ${quote}`;
-  if (kind === "pattern") return evidence.length > 1 ? `Pattern across the selected evidence: ${quote}` : `Tentative pattern from limited evidence: ${quote}`;
-  return quote;
+  const quote2 = evidence[0]?.quotePreview.replace(/^[^:]{1,80}:\s*/, "").trim() ?? "";
+  if (kind === "inference") return `Inference: ${quote2}`;
+  if (kind === "recommendation") return `Recommendation based on the available transcript evidence: ${quote2}`;
+  if (kind === "pattern") return evidence.length > 1 ? `Pattern across the selected evidence: ${quote2}` : `Tentative pattern from limited evidence: ${quote2}`;
+  return quote2;
 }
 async function generateClaimsFromEvidence(query, evidence, citations, options) {
   if (!evidence.length || options.confidence === "no_evidence") return [];
@@ -1760,9 +1760,9 @@ function parseAndGroundClaims(rawText, evidence) {
     if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string")) continue;
     const pointerIds = [...new Set(ids)].filter((id) => snippetByPointer.has(id));
     if (!pointerIds.length) continue;
-    const quote = candidate.supportingQuote;
-    if (typeof quote !== "string" || !quote.trim()) continue;
-    const needle = normalizeForMatch(quote);
+    const quote2 = candidate.supportingQuote;
+    if (typeof quote2 !== "string" || !quote2.trim()) continue;
+    const needle = normalizeForMatch(quote2);
     const anchored = needle.length > 0 && pointerIds.some((id) => snippetByPointer.get(id)?.includes(needle));
     if (!anchored) continue;
     const explanation = typeof candidate.explanation === "string" ? candidate.explanation : void 0;
@@ -2675,8 +2675,8 @@ var round2 = (value) => Math.round(clamp(value) * 1e4) / 1e4;
 function tokens2(text = "") {
   return [...new Set(text.toLowerCase().match(/[\p{L}\p{N}]+/gu)?.filter((token) => token.length > 1 && !stopWords.has(token)) ?? [])];
 }
-function lexicalCoverage(claimText, quote = "") {
-  const claim = tokens2(claimText), evidence = new Set(tokens2(quote));
+function lexicalCoverage(claimText, quote2 = "") {
+  const claim = tokens2(claimText), evidence = new Set(tokens2(quote2));
   return claim.length ? claim.filter((token) => evidence.has(token)).length / claim.length : 0;
 }
 function calculateRelevance(candidate, claimText, requiredTerms = []) {
@@ -2703,12 +2703,12 @@ function calculateDirectness(candidate, useType3) {
   return round2(base[candidate.sourceKind] + (useType3 === "inference" ? 0.05 : 0));
 }
 function calculateSpecificity(candidate, claimText, requiredTerms = []) {
-  const quote = candidate.quote ?? "";
-  const coverage = lexicalCoverage(claimText, quote);
+  const quote2 = candidate.quote ?? "";
+  const coverage = lexicalCoverage(claimText, quote2);
   const claimSpecifics = tokens2(claimText).filter((token) => /\d/.test(token) || token.length >= 7);
   const required = [.../* @__PURE__ */ new Set([...requiredTerms.map((term) => term.toLowerCase()), ...claimSpecifics])];
-  const specificCoverage = required.length ? required.filter((term) => quote.toLowerCase().includes(term)).length / required.length : coverage;
-  const concrete = /\d|(?:\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|may|june|july|august|september|october|november|december)\b)/i.test(quote) ? 0.15 : 0;
+  const specificCoverage = required.length ? required.filter((term) => quote2.toLowerCase().includes(term)).length / required.length : coverage;
+  const concrete = /\d|(?:\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|may|june|july|august|september|october|november|december)\b)/i.test(quote2) ? 0.15 : 0;
   return round2(0.55 * coverage + 0.45 * specificCoverage + concrete);
 }
 function calculateSourceStrength(candidate) {
@@ -2770,7 +2770,7 @@ function classifyEvidenceStrength(score2, caps = { reasons: [] }) {
 }
 
 // src/evidence/repetition.ts
-var normalizeQuote = (quote = "") => quote.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+var normalizeQuote = (quote2 = "") => quote2.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 function nearIdentical(left = "", right = "") {
   const a = new Set(normalizeQuote(left).split(" ").filter(Boolean)), b = new Set(normalizeQuote(right).split(" ").filter(Boolean));
   if (!a.size || !b.size) return false;
@@ -3321,9 +3321,9 @@ function parseAndGroundMemoryCandidates(rawText, window) {
     if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string")) continue;
     const evidenceSpanIds = [...new Set(ids)].filter((id) => spanTextById.has(id));
     if (!evidenceSpanIds.length) continue;
-    const quote = candidate.supportingQuote;
-    if (typeof quote !== "string" || !quote.trim()) continue;
-    const needle = normalizeForMatch2(quote);
+    const quote2 = candidate.supportingQuote;
+    if (typeof quote2 !== "string" || !quote2.trim()) continue;
+    const needle = normalizeForMatch2(quote2);
     const anchored = needle.length > 0 && evidenceSpanIds.some((id) => spanTextById.get(id)?.includes(needle));
     if (!anchored) continue;
     grounded.push({
@@ -3333,7 +3333,7 @@ function parseAndGroundMemoryCandidates(rawText, window) {
       evidenceSpanIds,
       confidence: 0,
       // LLM self-reported confidence is NOT trusted; the pipeline caps LLM candidates to needs_review
-      reason: quote.trim()
+      reason: quote2.trim()
       // grounded supportingQuote -> persisted in metadata_json.extraction_reason for audit
     });
   }
@@ -3919,9 +3919,9 @@ async function vectorSearch(db, query) {
 var clamp2 = (value) => Math.max(0, Math.min(1, value));
 function recencyScore(timestamp, now2) {
   if (!timestamp) return 0.5;
-  const time = Date.parse(timestamp), current = now2 == null ? Date.now() : Date.parse(now2);
-  if (!Number.isFinite(time) || !Number.isFinite(current)) return 0.5;
-  const ageDays = Math.max(0, (current - time) / 864e5);
+  const time2 = Date.parse(timestamp), current = now2 == null ? Date.now() : Date.parse(now2);
+  if (!Number.isFinite(time2) || !Number.isFinite(current)) return 0.5;
+  const ageDays = Math.max(0, (current - time2) / 864e5);
   return clamp2(1 / (1 + ageDays / 365));
 }
 function rankCandidate(candidate, vectorAvailable, recencyBoost = false, now2) {
@@ -4434,6 +4434,8 @@ var evidencePath = (id) => `Evidence/${safeName(id)}.md`;
 var answerPath = (id) => `Answers/${safeName(id)}.md`;
 var conflictPath = (id) => `Conflicts/${safeName(id)}.md`;
 var entityPath = (kind, label, id) => `${kind === "person" ? "People" : kind === "topic" ? "Topics" : "Decisions"}/${stableNoteName(label, id)}.md`;
+var stripMd = (path) => path.replace(/\.md$/i, "");
+var wikiLink = (path, label, anchor) => `[[${stripMd(path)}${anchor ? `#${anchor}` : ""}${label ? `|${label}` : ""}]]`;
 
 // src/obsidian/graphBuilder.ts
 var edgeId = (source, target, type, evidence = "") => `ov_edge_${(0, import_node_crypto7.createHash)("sha256").update(`${source}:${target}:${type}:${evidence}`).digest("hex").slice(0, 24)}`;
@@ -4746,6 +4748,24 @@ function normalizeCorrectionTarget(db, input) {
   }
   throw new Error(`Correction target ${input.targetType}:${input.targetId} has no supported append-only owner`);
 }
+function generatedSyncStatus(db) {
+  try {
+    const run = db.prepare(`SELECT created_at,file_count,graph_node_count,graph_edge_count,status,error_message
+      FROM obsidian_view_runs ORDER BY created_at DESC,id DESC LIMIT 1`).get();
+    if (!run) return { synced: false };
+    return {
+      synced: true,
+      lastSyncedAt: String(run.created_at),
+      fileCount: Number(run.file_count),
+      graphNodeCount: Number(run.graph_node_count),
+      graphEdgeCount: Number(run.graph_edge_count),
+      status: run.status === "failed" ? "failed" : "completed",
+      error: run.error_message ? String(run.error_message) : void 0
+    };
+  } catch {
+    return { synced: false };
+  }
+}
 function createSqliteFrontendApi(db, options = {}) {
   return {
     async getDashboard() {
@@ -4761,7 +4781,8 @@ function createSqliteFrontendApi(db, options = {}) {
         brokenCount: review.filter((item) => item.trustState === "broken").length,
         health: options.health,
         llmRequired: !!options.llmRequired,
-        llmReady: options.getLlmReady ? options.getLlmReady() : !options.llmRequired
+        llmReady: options.getLlmReady ? options.getLlmReady() : !options.llmRequired,
+        generatedSync: generatedSyncStatus(db)
       };
     },
     async listTranscripts() {
@@ -4965,6 +4986,12 @@ function createSqliteFrontendApi(db, options = {}) {
       } catch {
       }
       return { status: "extracted" };
+    },
+    async syncGeneratedGraphNotes() {
+      if (!options.syncGeneratedViews) {
+        return { status: "unavailable", message: 'Generated graph notes can only be synced inside the Obsidian plugin. Use the "Sync generated graph notes" command.' };
+      }
+      return options.syncGeneratedViews();
     }
   };
 }
@@ -5087,8 +5114,16 @@ async function renderPage(context) {
       const readyStatus = view.health?.status === "ready" ? `<aside class="immutable-notice status-banner"><strong>Transcript Memory Vault is ready.</strong> ${view.health.firstRun ? "Upload a transcript to begin. " : ""}Imported raw transcript snapshots are immutable and stored in local SQLite at ${escapeHtml(view.health.databasePath)}.</aside>` : "";
       const startupProblem = view.health && view.health.status !== "ready" ? `<aside class="trust-warning">${view.health.status === "unsupported" ? trustBadge("no_evidence", "desktop only") : trustBadge("broken", "startup unavailable")} ${escapeHtml(view.health.lastInitializationError ?? "Database initialization has not completed.")}</aside>` : "";
       const llmBanner = view.llmRequired && view.llmReady === false ? `<aside class="trust-warning llm-setup-required">${trustBadge("no_evidence", "LLM required")} AI is not configured. Ask AI and AI memory extraction need an external LLM \u2014 open plugin Settings and add a provider, model, and API key. Transcripts still import; run the "Run AI extraction" command afterward.</aside>` : "";
+      const sync = view.generatedSync;
+      const syncStatusLine = !sync ? "Generated graph notes status is unavailable in this context." : !sync.synced ? "Never synced \u2014 Obsidian's native graph has no generated notes yet. Sync after importing transcripts, running AI extraction, or asking AI." : `Last synced ${escapeHtml(sync.lastSyncedAt ?? "unknown")} \xB7 ${sync.fileCount ?? 0} files \xB7 ${sync.graphNodeCount ?? 0} nodes \xB7 ${sync.graphEdgeCount ?? 0} edges.`;
+      const syncWarn = sync?.status === "failed" ? `<aside class="trust-warning">${trustBadge("broken", "last sync had errors")} ${escapeHtml(sync.error ?? "Some generated files could not be written.")}</aside>` : "";
+      const generatedNotesSection = section("Obsidian graph notes", `<p>These generated Markdown notes power Obsidian's <strong>native (ribbon) graph</strong>. The plugin's own Graph page reads SQLite live; the native graph only sees Markdown files and wiki links, so it needs these notes. SQLite stays the source of truth \u2014 editing a generated note never changes memory.</p>
+        <p class="generated-sync-status">${syncStatusLine}</p>${syncWarn}
+        <form data-action="sync-graph"><button type="submit">Sync Obsidian graph notes</button></form>
+        <p data-loading-message hidden>Generating Markdown graph notes\u2026</p><div data-form-result></div>`, "generated-notes-section");
       const body = `${readyStatus}${startupProblem}${llmBanner}<div class="metric-grid"><span>${view.totalTranscriptCount} total transcripts</span>${routeButton(routeHref.reviewQueue(), `${view.reviewCount} review items`, "route-action metric-action")}<span>${view.weakCount} weak/review</span><span>${view.conflictCount} conflicts</span><span>${view.brokenCount} broken pointers</span></div>
         ${view.health ? healthView(view.health) : ""}
+        ${generatedNotesSection}
         ${section("Quick actions", links([{ href: routeHref.upload(), label: "Upload transcript" }, { href: routeHref.ask(), label: "Ask AI" }, { href: routeHref.search(), label: "Search vault" }, { href: routeHref.graph(), label: "Open graph" }, { href: routeHref.reviewQueue(), label: "Review queue" }]), "quick-actions")}
         ${section("Transcripts", view.transcripts.map((item) => `<article><a href="${escapeHtml(routeHref.transcript(item.id))}">${escapeHtml(item.title)}</a> \xB7 ${item.spanCount} spans</article>`).join("") || emptyState("No transcripts", "Upload a transcript to begin.", { href: routeHref.upload(), label: "Upload transcript" }), "transcripts-section")}
         ${section("Recent Ask AI answers", view.recentAnswers.map((item) => `<article>${trustBadge(item.confidence)} <a href="${escapeHtml(routeHref.answer(item.id))}">${escapeHtml(item.question)}</a></article>`).join("") || emptyState("No answers", "Ask a question after adding evidence.", { href: routeHref.ask(), label: "Ask AI" }), "recent-answers-section")}`;
@@ -5164,8 +5199,8 @@ async function renderPage(context) {
     case "review_detail": {
       const item = await api.getReviewItem(route.params.id);
       const form = item ? correctionForm(item.targetType, item.targetId) : "";
-      const related = item ? `${item.relatedTranscriptIds.length ? section("Linked transcripts", item.relatedTranscriptIds.map((id) => `<a href="${escapeHtml(routeHref.transcript(id))}">${escapeHtml(id)}</a>`).join(" ")) : ""}${item.relatedEvidenceIds.length ? section("Linked evidence", item.relatedEvidenceIds.map((id) => `<a href="${escapeHtml(routeHref.evidence(id))}">${escapeHtml(id)}</a>`).join(" ")) : ""}` : "";
-      return { title: item?.title ?? "Review item not found", html: appShell(item?.title ?? "Review item not found", item ? `${reviewCard(item)}${related}<aside class="immutable-notice">Resolution is read-only here. Corrections are appended as separate records; raw source text is never edited.</aside>${form}` : emptyState("Review item not found", "This item may already have been resolved.")) };
+      const related2 = item ? `${item.relatedTranscriptIds.length ? section("Linked transcripts", item.relatedTranscriptIds.map((id) => `<a href="${escapeHtml(routeHref.transcript(id))}">${escapeHtml(id)}</a>`).join(" ")) : ""}${item.relatedEvidenceIds.length ? section("Linked evidence", item.relatedEvidenceIds.map((id) => `<a href="${escapeHtml(routeHref.evidence(id))}">${escapeHtml(id)}</a>`).join(" ")) : ""}` : "";
+      return { title: item?.title ?? "Review item not found", html: appShell(item?.title ?? "Review item not found", item ? `${reviewCard(item)}${related2}<aside class="immutable-notice">Resolution is read-only here. Corrections are appended as separate records; raw source text is never edited.</aside>${form}` : emptyState("Review item not found", "This item may already have been resolved.")) };
     }
     default:
       return { title: "Not found", html: appShell("Not found", emptyState("Page not found", "The requested frontend route does not exist.", { href: "/", label: "Dashboard" })) };
@@ -5183,7 +5218,7 @@ async function renderRoute(api, url) {
   }
 }
 var mountControllers = /* @__PURE__ */ new WeakMap();
-var MUTATING_ACTIONS = /* @__PURE__ */ new Set(["upload", "ask", "correction", "review"]);
+var MUTATING_ACTIONS = /* @__PURE__ */ new Set(["upload", "ask", "correction", "review", "sync-graph"]);
 async function mountObsidianUi(root, api, navigation, initialTarget, onMutation) {
   mountControllers.get(root)?.abort();
   const controller = new AbortController();
@@ -5253,6 +5288,9 @@ async function mountObsidianUi(root, api, navigation, initialTarget, onMutation)
           if (result) result.innerHTML = `Correction appended: <code>${escapeHtml(correction.correctionId)}</code>`;
         } else if (action === "review") {
           await performReviewAction(api, String(data.get("memoryId") ?? ""), data.get("decision") === "reject" ? "reject" : "approve", render, currentTarget);
+        } else if (action === "sync-graph") {
+          const summary = await api.syncGeneratedGraphNotes?.();
+          if (result) result.innerHTML = renderSyncSummary(summary);
         } else if (action === "filter") {
           const view = form.dataset.view ?? "dashboard";
           await render(`mv://${view}?${new URLSearchParams(data)}`);
@@ -5275,6 +5313,15 @@ async function mountObsidianUi(root, api, navigation, initialTarget, onMutation)
 }
 function isInternalNavigationTarget(target) {
   return target?.startsWith("mv://") ?? false;
+}
+function renderSyncSummary(summary) {
+  if (!summary || summary.status === "unavailable") {
+    return `<p class="trust-warning">${escapeHtml(summary?.message ?? 'Generated graph notes can only be synced inside the Obsidian plugin. Use the "Sync generated graph notes" command.')}</p>`;
+  }
+  if (summary.status === "failed") return `<p class="trust-warning">Sync failed: ${escapeHtml(summary.message)}</p>`;
+  const warn = summary.warnings.length ? `<p class="trust-warning">${summary.warnings.length} warning(s) \u2014 weak/broken evidence is preserved and labeled in the generated notes.</p>` : "";
+  const err = summary.errors.length ? `<p class="trust-warning">${summary.errors.length} file(s) could not be written.</p>` : "";
+  return `<p><strong>Graph notes synced.</strong> ${summary.filesWritten} written, ${summary.filesSkipped} unchanged \xB7 ${summary.graphNodeCount} nodes \xB7 ${summary.graphEdgeCount} edges. Open Obsidian's native graph to see them.</p>${warn}${err}`;
 }
 function refreshTargetAfterAction(currentTarget) {
   return matchRoute(currentTarget).id === "review_detail" ? routeHref.reviewQueue() : currentTarget;
@@ -5307,6 +5354,8 @@ var OBSIDIAN_COMMANDS = [
 ];
 var OBSIDIAN_RIBBON = { icon: "database", title: "Open Transcript Memory Dashboard" };
 var OBSIDIAN_REINDEX_COMMAND = { id: "rebuild-embedding-index", name: "Rebuild Embedding Index" };
+var OBSIDIAN_SYNC_GRAPH_COMMAND = { id: "sync-generated-graph-notes", name: "Sync generated graph notes" };
+var GENERATED_VAULT_FOLDER = "Transcript Memory Vault";
 var viewTitle = (type) => ({
   [OBSIDIAN_VIEW_TYPES.dashboard]: "Transcript Memory Dashboard",
   [OBSIDIAN_VIEW_TYPES.upload]: "Upload Transcript",
@@ -5359,9 +5408,496 @@ function createObsidianNavigation(app) {
   };
 }
 
+// src/obsidian/generateVault.ts
+var import_node_path4 = require("node:path");
+
+// src/obsidian/markdown.ts
+var generatedWarning = `> [!warning] Generated view
+> This note is generated from the SQLite database. The database is the source of truth. Editing this Markdown file will not update memory truth.`;
+var frontmatter = (input) => `---
+${Object.entries(input).filter(([, value]) => value != null).map(([key, value]) => `${key}: ${typeof value === "string" ? JSON.stringify(value) : value}`).join("\n")}
+---`;
+var quote = (text, max = 500) => (text.length > max ? `${text.slice(0, Math.max(0, max - 3))}...` : text).split("\n").map((line) => `> ${line}`).join("\n");
+var makeGeneratedFile = (logicalType, relativePath, content, entityType, entityId) => ({
+  logicalType,
+  relativePath,
+  content: content.endsWith("\n") ? content : `${content}
+`,
+  contentHash: contentHash(content.endsWith("\n") ? content : `${content}
+`),
+  entityType,
+  entityId
+});
+
+// src/obsidian/citations.ts
+function renderEvidenceCitation(db, evidencePointerId, maxQuoteLength = 300) {
+  const resolved = resolveEvidencePointer(db, evidencePointerId);
+  if (!resolved.ok) return { markdown: `> [!danger] Broken evidence pointer
+> \`${evidencePointerId}\`: ${resolved.reason}`, broken: true };
+  const title = db.prepare("SELECT title FROM transcripts WHERE id=?").get(resolved.evidence.transcript_id).title;
+  const score2 = resolved.evidence.final_score ?? resolved.evidence.confidence;
+  return {
+    broken: false,
+    markdown: `${wikiLink(transcriptPath(title, resolved.evidence.transcript_id), `${title}, ${resolved.evidence.span_id}`, resolved.evidence.span_id)}  
+${wikiLink(evidencePath(evidencePointerId), "Evidence note")}  
+\`${resolved.evidence.pointer_uri}\`  
+\`${resolved.evidence.source_pointer_uri}\`  
+**Role:** ${resolved.evidence.evidence_role} \xB7 **Strength:** ${resolved.evidence.evidence_strength} \xB7 **Score:** ${score2.toFixed(3)}
+
+${quote(resolved.spanText, maxQuoteLength)}`
+  };
+}
+
+// src/obsidian/answerNotes.ts
+function generateAnswerNotes(db, maxQuoteLength = 300) {
+  const answers = db.prepare("SELECT * FROM ai_answers ORDER BY id").all();
+  return answers.map((answer) => {
+    const claims = db.prepare("SELECT * FROM answer_claims WHERE answer_id=? ORDER BY claim_order").all(answer.id);
+    const claimSections = claims.map((claim) => {
+      const pointers = db.prepare("SELECT evidence_pointer_id FROM evidence_pointers WHERE target_type='answer_claim' AND target_id=? ORDER BY evidence_pointer_id").all(claim.answer_claim_id);
+      return `### Claim ${Number(claim.claim_order) + 1}: ${claim.support_status}
+
+${claim.claim_text}
+
+${pointers.map((pointer) => renderEvidenceCitation(db, pointer.evidence_pointer_id, maxQuoteLength).markdown).join("\n\n") || "> [!danger] Unsupported claim\n> No evidence pointers."}`;
+    }).join("\n\n");
+    const warning = answer.answer_status === "weak_evidence" || answer.answer_status === "refused_no_evidence" ? "> [!caution] Weak or missing evidence\n> This answer is limited by its evidence." : answer.answer_status === "conflicting_evidence" ? "> [!warning] Conflicting evidence\n> The answer must preserve both sides." : "";
+    return makeGeneratedFile("answer_note", answerPath(String(answer.id)), `${frontmatter({ mv_entity_type: "answer", mv_entity_id: String(answer.id), mv_generated: true, mv_source_of_truth: "sqlite", mv_support_status: String(answer.answer_status), mv_confidence: String(answer.confidence) })}
+# Ask AI Answer
+
+${generatedWarning}
+
+${warning}
+
+## Question
+
+${answer.question_text}
+
+## Generated Answer
+
+> [!note] Generated text
+> ${String(answer.answer_text).replace(/\n/g, "\n> ")}
+
+## Claim-Level Citations
+
+${claimSections || "_No claims were generated._"}`, "answer", String(answer.id));
+  });
+}
+
+// src/obsidian/conflictNotes.ts
+function generateConflictNotes(db, maxQuoteLength = 300) {
+  return db.prepare("SELECT id FROM conflict_assessments ORDER BY id").all().map(({ id }) => {
+    const conflict = createConflictRepository(db).getConflictAssessment(id);
+    const side = (targetType, targetId, name) => {
+      const memory = targetType === "memory_object" || targetType === "claim" || targetType === "summary" ? db.prepare("SELECT title,generated_text,type FROM memory_objects WHERE id=?").get(targetId) : void 0;
+      const links2 = conflict.evidenceLinks.filter((item) => item.side === name.toLowerCase()).map((item) => renderEvidenceCitation(db, item.evidencePointerId, maxQuoteLength).markdown).join("\n\n");
+      return `### ${name} Side
+
+**Target:** ${memory ? wikiLink(memoryPath(memory.title ?? memory.generated_text.slice(0, 80), targetId, memory.type), memory.title ?? targetId) : `\`${targetType}:${targetId}\``}
+
+${links2 || "> [!danger] Missing side evidence"}`;
+    };
+    return makeGeneratedFile("conflict_note", conflictPath(id), `${frontmatter({ mv_entity_type: "conflict", mv_entity_id: id, mv_generated: true, mv_source_of_truth: "sqlite", mv_support_status: conflict.status, mv_confidence: conflict.confidence })}
+# ${conflict.summary}
+
+${generatedWarning}
+
+> [!warning] Conflict / tension
+> Both sides are shown. This generated view does not resolve transcript truth.
+
+**Type:** ${conflict.kind}  
+**Status:** ${conflict.status}  
+**Confidence:** ${conflict.confidence.toFixed(3)}  
+**Resolution:** ${conflict.resolutionNote ?? "Unresolved"}
+
+${side(conflict.leftTargetType, conflict.leftTargetId, "Left")}
+
+${side(conflict.rightTargetType, conflict.rightTargetId, "Right")}
+
+## Generated Explanation
+
+${conflict.explanation}`, "conflict", id);
+  });
+}
+
+// src/obsidian/entityNotes.ts
+function generateEntityNotes(db) {
+  const graphRows = db.prepare("SELECT * FROM graph_nodes WHERE node_type IN ('entity','topic') ORDER BY node_type,id").all();
+  const decisions = db.prepare("SELECT id,title,generated_text,status FROM memory_objects WHERE COALESCE(extraction_type,type)='decision' ORDER BY id").all();
+  const graphNotes = graphRows.map((row) => {
+    const kind = row.node_type === "entity" ? "person" : "topic";
+    const evidence = db.prepare("SELECT evidence_pointer_id FROM evidence_pointers WHERE target_type='graph_node' AND target_id=? ORDER BY evidence_pointer_id").all(row.id).map((item) => renderEvidenceCitation(db, item.evidence_pointer_id).markdown).join("\n\n") || "_No direct source evidence pointers._";
+    const related2 = db.prepare(`SELECT other.label,other.node_type,other.ref_id,e.edge_type FROM graph_edges e
+      JOIN graph_nodes other ON other.id=CASE WHEN e.from_node_id=? THEN e.to_node_id ELSE e.from_node_id END
+      WHERE e.from_node_id=? OR e.to_node_id=? ORDER BY other.label`).all(row.id, row.id, row.id).map((item) => `- ${item.edge_type}: ${item.node_type === "entity" || item.node_type === "topic" ? wikiLink(entityPath(item.node_type === "entity" ? "person" : "topic", item.label, item.ref_id), item.label) : item.label}`).join("\n") || "_No related graph objects._";
+    return makeGeneratedFile(kind === "person" ? "person_note" : "topic_note", entityPath(kind, String(row.label), String(row.ref_id)), `${frontmatter({ mv_entity_type: kind, mv_entity_id: String(row.ref_id), mv_generated: true, mv_source_of_truth: "sqlite" })}
+# ${row.label}
+
+${generatedWarning}
+
+This is a generated ${kind} view. Related source-backed relationships appear in graph views.
+
+**Graph node:** \`${row.id}\`
+
+## Source Evidence
+
+${evidence}
+
+## Related
+
+${related2}`, kind, String(row.ref_id));
+  });
+  const decisionNotes = decisions.map((row) => {
+    const evidence = db.prepare("SELECT evidence_pointer_id FROM evidence_pointers WHERE target_type IN ('memory_object','claim','summary') AND target_id=? ORDER BY evidence_pointer_id").all(row.id).map((item) => renderEvidenceCitation(db, item.evidence_pointer_id).markdown).join("\n\n") || "> [!danger] Unsupported decision\n> No evidence pointers.";
+    return makeGeneratedFile("decision_note", entityPath("decision", String(row.title ?? row.generated_text), String(row.id)), `${frontmatter({ mv_entity_type: "decision", mv_entity_id: String(row.id), mv_generated: true, mv_source_of_truth: "sqlite", mv_support_status: String(row.status) })}
+# ${row.title ?? "Decision"}
+
+${generatedWarning}
+
+> [!note] Generated decision text
+> ${String(row.generated_text).replace(/\n/g, "\n> ")}
+
+## Source Evidence
+
+${evidence}`, "decision", String(row.id));
+  });
+  return [...graphNotes, ...decisionNotes];
+}
+
+// src/obsidian/evidenceNotes.ts
+function generateEvidenceNotes(db, maxQuoteLength = 300) {
+  const rows = db.prepare("SELECT evidence_pointer_id FROM evidence_pointers ORDER BY evidence_pointer_id").all();
+  const warnings = [];
+  const files = rows.map(({ evidence_pointer_id }) => {
+    const resolved = resolveEvidencePointer(db, evidence_pointer_id);
+    if (!resolved.ok) {
+      warnings.push(`Broken evidence pointer ${evidence_pointer_id}: ${resolved.reason}`);
+      return makeGeneratedFile("evidence_note", evidencePath(evidence_pointer_id), `${frontmatter({ mv_entity_type: "evidence", mv_entity_id: evidence_pointer_id, mv_generated: true, mv_source_of_truth: "sqlite" })}
+# Evidence ${evidence_pointer_id}
+
+${generatedWarning}
+
+> [!danger] Broken evidence pointer
+> ${resolved.reason}`, "evidence", evidence_pointer_id);
+    }
+    const title = db.prepare("SELECT title FROM transcripts WHERE id=?").get(resolved.evidence.transcript_id).title;
+    const content = `${frontmatter({ mv_entity_type: "evidence", mv_entity_id: evidence_pointer_id, mv_generated: true, mv_source_of_truth: "sqlite", mv_support_status: resolved.evidence.evidence_strength, mv_confidence: resolved.evidence.confidence })}
+# Evidence ${evidence_pointer_id}
+
+${generatedWarning}
+
+**Target:** \`${resolved.evidence.target_type}:${resolved.evidence.target_id}\`  
+**Role:** ${resolved.evidence.evidence_role}  
+**Strength:** ${resolved.evidence.evidence_strength}  
+**Evidence URI:** \`${resolved.evidence.pointer_uri}\`  
+**Source URI:** \`${resolved.evidence.source_pointer_uri}\`  
+**Transcript span:** ${wikiLink(transcriptPath(title, resolved.evidence.transcript_id), `${title}, ${resolved.evidence.span_id}`, resolved.evidence.span_id)}
+
+## Immutable Source Quote
+
+${quote(resolved.spanText, maxQuoteLength)}`;
+    return makeGeneratedFile("evidence_note", evidencePath(evidence_pointer_id), content, "evidence", evidence_pointer_id);
+  });
+  return { files, warnings };
+}
+
+// src/obsidian/graphFilters.ts
+function filterGraphByNodeTypes(graph, types) {
+  const allowed = new Set(types), nodes = graph.nodes.filter((node) => allowed.has(node.type)), ids = new Set(nodes.map((node) => node.id));
+  return { nodes, edges: graph.edges.filter((edge) => ids.has(edge.source) && ids.has(edge.target)) };
+}
+var related = (graph, focus) => {
+  const ids = new Set(graph.nodes.filter((node) => focus.includes(node.type)).map((node) => node.id));
+  graph.edges.forEach((edge) => {
+    if (ids.has(edge.source) || ids.has(edge.target)) {
+      ids.add(edge.source);
+      ids.add(edge.target);
+    }
+  });
+  return { nodes: graph.nodes.filter((node) => ids.has(node.id)), edges: graph.edges.filter((edge) => ids.has(edge.source) && ids.has(edge.target)) };
+};
+var buildTopicGraph = (graph) => related(graph, ["topic"]);
+var buildPeopleGraph = (graph) => related(graph, ["person"]);
+var buildDecisionGraph = (graph) => related(graph, ["decision"]);
+var buildSourceEvidenceGraph = (graph) => {
+  const filtered = filterGraphByNodeTypes(graph, ["transcript", "span", "evidence", "memory", "decision", "answer", "claim"]);
+  return {
+    nodes: filtered.nodes,
+    edges: filtered.edges.map((edge) => {
+      const sourceType = filtered.nodes.find((node) => node.id === edge.source)?.type;
+      const targetType = filtered.nodes.find((node) => node.id === edge.target)?.type;
+      const reverse = sourceType === "span" && targetType === "transcript" || sourceType === "evidence" && targetType === "span" || (sourceType === "memory" || sourceType === "decision" || sourceType === "claim" || sourceType === "answer") && targetType === "evidence";
+      return reverse ? { ...edge, source: edge.target, target: edge.source, metadata: { ...edge.metadata, sourceLineageView: true } } : edge;
+    })
+  };
+};
+
+// src/obsidian/graphRenderers.ts
+function graphJson(graph, includedNodeTypes = [], includedEdgeTypes = []) {
+  return `${JSON.stringify({ version: 1, generatedFrom: "sqlite", nodes: graph.nodes, edges: graph.edges, filters: { includedNodeTypes, includedEdgeTypes } }, null, 2)}
+`;
+}
+function graphMarkdown(title, graph, jsonPath, brokenPointerCount) {
+  const important = graph.nodes.filter((node) => node.notePath).slice(0, 20).map((node) => `- [[${node.notePath.replace(/\.md$/, "")}|${node.label}]]`).join("\n") || "_No linked nodes._";
+  return `# ${title}
+
+${generatedWarning}
+
+This graph is a generated SQLite-backed view.
+
+- Nodes: ${graph.nodes.length}
+- Edges: ${graph.edges.length}
+- Broken evidence pointers: ${brokenPointerCount}
+- JSON: [[${jsonPath.replace(/\.json$/, "")}]]
+
+## Important Nodes
+
+${important}`;
+}
+var makeGraphJsonFile = (path, graph) => makeGeneratedFile("graph_json", path, graphJson(graph));
+var makeGraphMarkdownFile = (title, path, jsonPath, graph, broken) => makeGeneratedFile("graph_markdown", path, graphMarkdown(title, graph, jsonPath, broken));
+
+// src/obsidian/home.ts
+function generateHomeNote(db) {
+  const count = (table, where = "") => db.prepare(`SELECT COUNT(*) count FROM ${table} ${where}`).get().count;
+  return makeGeneratedFile("home", "00 Home.md", `# Memory Vault
+
+${generatedWarning}
+
+## Overview
+
+- Transcripts: ${count("transcripts")}
+- Memory objects: ${count("memory_objects")}
+- Evidence pointers: ${count("evidence_pointers")}
+- People: ${count("graph_nodes", "WHERE node_type='entity'")}
+- Topics: ${count("graph_nodes", "WHERE node_type='topic'")}
+- Decisions: ${count("memory_objects", "WHERE COALESCE(extraction_type,type)='decision'")}
+- Answers: ${count("ai_answers")}
+- Conflicts: ${count("conflict_assessments")}
+
+## Browse
+
+- [[Transcripts]]
+- [[Memories]]
+- [[People]]
+- [[Topics]]
+- [[Decisions]]
+- [[Evidence]]
+- [[Answers]]
+- [[Conflicts]]
+- [[Graphs/Topic Graph]]
+- [[Graphs/People Graph]]
+- [[Graphs/Decision Graph]]
+- [[Graphs/Source Evidence Graph]]`);
+}
+
+// src/obsidian/manifest.ts
+function buildManifest(files, graph, warnings) {
+  const stableFiles = files.map(({ content: _content, ...file }) => file).sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+  const hash = contentHash(stableFiles.map((file) => `${file.relativePath}:${file.contentHash}`).join("\n"));
+  const manifest = {
+    version: 1,
+    generatedFrom: "sqlite",
+    contentHash: hash,
+    files: stableFiles,
+    entityPaths: Object.fromEntries(stableFiles.filter((file) => file.entityType && file.entityId).map((file) => [`${file.entityType}:${file.entityId}`, file.relativePath])),
+    graphStats: { nodes: graph.nodes.length, edges: graph.edges.length },
+    warnings: [...warnings].sort(),
+    brokenPointerCount: warnings.filter((warning) => warning.startsWith("Broken evidence pointer")).length
+  };
+  return { manifest, file: makeGeneratedFile("system_manifest", "_system/view-manifest.json", `${JSON.stringify(manifest, null, 2)}
+`) };
+}
+
+// src/obsidian/memoryNotes.ts
+function generateMemoryNotes(db, maxQuoteLength = 300) {
+  const rows = db.prepare("SELECT * FROM memory_objects ORDER BY id").all();
+  return rows.map((row) => {
+    const pointers = db.prepare("SELECT evidence_pointer_id FROM evidence_pointers WHERE target_type IN ('memory_object','claim','summary') AND target_id=? ORDER BY evidence_pointer_id").all(row.id);
+    const legacy = db.prepare("SELECT span_id FROM memory_object_evidence WHERE memory_id=? ORDER BY span_id").all(row.id);
+    const canonical = getCanonicalMemoryObject(row, [...legacy.map((x) => x.span_id)]);
+    const conflicts = createConflictRepository(db).listConflictsForTarget("memory_object", row.id);
+    const citations = pointers.map((pointer, index) => `${index + 1}. ${renderEvidenceCitation(db, pointer.evidence_pointer_id, maxQuoteLength).markdown}`).join("\n\n");
+    const strongest = pointers.length ? db.prepare(`SELECT evidence_strength FROM evidence_pointers WHERE target_type IN ('memory_object','claim','summary') AND target_id=?
+      ORDER BY CASE evidence_strength WHEN 'strong' THEN 1 WHEN 'mixed' THEN 2 WHEN 'conflicting' THEN 3 WHEN 'weak' THEN 4 ELSE 5 END LIMIT 1`).get(row.id).evidence_strength : "unsupported";
+    const warning = strongest === "weak" || strongest === "unknown" || !isStrongMemoryObject(canonical) ? "> [!caution] Weak or review-only evidence\n> This memory must not be treated as strong truth." : strongest === "conflicting" || conflicts.some((item) => item.status === "active") ? "> [!warning] Conflicting evidence\n> Both sides must be reviewed." : "";
+    const title = canonical.title || canonical.body.slice(0, 80) || row.id;
+    const conflictLinks = conflicts.map((item) => `- ${wikiLink(conflictPath(item.id), item.summary)}`).join("\n") || "_None._";
+    const content = `${frontmatter({ mv_entity_type: "memory", mv_entity_id: row.id, mv_generated: true, mv_source_of_truth: "sqlite", mv_support_status: strongest, mv_confidence: canonical.confidence })}
+# ${title}
+
+${generatedWarning}
+
+${warning}
+
+**Type:** ${canonical.type}  
+**Status:** ${canonical.status}  
+**Confidence:** ${canonical.confidence.toFixed(3)}  
+**Evidence quality:** ${strongest}
+
+## Generated Memory
+
+> [!note] Generated text
+> ${canonical.body.replace(/\n/g, "\n> ")}
+
+## Source Evidence
+
+${citations || "> [!danger] Unsupported memory\n> No evidence pointer resolves this generated object."}
+
+## Conflicts / Tensions
+
+${conflictLinks}`;
+    return makeGeneratedFile("memory_note", memoryPath(title, row.id, String(canonical.type)), content, "memory", row.id);
+  });
+}
+
+// src/obsidian/transcriptNotes.ts
+var time = (ms) => ms == null ? "Unknown" : `${String(Math.floor(ms / 6e4)).padStart(2, "0")}:${String(Math.floor(ms % 6e4 / 1e3)).padStart(2, "0")}`;
+function generateTranscriptNotes(db, maxQuoteLength = 1e4) {
+  const transcripts = db.prepare("SELECT * FROM transcripts ORDER BY id").all();
+  return transcripts.map((item) => {
+    const spans = db.prepare("SELECT * FROM transcript_spans WHERE transcript_id=? ORDER BY ordinal,id").all(item.id);
+    const sections = spans.map((span) => {
+      const sourceUri = makeSourcePointerUri({ transcriptId: String(item.id), spanId: String(span.id) });
+      const source = resolveSourcePointer(db, sourceUri);
+      return `### Span ${span.id}
+
+<span id="${span.id}"></span>
+
+**Speaker:** ${span.speaker_label ?? "Unknown"}  
+**Time:** ${time(span.start_time_ms)}-${time(span.end_time_ms)}  
+**Source URI:** ${source.ok ? `\`${sourceUri}\`` : "_No validated source pointer for this span._"}
+
+> [!quote] Immutable raw source text
+${quote(String(span.text ?? span.text_preview), maxQuoteLength)}
+`;
+    }).join("\n");
+    const content = `${frontmatter({ mv_entity_type: "transcript", mv_entity_id: String(item.id), mv_generated: true, mv_source_of_truth: "sqlite", mv_raw_hash: String(item.raw_sha256 ?? item.content_hash) })}
+# ${item.title}
+
+${generatedWarning}
+
+> [!important] Immutable source
+> Transcript text and spans are rendered from immutable SQLite source records.
+
+**Transcript ID:** \`${item.id}\`  
+**Source ID:** \`${item.source_id}\`  
+**Raw hash:** \`${item.raw_sha256 ?? item.content_hash}\`  
+**Imported:** ${item.imported_at}
+
+## Transcript Spans
+
+${sections || "_No spans found._"}`;
+    return makeGeneratedFile("transcript_note", transcriptPath(String(item.title), String(item.id)), content, "transcript", String(item.id));
+  });
+}
+
+// src/obsidian/vaultWriter.ts
+var import_promises = require("node:fs/promises");
+var import_node_path3 = require("node:path");
+var safeTarget = (root, relativePath) => {
+  if ((0, import_node_path3.isAbsolute)(relativePath) || relativePath.split(/[\\/]/).includes("..")) throw new Error(`Unsafe generated path: ${relativePath}`);
+  const target = (0, import_node_path3.resolve)(root, relativePath);
+  if (target !== root && !target.startsWith(`${root}${import_node_path3.sep}`)) throw new Error(`Generated path escapes output root: ${relativePath}`);
+  return target;
+};
+async function writeGeneratedVault(outputRoot, files, cleanBeforeWrite = false) {
+  const root = (0, import_node_path3.resolve)(outputRoot), errors = [];
+  await (0, import_promises.mkdir)(root, { recursive: true });
+  for (const directory of ["Transcripts", "Memories/Facts", "Memories/Preferences", "Memories/Decisions", "Memories/Tasks", "Memories/Questions", "Memories/Other", "People", "Topics", "Decisions", "Evidence", "Answers", "Conflicts", "Graphs", "_system"]) {
+    await (0, import_promises.mkdir)(safeTarget(root, directory), { recursive: true });
+  }
+  if (cleanBeforeWrite) {
+    try {
+      const old = JSON.parse(await (0, import_promises.readFile)(safeTarget(root, "_system/view-manifest.json"), "utf8"));
+      for (const file of old.files ?? []) await (0, import_promises.rm)(safeTarget(root, file.relativePath), { force: true });
+    } catch {
+    }
+  }
+  let filesWritten = 0, filesSkipped = 0;
+  for (const file of files) {
+    try {
+      const target = safeTarget(root, file.relativePath);
+      await (0, import_promises.mkdir)((0, import_node_path3.dirname)(target), { recursive: true });
+      try {
+        if (await (0, import_promises.readFile)(target, "utf8") === file.content) {
+          filesSkipped++;
+          continue;
+        }
+      } catch {
+      }
+      await (0, import_promises.writeFile)(target, file.content, "utf8");
+      filesWritten++;
+    } catch (error) {
+      errors.push(`${file.relativePath}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return { filesWritten, filesSkipped, errors };
+}
+
+// src/obsidian/generateVault.ts
+var defaults = {
+  includeTranscriptNotes: true,
+  includeMemoryNotes: true,
+  includeEntityNotes: true,
+  includeAnswerNotes: true,
+  includeConflictNotes: true,
+  includeEvidenceNotes: true,
+  includeGraphJson: true,
+  includeGraphMarkdown: true,
+  maxQuoteLength: 300
+};
+async function generateObsidianVault(db, config) {
+  const options = { ...defaults, ...config }, outputRoot = (0, import_node_path4.resolve)(config.outputRoot), files = [generateHomeNote(db)], warnings = [];
+  if (options.includeTranscriptNotes) files.push(...generateTranscriptNotes(db));
+  if (options.includeMemoryNotes) files.push(...generateMemoryNotes(db, options.maxQuoteLength));
+  if (options.includeEntityNotes) files.push(...generateEntityNotes(db));
+  if (options.includeAnswerNotes) files.push(...generateAnswerNotes(db, options.maxQuoteLength));
+  if (options.includeConflictNotes) files.push(...generateConflictNotes(db, options.maxQuoteLength));
+  if (options.includeEvidenceNotes) {
+    const evidence = generateEvidenceNotes(db, options.maxQuoteLength);
+    files.push(...evidence.files);
+    warnings.push(...evidence.warnings);
+  }
+  const built = buildObsidianGraph(db);
+  warnings.push(...built.warnings);
+  const graphs = [
+    ["Topic Graph", "topic-graph.json", buildTopicGraph(built.graph)],
+    ["People Graph", "people-graph.json", buildPeopleGraph(built.graph)],
+    ["Decision Graph", "decision-graph.json", buildDecisionGraph(built.graph)],
+    ["Source Evidence Graph", "source-evidence-graph.json", buildSourceEvidenceGraph(built.graph)]
+  ];
+  if (options.includeGraphJson) {
+    files.push(makeGraphJsonFile("Graphs/graph-data.json", built.graph));
+    graphs.forEach(([, path, graph]) => files.push(makeGraphJsonFile(`Graphs/${path}`, graph)));
+  }
+  const broken = warnings.filter((warning) => warning.startsWith("Broken evidence pointer")).length;
+  if (options.includeGraphMarkdown) graphs.forEach(([title, path, graph]) => files.push(makeGraphMarkdownFile(title, `Graphs/${title}.md`, `Graphs/${path}`, graph, broken)));
+  files.push(makeGeneratedFile("system_manifest", "_system/generation-log.md", `# Generation Log
+
+This deterministic generated view contains ${files.length + 2} files, ${built.graph.nodes.length} graph nodes, and ${built.graph.edges.length} graph edges.
+
+SQLite remains the source of truth.`));
+  const duplicates = files.map((file) => file.relativePath).filter((path, index, all) => all.indexOf(path) !== index);
+  if (duplicates.length) throw new Error(`Generated path collision: ${[...new Set(duplicates)].join(", ")}`);
+  const { manifest, file: manifestFile } = buildManifest(files, built.graph, warnings);
+  files.push(manifestFile);
+  files.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+  const written = await writeGeneratedVault(outputRoot, files, options.cleanBeforeWrite);
+  const createdAt = (options.now?.() ?? /* @__PURE__ */ new Date()).toISOString(), runId = createId("ovr_");
+  db.transaction(() => {
+    db.prepare(`INSERT INTO obsidian_view_runs(id,created_at,output_root,file_count,graph_node_count,graph_edge_count,content_hash,status,error_message)
+      VALUES (?,?,?,?,?,?,?,?,?)`).run(runId, createdAt, outputRoot, files.length, built.graph.nodes.length, built.graph.edges.length, manifest.contentHash, written.errors.length ? "failed" : "completed", written.errors.join("\n") || null);
+    const insert = db.prepare(`INSERT INTO obsidian_generated_files(id,view_run_id,logical_type,entity_type,entity_id,relative_path,content_hash,created_at)
+      VALUES (?,?,?,?,?,?,?,?)`);
+    files.forEach((generated) => insert.run(createId("ovf_"), runId, generated.logicalType, generated.entityType ?? null, generated.entityId ?? null, generated.relativePath, generated.contentHash, createdAt));
+  })();
+  return { outputRoot, filesWritten: written.filesWritten, filesSkipped: written.filesSkipped, graphNodeCount: built.graph.nodes.length, graphEdgeCount: built.graph.edges.length, warnings, errors: written.errors, manifestPath: (0, import_node_path4.resolve)(outputRoot, "_system/view-manifest.json"), contentHash: manifest.contentHash, files };
+}
+
 // src/obsidian/nativeBindings.ts
 var import_node_fs2 = require("node:fs");
-var import_node_path3 = require("node:path");
+var import_node_path5 = require("node:path");
 var nativeBindingTarget = (runtime) => `${runtime.platform}-${runtime.arch}-abi${runtime.modules ?? "unknown"}`;
 function currentNativeRuntime() {
   return {
@@ -5372,9 +5908,9 @@ function currentNativeRuntime() {
   };
 }
 function listPackagedNativeTargets(pluginDirectory) {
-  const nativeDirectory = (0, import_node_path3.join)(pluginDirectory, "native");
+  const nativeDirectory = (0, import_node_path5.join)(pluginDirectory, "native");
   try {
-    return (0, import_node_fs2.readdirSync)(nativeDirectory, { withFileTypes: true }).filter((entry) => entry.isDirectory() && (0, import_node_fs2.existsSync)((0, import_node_path3.join)(nativeDirectory, entry.name, "better_sqlite3.node"))).map((entry) => entry.name).sort();
+    return (0, import_node_fs2.readdirSync)(nativeDirectory, { withFileTypes: true }).filter((entry) => entry.isDirectory() && (0, import_node_fs2.existsSync)((0, import_node_path5.join)(nativeDirectory, entry.name, "better_sqlite3.node"))).map((entry) => entry.name).sort();
   } catch {
     return [];
   }
@@ -5382,7 +5918,7 @@ function listPackagedNativeTargets(pluginDirectory) {
 function resolveNativeBinding(pluginDirectory, runtime = currentNativeRuntime()) {
   const target = nativeBindingTarget(runtime);
   const packagedTargets = listPackagedNativeTargets(pluginDirectory);
-  const bindingPath = (0, import_node_path3.join)(pluginDirectory, "native", target, "better_sqlite3.node");
+  const bindingPath = (0, import_node_path5.join)(pluginDirectory, "native", target, "better_sqlite3.node");
   if ((0, import_node_fs2.existsSync)(bindingPath)) return { ok: true, target, bindingPath, packagedTargets, error: null };
   const electron = runtime.electron ? ` Electron ${runtime.electron}` : "";
   return {
@@ -5701,7 +6237,7 @@ var TranscriptMemoryItemView = class extends import_obsidian2.ItemView {
 
 // src/obsidian/services/ObsidianAppApi.ts
 function createObsidianAppApi(db, vault, health, getSynthesis, getMemoryExtractor, options) {
-  const api = createSqliteFrontendApi(db, { health, getSynthesis, getMemoryExtractor, llmRequired: options?.llmRequired, getLlmReady: options?.getLlmReady });
+  const api = createSqliteFrontendApi(db, { health, getSynthesis, getMemoryExtractor, llmRequired: options?.llmRequired, getLlmReady: options?.getLlmReady, syncGeneratedViews: options?.syncGeneratedViews });
   return {
     ...api,
     async uploadVaultFile(file) {
@@ -6106,6 +6642,8 @@ var ViewRefreshRegistry = class {
 // src/obsidian/Plugin.ts
 var TranscriptMemoryVaultPlugin = class extends import_obsidian5.Plugin {
   db = null;
+  // Absolute on-disk vault root (desktop only); the generated Markdown view layer is written under it.
+  vaultBasePath = null;
   pluginSettings = DEFAULT_SETTINGS;
   health = initialPluginHealth();
   api = createUnavailableFrontendApi(() => this.health);
@@ -6124,6 +6662,7 @@ var TranscriptMemoryVaultPlugin = class extends import_obsidian5.Plugin {
     }
     this.addCommand({ id: OBSIDIAN_REINDEX_COMMAND.id, name: OBSIDIAN_REINDEX_COMMAND.name, callback: () => void this.rebuildEmbeddingIndex() });
     this.addCommand({ id: "run-ai-extraction", name: "Run AI extraction for transcripts missing it", callback: () => void this.runPendingExtraction() });
+    this.addCommand({ id: OBSIDIAN_SYNC_GRAPH_COMMAND.id, name: OBSIDIAN_SYNC_GRAPH_COMMAND.name, callback: () => void this.syncGeneratedGraphNotesCommand() });
     this.addRibbonIcon(OBSIDIAN_RIBBON.icon, OBSIDIAN_RIBBON.title, () => void navigation.openDashboard());
     this.registerObsidianProtocolHandler(OBSIDIAN_PROTOCOL_ACTION, (params) => {
       const route = obsidianRouteFromProtocol(params);
@@ -6140,9 +6679,10 @@ var TranscriptMemoryVaultPlugin = class extends import_obsidian5.Plugin {
       console.error("Transcript Memory Vault unsupported environment:", support.message);
       return;
     }
-    const pluginDirectory = (0, import_node_path4.join)(fileSystemAdapter.getBasePath(), this.app.vault.configDir, "plugins", this.manifest.id);
-    const databasePath = (0, import_node_path4.join)(pluginDirectory, "transcript-memory.sqlite");
-    const migrationDirectory = (0, import_node_path4.join)(pluginDirectory, "migrations");
+    this.vaultBasePath = fileSystemAdapter.getBasePath();
+    const pluginDirectory = (0, import_node_path6.join)(this.vaultBasePath, this.app.vault.configDir, "plugins", this.manifest.id);
+    const databasePath = (0, import_node_path6.join)(pluginDirectory, "transcript-memory.sqlite");
+    const migrationDirectory = (0, import_node_path6.join)(pluginDirectory, "migrations");
     const nativeBinding = resolveNativeBinding(pluginDirectory);
     this.health = {
       ...this.health,
@@ -6184,7 +6724,7 @@ var TranscriptMemoryVaultPlugin = class extends import_obsidian5.Plugin {
         this.health,
         () => askAiSynthesisFromSettings(this.pluginSettings, { transport: this.llmTransport }),
         () => memoryExtractorFromSettings(this.pluginSettings, { transport: this.llmTransport }),
-        { llmRequired: true, getLlmReady: () => isLlmConfigured(this.pluginSettings) }
+        { llmRequired: true, getLlmReady: () => isLlmConfigured(this.pluginSettings), syncGeneratedViews: () => this.syncGeneratedGraphNotesForApi() }
       );
       this.refreshReindexStatus();
       if (firstRun) new import_obsidian5.Notice("Transcript Memory Vault is ready. Upload a transcript to begin.");
@@ -6270,6 +6810,50 @@ var TranscriptMemoryVaultPlugin = class extends import_obsidian5.Plugin {
     } catch (error) {
       new import_obsidian5.Notice(`Embedding index rebuild failed: ${readableStartupError(error)}`);
       console.error("Transcript Memory Vault embedding reindex failed", error);
+    }
+  }
+  /**
+   * Core generated-Markdown sync (no UI side effects). Writes the disposable view layer under
+   * `<vault>/Transcript Memory Vault/` so Obsidian's native ribbon graph has notes + wikilinks.
+   * `cleanBeforeWrite` removes ONLY previously-generated files (tracked in the manifest) and never
+   * touches user-created notes. SQLite stays the source of truth; generated Markdown is never read back.
+   */
+  async runGeneratedVaultSync() {
+    if (!this.db || this.health.status !== "ready") throw new Error("Transcript Memory Vault is not ready.");
+    if (!this.vaultBasePath) throw new Error("Vault filesystem path is unavailable.");
+    return generateObsidianVault(this.db, { outputRoot: (0, import_node_path6.join)(this.vaultBasePath, GENERATED_VAULT_FOLDER), cleanBeforeWrite: true });
+  }
+  /** EXPLICIT manual action (command palette). Writes generated graph notes and reports via Notices. */
+  async syncGeneratedGraphNotesCommand() {
+    if (!this.db || this.health.status !== "ready") {
+      new import_obsidian5.Notice("Transcript Memory Vault is not ready; cannot sync graph notes.");
+      return;
+    }
+    new import_obsidian5.Notice("Syncing generated graph notes\u2026");
+    try {
+      const result = await this.runGeneratedVaultSync();
+      new import_obsidian5.Notice(result.errors.length ? `Graph notes synced with ${result.errors.length} file error(s); see "${GENERATED_VAULT_FOLDER}/_system/generation-log.md".` : `Graph notes synced into "${GENERATED_VAULT_FOLDER}/": ${result.filesWritten} written, ${result.filesSkipped} unchanged, ${result.graphNodeCount} nodes, ${result.graphEdgeCount} edges. Open Obsidian's graph view to see them.`);
+      await this.viewRegistry.notifyMutation();
+    } catch (error) {
+      new import_obsidian5.Notice(`Graph notes sync failed: ${readableStartupError(error)}`);
+      console.error("Transcript Memory Vault generated graph sync failed", error);
+    }
+  }
+  /** Same sync, triggered from the dashboard button. Returns a frontend-friendly summary (no Notices). */
+  async syncGeneratedGraphNotesForApi() {
+    try {
+      const result = await this.runGeneratedVaultSync();
+      return {
+        status: "synced",
+        filesWritten: result.filesWritten,
+        filesSkipped: result.filesSkipped,
+        graphNodeCount: result.graphNodeCount,
+        graphEdgeCount: result.graphEdgeCount,
+        warnings: result.warnings,
+        errors: result.errors
+      };
+    } catch (error) {
+      return { status: "failed", message: readableStartupError(error) };
     }
   }
 };

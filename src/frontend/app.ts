@@ -3,7 +3,7 @@ import { appShell } from "./html.js";
 import { navigateInternal, type ObsidianNavigation } from "./navigation.js";
 import { matchRoute, routeHref } from "./router.js";
 import { renderPage } from "./render.js";
-import type { CorrectionDraft, FrontendApi } from "./types.js";
+import type { CorrectionDraft, FrontendApi, GeneratedSyncResult } from "./types.js";
 
 export async function renderRoute(api: FrontendApi, url: string): Promise<string> {
   try {
@@ -22,7 +22,7 @@ const mountControllers = new WeakMap<HTMLElement, AbortController>();
 
 // Frontend actions that change persisted data. After one succeeds, other open views are notified to
 // refresh so they cannot show stale status/items.
-const MUTATING_ACTIONS = new Set(["upload", "ask", "correction", "review"]);
+const MUTATING_ACTIONS = new Set(["upload", "ask", "correction", "review", "sync-graph"]);
 
 export async function mountObsidianUi(root: HTMLElement, api: FrontendApi, navigation: ObsidianNavigation, initialTarget: string, onMutation?: () => void | Promise<void>): Promise<void> {
   // Abort any previous mount's listeners on this host so exactly one set is ever active.
@@ -98,6 +98,11 @@ export async function mountObsidianUi(root: HTMLElement, api: FrontendApi, navig
           // reflects the current memory status — never stale pre-action text or a now-resolved item.
           // (A just-resolved detail page falls back to the review queue.)
           await performReviewAction(api, String(data.get("memoryId") ?? ""), data.get("decision") === "reject" ? "reject" : "approve", render, currentTarget);
+        } else if (action === "sync-graph") {
+          // Writes the disposable generated-Markdown view layer (Obsidian's native graph). Only the
+          // plugin injects a real implementation; headless callers get an "unavailable" result.
+          const summary = await api.syncGeneratedGraphNotes?.();
+          if (result) result.innerHTML = renderSyncSummary(summary);
         } else if (action === "filter") {
           const view = form.dataset.view ?? "dashboard";
           await render(`mv://${view}?${new URLSearchParams(data as never)}`);
@@ -119,6 +124,17 @@ export async function mountObsidianUi(root: HTMLElement, api: FrontendApi, navig
 
 export function isInternalNavigationTarget(target: string | null | undefined): target is string {
   return target?.startsWith("mv://") ?? false;
+}
+
+/** Inline result of a dashboard "Sync Obsidian graph notes" action. Navigation/view layer only — no truth. */
+export function renderSyncSummary(summary?: GeneratedSyncResult): string {
+  if (!summary || summary.status === "unavailable") {
+    return `<p class="trust-warning">${escapeHtml(summary?.message ?? "Generated graph notes can only be synced inside the Obsidian plugin. Use the \"Sync generated graph notes\" command.")}</p>`;
+  }
+  if (summary.status === "failed") return `<p class="trust-warning">Sync failed: ${escapeHtml(summary.message)}</p>`;
+  const warn = summary.warnings.length ? `<p class="trust-warning">${summary.warnings.length} warning(s) — weak/broken evidence is preserved and labeled in the generated notes.</p>` : "";
+  const err = summary.errors.length ? `<p class="trust-warning">${summary.errors.length} file(s) could not be written.</p>` : "";
+  return `<p><strong>Graph notes synced.</strong> ${summary.filesWritten} written, ${summary.filesSkipped} unchanged · ${summary.graphNodeCount} nodes · ${summary.graphEdgeCount} edges. Open Obsidian's native graph to see them.</p>${warn}${err}`;
 }
 
 /**

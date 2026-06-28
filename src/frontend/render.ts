@@ -158,8 +158,21 @@ export async function renderPage(context: PageContext): Promise<RenderedPage> {
       const llmBanner = view.llmRequired && view.llmReady === false
         ? `<aside class="trust-warning llm-setup-required">${trustBadge("no_evidence", "LLM required")} AI is not configured. Ask AI and AI memory extraction need an external LLM — open plugin Settings and add a provider, model, and API key. Transcripts still import; run the "Run AI extraction" command afterward.</aside>`
         : "";
+      const sync = view.generatedSync;
+      const syncStatusLine = !sync
+        ? "Generated graph notes status is unavailable in this context."
+        : !sync.synced
+          ? "Never synced — Obsidian's native graph has no generated notes yet. Sync after importing transcripts, running AI extraction, or asking AI."
+          : `Last synced ${escapeHtml(sync.lastSyncedAt ?? "unknown")} · ${sync.fileCount ?? 0} files · ${sync.graphNodeCount ?? 0} nodes · ${sync.graphEdgeCount ?? 0} edges.`;
+      const syncWarn = sync?.status === "failed"
+        ? `<aside class="trust-warning">${trustBadge("broken", "last sync had errors")} ${escapeHtml(sync.error ?? "Some generated files could not be written.")}</aside>` : "";
+      const generatedNotesSection = section("Obsidian graph notes", `<p>These generated Markdown notes power Obsidian's <strong>native (ribbon) graph</strong>. The plugin's own Graph page reads SQLite live; the native graph only sees Markdown files and wiki links, so it needs these notes. SQLite stays the source of truth — editing a generated note never changes memory.</p>
+        <p class="generated-sync-status">${syncStatusLine}</p>${syncWarn}
+        <form data-action="sync-graph"><button type="submit">Sync Obsidian graph notes</button></form>
+        <p data-loading-message hidden>Generating Markdown graph notes…</p><div data-form-result></div>`, "generated-notes-section");
       const body = `${readyStatus}${startupProblem}${llmBanner}<div class="metric-grid"><span>${view.totalTranscriptCount} total transcripts</span>${routeButton(routeHref.reviewQueue(), `${view.reviewCount} review items`, "route-action metric-action")}<span>${view.weakCount} weak/review</span><span>${view.conflictCount} conflicts</span><span>${view.brokenCount} broken pointers</span></div>
         ${view.health ? healthView(view.health) : ""}
+        ${generatedNotesSection}
         ${section("Quick actions", links([{ href: routeHref.upload(), label: "Upload transcript" }, { href: routeHref.ask(), label: "Ask AI" }, { href: routeHref.search(), label: "Search vault" }, { href: routeHref.graph(), label: "Open graph" }, { href: routeHref.reviewQueue(), label: "Review queue" }]), "quick-actions")}
         ${section("Transcripts", view.transcripts.map((item) => `<article><a href="${escapeHtml(routeHref.transcript(item.id))}">${escapeHtml(item.title)}</a> · ${item.spanCount} spans</article>`).join("") || emptyState("No transcripts", "Upload a transcript to begin.", { href: routeHref.upload(), label: "Upload transcript" }), "transcripts-section")}
         ${section("Recent Ask AI answers", view.recentAnswers.map((item) => `<article>${trustBadge(item.confidence)} <a href="${escapeHtml(routeHref.answer(item.id))}">${escapeHtml(item.question)}</a></article>`).join("") || emptyState("No answers", "Ask a question after adding evidence.", { href: routeHref.ask(), label: "Ask AI" }), "recent-answers-section")}`;

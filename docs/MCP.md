@@ -33,6 +33,8 @@ Two parallel link families, both navigation-only:
 - **`mv://…` (canonical)** — the existing stable plugin routes (e.g. `mv://answers/<id>`, `mv://evidence/<id>`, `mv://transcripts/<id>?span=<span>`). These are the source-of-truth routes used inside the Obsidian plugin's views.
 - **`obsidian://…` (Phase 2 deep links)** — OS-openable wrappers of the *same* `mv://` route: `obsidian://transcript-memory-vault?route=<encodeURIComponent(mv://…)>[&vault=<TMV_OBSIDIAN_VAULT>]`. Clicking one in Claude Desktop opens (or focuses) Obsidian and navigates the plugin to that view. The handler is an **allowlist**: it decodes the `route`, requires an `mv://` URI that resolves to a known route, then calls the existing internal navigation — nothing else. Unknown/invalid/non-`mv://` links show a readable notice and never navigate. Deep links **carry no secrets** (only an `mv://` route + optional vault name) and **create/modify no data** — SQLite stays the source of truth and `mv://` stays canonical.
 
+> **Native Obsidian graph:** `ask_vault` answers (and extracted memory) are written to SQLite and show up immediately in the plugin's own Graph page. They appear in Obsidian's **native (ribbon) graph** only after you run the plugin's **Sync generated graph notes** command/button, which regenerates the disposable Markdown view layer. See `docs/OBSIDIAN_PLUGIN.md` → *Two graphs*.
+
 **Never** in tool output or persisted metadata: API keys, Authorization headers, full prompts, provider objects, raw upstream errors, or full raw transcript text (quote previews are length-limited and provenance-backed).
 
 ## Build and run
