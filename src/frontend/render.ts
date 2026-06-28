@@ -214,7 +214,16 @@ export async function renderPage(context: PageContext): Promise<RenderedPage> {
         <button type="submit">Import transcript</button></form><p data-loading-message hidden>Importing immutable transcript source...</p><div data-form-result></div>`) };
     case "transcript": {
       const view = await api.getTranscript(route.params.id);
-      return { title: view?.title ?? "Transcript not found", html: appShell(view?.title ?? "Transcript not found", view ? transcriptView(view, route.query.get("span") ?? undefined) : emptyState("Transcript not found", "The requested immutable source is unavailable.")) };
+      if (!view) return { title: "Transcript not found", html: appShell("Transcript not found", emptyState("Transcript not found", "The requested immutable source is unavailable.")) };
+      // Danger zone: deleting a whole transcript is allowed (raw text stays immutable — there is no edit path).
+      // Tucked in a <details> with a required confirmation so it cannot be clicked by accident.
+      const dangerZone = `${section("Danger zone", `<details class="danger-zone"><summary>Delete this transcript</summary>
+        <aside class="trust-warning">${trustBadge("broken", "irreversible")} This will permanently delete this transcript and remove or invalidate generated evidence, memories, answers, conflicts, and graph notes that depend on it. Transcript text cannot be edited. If the transcript is wrong, delete it and re-import the corrected file. This action cannot be undone.</aside>
+        <form data-action="delete-transcript"><input type="hidden" name="transcriptId" value="${escapeHtml(view.id)}">
+        <label><input type="checkbox" name="confirm" required> I understand this permanently deletes the transcript and its dependent data, and cannot be undone.</label>
+        <button type="submit">Delete transcript</button></form>
+        <p data-loading-message hidden>Deleting transcript and dependent data…</p><div data-form-result></div></details>`, "danger-zone-section")}`;
+      return { title: view.title, html: appShell(view.title, `${transcriptView(view, route.query.get("span") ?? undefined)}${dangerZone}`) };
     }
     case "ask": {
       const llm = await api.getLlmStatus();

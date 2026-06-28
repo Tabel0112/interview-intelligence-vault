@@ -83,6 +83,7 @@ export function createUnavailableFrontendApi(getHealth: () => PluginHealth): Fro
     async reviewMemoryObject() { return unavailable(getHealth()); },
     async getLlmStatus() { return { required: true, ready: Boolean(getHealth().llmReady) }; },
     async runExtraction() { return unavailable(getHealth()); },
+    async deleteTranscript() { return unavailable(getHealth()); },
   };
 }
 

@@ -1,9 +1,14 @@
 import type { AskAIResponse } from "../ask-ai/index.js";
 import type { ConflictAssessment } from "../conflicts/index.js";
+import type { DeleteTranscriptSummary } from "../db/index.js";
 import type { CanonicalMemoryObject } from "../memory/index.js";
 import type { ObsidianGraph } from "../obsidian/index.js";
 import type { EvidencePointer } from "../provenance/index.js";
 import type { PluginHealth } from "../obsidian/startup.js";
+
+export type { DeleteTranscriptSummary };
+/** Outcome of a transcript hard-delete: the transcript and its derived provenance are gone (irreversible). */
+export interface DeleteTranscriptResult { status: "deleted"; summary: DeleteTranscriptSummary; }
 
 export type TrustState = "strong" | "mixed" | "weak" | "conflicting" | "no_evidence" | "broken" | "needs_review" | "rejected" | "superseded";
 export type RouteId = "dashboard" | "upload" | "transcript" | "ask" | "answer" | "evidence" | "memory" | "graph" | "search" | "review" | "review_detail" | "not_found";
@@ -171,6 +176,12 @@ export interface FrontendApi {
   getLlmStatus(): Promise<{ required: boolean; ready: boolean }>;
   /** Run AI extraction for a transcript that has no completed run yet (e.g. imported before LLM setup). */
   runExtraction(transcriptId: string): Promise<{ status: "extracted" | "skipped" | "setup_required" | "failed"; warning?: string }>;
+  /**
+   * Hard-delete a whole transcript and its derived provenance (transactional, irreversible). Raw transcript
+   * text is never edited — the wrong-import recovery flow is delete + re-import. Memories/conflicts/answers
+   * are not deleted; they degrade via existing cleanup/downgrade triggers.
+   */
+  deleteTranscript(id: string): Promise<DeleteTranscriptResult>;
   /**
    * Write the disposable generated-Markdown view layer that powers Obsidian's native (ribbon) graph.
    * Optional: only the Obsidian plugin injects a real implementation (it needs the on-disk vault path).

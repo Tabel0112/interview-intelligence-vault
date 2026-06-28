@@ -13,6 +13,17 @@ export interface CreateTranscriptInput {
   content_hash: string; metadata?: JsonObject;
 }
 
+export interface DeleteTranscriptSummary {
+  deletedTranscriptId: string;
+  spansDeleted: number;
+  evidenceItemsDeleted: number;
+  memoryEvidenceLinksDeleted: number;
+  evidencePointersDeleted: number;
+  memoriesDowngraded: number;
+  conflictsAffected: number;
+  answersAffected: number;
+}
+
 export function createTranscriptsRepo(db: SqliteDatabase) {
   return {
     createTranscriptSource(input: CreateTranscriptSourceInput): TranscriptSource {
@@ -45,6 +56,51 @@ export function createTranscriptsRepo(db: SqliteDatabase) {
     updateTranscriptStatus(id: string, status: TranscriptStatus): void {
       const result = db.prepare("UPDATE transcripts SET status = ?, updated_at = ? WHERE id = ?").run(status, now(), id);
       if (!result.changes) throw new NotFoundError(`Transcript not found: ${id}`);
+    },
+    /**
+     * Hard-delete a whole transcript and its derived provenance, transactionally. Raw transcript fields are
+     * NEVER edited — the whole row is removed. The two `ON DELETE RESTRICT` chains on transcript_spans
+     * (evidence_items, memory_object_evidence; evidence_items in turn restricted by legacy ai_answer_citations)
+     * are cleared explicitly, in order, before the transcript row is deleted; cascades + existing triggers then
+     * remove turns/spans/source_pointers/evidence_pointers/ask_ai_run_evidence/extraction_runs and downgrade any
+     * now-evidence-less memories and affected conflicts. Memory objects are NOT deleted directly. Generated
+     * Markdown is untouched here (it self-prunes on the next sync). Throws NotFoundError for an unknown id; the
+     * transaction leaves no half-deleted state.
+     */
+    deleteTranscript(id: string): DeleteTranscriptSummary {
+      if (!db.prepare("SELECT 1 FROM transcripts WHERE id = ?").get(id)) throw new NotFoundError(`Transcript not found: ${id}`);
+      return db.transaction((): DeleteTranscriptSummary => {
+        const spanIds = (db.prepare("SELECT id FROM transcript_spans WHERE transcript_id = ?").all(id) as Array<{ id: string }>).map((r) => r.id);
+        const count = (sql: string, ...args: unknown[]) => (db.prepare(sql).get(...args) as { c: number }).c;
+        const inSpans = (column: string) => `${column} IN (${spanIds.map(() => "?").join(",")})`;
+
+        // Counts captured BEFORE deleting, so the summary reflects what is removed/affected.
+        const evidenceItemIds = spanIds.length
+          ? (db.prepare(`SELECT id FROM evidence_items WHERE ${inSpans("span_id")}`).all(...spanIds) as Array<{ id: string }>).map((r) => r.id)
+          : [];
+        const memoryEvidenceLinksDeleted = spanIds.length ? count(`SELECT COUNT(*) c FROM memory_object_evidence WHERE ${inSpans("span_id")}`, ...spanIds) : 0;
+        const evidencePointersDeleted = count("SELECT COUNT(*) c FROM evidence_pointers WHERE transcript_id = ?", id);
+        const conflictsAffected = count("SELECT COUNT(DISTINCT conflict_assessment_id) c FROM conflict_evidence_links WHERE evidence_pointer_id IN (SELECT evidence_pointer_id FROM evidence_pointers WHERE transcript_id = ?)", id);
+        const answersAffected = count("SELECT COUNT(DISTINCT ask_ai_run_id) c FROM ask_ai_run_evidence WHERE transcript_id = ?", id);
+        const activeMemoryIds = (db.prepare("SELECT id FROM memory_objects WHERE status = 'active' OR extraction_status = 'active'").all() as Array<{ id: string }>).map((r) => r.id);
+
+        // Clear the RESTRICT chains in safe order, then delete the transcript (cascade + triggers do the rest).
+        if (evidenceItemIds.length) db.prepare(`DELETE FROM ai_answer_citations WHERE evidence_item_id IN (${evidenceItemIds.map(() => "?").join(",")})`).run(...evidenceItemIds);
+        if (spanIds.length) {
+          db.prepare(`DELETE FROM evidence_items WHERE ${inSpans("span_id")}`).run(...spanIds);
+          db.prepare(`DELETE FROM memory_object_evidence WHERE ${inSpans("span_id")}`).run(...spanIds);
+        }
+        db.prepare("DELETE FROM transcripts WHERE id = ?").run(id);
+
+        // A memory that was active before but is no longer active (downgraded by the cleanup triggers because
+        // it lost all of its evidence) counts as downgraded.
+        const memoriesDowngraded = activeMemoryIds.filter((memoryId) => {
+          const row = db.prepare("SELECT status, extraction_status FROM memory_objects WHERE id = ?").get(memoryId) as { status: string; extraction_status: string | null } | undefined;
+          return row != null && row.status !== "active" && row.extraction_status !== "active";
+        }).length;
+
+        return { deletedTranscriptId: id, spansDeleted: spanIds.length, evidenceItemsDeleted: evidenceItemIds.length, memoryEvidenceLinksDeleted, evidencePointersDeleted, memoriesDowngraded, conflictsAffected, answersAffected };
+      })();
     },
   };
 }

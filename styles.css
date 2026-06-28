@@ -46,6 +46,21 @@
   margin: 0;
 }
 
+.transcript-memory-vault .danger-zone-section {
+  border-color: var(--text-error);
+}
+
+.transcript-memory-vault .danger-zone summary {
+  cursor: pointer;
+  font-weight: var(--font-semibold);
+  color: var(--text-error);
+}
+
+.transcript-memory-vault .danger-zone button[type="submit"] {
+  color: var(--text-on-accent);
+  background: var(--text-error);
+}
+
 .transcript-memory-vault .app-header,
 .transcript-memory-vault nav,
 .transcript-memory-vault .metric-grid,

@@ -3,6 +3,7 @@ import { createConflictRepository } from "../conflicts/index.js";
 import type { SqliteDatabase } from "../db/connection.js";
 import { createCorrectionsRepo } from "../db/repositories/correctionsRepo.js";
 import { createMemoryObjectsRepo } from "../db/repositories/memoryObjectsRepo.js";
+import { createTranscriptsRepo } from "../db/repositories/transcriptsRepo.js";
 import { importTranscript } from "../ingest/index.js";
 import { extractMemoryObjectsForTranscript, isStrongMemoryObject, type MemoryExtractor } from "../memory/index.js";
 import { indexTranscriptForRetrieval, removeRetrievalDocument } from "../retrieval/index.js";
@@ -426,6 +427,11 @@ export function createSqliteFrontendApi(
       }
       try { await indexTranscriptForRetrieval(db, transcriptId); } catch { /* indexing is best-effort */ }
       return { status: "extracted" };
+    },
+    async deleteTranscript(id) {
+      // Transactional hard delete; triggers downgrade dependent memories/conflicts/answers. Generated
+      // Markdown self-prunes on the next sync (we never touch it here).
+      return { status: "deleted", summary: createTranscriptsRepo(db).deleteTranscript(id) };
     },
     async syncGeneratedGraphNotes(): Promise<GeneratedSyncResult> {
       // File writing + on-disk vault path live in the Obsidian plugin; headless/MCP callers have neither.

@@ -994,6 +994,41 @@ function createTranscriptsRepo(db) {
     updateTranscriptStatus(id, status) {
       const result = db.prepare("UPDATE transcripts SET status = ?, updated_at = ? WHERE id = ?").run(status, now(), id);
       if (!result.changes) throw new NotFoundError(`Transcript not found: ${id}`);
+    },
+    /**
+     * Hard-delete a whole transcript and its derived provenance, transactionally. Raw transcript fields are
+     * NEVER edited — the whole row is removed. The two `ON DELETE RESTRICT` chains on transcript_spans
+     * (evidence_items, memory_object_evidence; evidence_items in turn restricted by legacy ai_answer_citations)
+     * are cleared explicitly, in order, before the transcript row is deleted; cascades + existing triggers then
+     * remove turns/spans/source_pointers/evidence_pointers/ask_ai_run_evidence/extraction_runs and downgrade any
+     * now-evidence-less memories and affected conflicts. Memory objects are NOT deleted directly. Generated
+     * Markdown is untouched here (it self-prunes on the next sync). Throws NotFoundError for an unknown id; the
+     * transaction leaves no half-deleted state.
+     */
+    deleteTranscript(id) {
+      if (!db.prepare("SELECT 1 FROM transcripts WHERE id = ?").get(id)) throw new NotFoundError(`Transcript not found: ${id}`);
+      return db.transaction(() => {
+        const spanIds = db.prepare("SELECT id FROM transcript_spans WHERE transcript_id = ?").all(id).map((r) => r.id);
+        const count = (sql, ...args) => db.prepare(sql).get(...args).c;
+        const inSpans = (column) => `${column} IN (${spanIds.map(() => "?").join(",")})`;
+        const evidenceItemIds = spanIds.length ? db.prepare(`SELECT id FROM evidence_items WHERE ${inSpans("span_id")}`).all(...spanIds).map((r) => r.id) : [];
+        const memoryEvidenceLinksDeleted = spanIds.length ? count(`SELECT COUNT(*) c FROM memory_object_evidence WHERE ${inSpans("span_id")}`, ...spanIds) : 0;
+        const evidencePointersDeleted = count("SELECT COUNT(*) c FROM evidence_pointers WHERE transcript_id = ?", id);
+        const conflictsAffected = count("SELECT COUNT(DISTINCT conflict_assessment_id) c FROM conflict_evidence_links WHERE evidence_pointer_id IN (SELECT evidence_pointer_id FROM evidence_pointers WHERE transcript_id = ?)", id);
+        const answersAffected = count("SELECT COUNT(DISTINCT ask_ai_run_id) c FROM ask_ai_run_evidence WHERE transcript_id = ?", id);
+        const activeMemoryIds = db.prepare("SELECT id FROM memory_objects WHERE status = 'active' OR extraction_status = 'active'").all().map((r) => r.id);
+        if (evidenceItemIds.length) db.prepare(`DELETE FROM ai_answer_citations WHERE evidence_item_id IN (${evidenceItemIds.map(() => "?").join(",")})`).run(...evidenceItemIds);
+        if (spanIds.length) {
+          db.prepare(`DELETE FROM evidence_items WHERE ${inSpans("span_id")}`).run(...spanIds);
+          db.prepare(`DELETE FROM memory_object_evidence WHERE ${inSpans("span_id")}`).run(...spanIds);
+        }
+        db.prepare("DELETE FROM transcripts WHERE id = ?").run(id);
+        const memoriesDowngraded = activeMemoryIds.filter((memoryId) => {
+          const row = db.prepare("SELECT status, extraction_status FROM memory_objects WHERE id = ?").get(memoryId);
+          return row != null && row.status !== "active" && row.extraction_status !== "active";
+        }).length;
+        return { deletedTranscriptId: id, spansDeleted: spanIds.length, evidenceItemsDeleted: evidenceItemIds.length, memoryEvidenceLinksDeleted, evidencePointersDeleted, memoriesDowngraded, conflictsAffected, answersAffected };
+      })();
     }
   };
 }
@@ -5088,6 +5123,9 @@ function createSqliteFrontendApi(db, options = {}) {
       }
       return { status: "extracted" };
     },
+    async deleteTranscript(id) {
+      return { status: "deleted", summary: createTranscriptsRepo(db).deleteTranscript(id) };
+    },
     async syncGeneratedGraphNotes() {
       if (!options.syncGeneratedViews) {
         return { status: "unavailable", message: 'Generated graph notes can only be synced inside the Obsidian plugin. Use the "Sync generated graph notes" command.' };
@@ -5254,7 +5292,14 @@ async function renderPage(context) {
         <button type="submit">Import transcript</button></form><p data-loading-message hidden>Importing immutable transcript source...</p><div data-form-result></div>`) };
     case "transcript": {
       const view = await api.getTranscript(route.params.id);
-      return { title: view?.title ?? "Transcript not found", html: appShell(view?.title ?? "Transcript not found", view ? transcriptView(view, route.query.get("span") ?? void 0) : emptyState("Transcript not found", "The requested immutable source is unavailable.")) };
+      if (!view) return { title: "Transcript not found", html: appShell("Transcript not found", emptyState("Transcript not found", "The requested immutable source is unavailable.")) };
+      const dangerZone = `${section("Danger zone", `<details class="danger-zone"><summary>Delete this transcript</summary>
+        <aside class="trust-warning">${trustBadge("broken", "irreversible")} This will permanently delete this transcript and remove or invalidate generated evidence, memories, answers, conflicts, and graph notes that depend on it. Transcript text cannot be edited. If the transcript is wrong, delete it and re-import the corrected file. This action cannot be undone.</aside>
+        <form data-action="delete-transcript"><input type="hidden" name="transcriptId" value="${escapeHtml(view.id)}">
+        <label><input type="checkbox" name="confirm" required> I understand this permanently deletes the transcript and its dependent data, and cannot be undone.</label>
+        <button type="submit">Delete transcript</button></form>
+        <p data-loading-message hidden>Deleting transcript and dependent data\u2026</p><div data-form-result></div></details>`, "danger-zone-section")}`;
+      return { title: view.title, html: appShell(view.title, `${transcriptView(view, route.query.get("span") ?? void 0)}${dangerZone}`) };
     }
     case "ask": {
       const llm = await api.getLlmStatus();
@@ -5337,8 +5382,8 @@ async function renderRoute(api, url) {
   }
 }
 var mountControllers = /* @__PURE__ */ new WeakMap();
-var MUTATING_ACTIONS = /* @__PURE__ */ new Set(["upload", "ask", "correction", "review", "sync-graph"]);
-async function mountObsidianUi(root, api, navigation, initialTarget, onMutation) {
+var MUTATING_ACTIONS = /* @__PURE__ */ new Set(["upload", "ask", "correction", "review", "sync-graph", "delete-transcript"]);
+async function mountObsidianUi(root, api, navigation, initialTarget, onMutation, notify) {
   mountControllers.get(root)?.abort();
   const controller = new AbortController();
   mountControllers.set(root, controller);
@@ -5410,6 +5455,12 @@ async function mountObsidianUi(root, api, navigation, initialTarget, onMutation)
         } else if (action === "sync-graph") {
           const summary = await api.syncGeneratedGraphNotes?.();
           if (result) result.innerHTML = renderSyncSummary(summary);
+        } else if (action === "delete-transcript") {
+          const { summary } = await api.deleteTranscript(String(data.get("transcriptId") ?? ""));
+          const message = `Transcript deleted: ${summary.spansDeleted} span(s), ${summary.evidencePointersDeleted} evidence pointer(s), ${summary.evidenceItemsDeleted} evidence item(s) removed; ${summary.memoriesDowngraded} memory(ies) downgraded, ${summary.conflictsAffected} conflict(s) and ${summary.answersAffected} answer(s) affected. Run "Sync generated graph notes" to remove stale graph notes.`;
+          if (result) result.textContent = message;
+          notify?.(message);
+          await navigation.openDashboard();
         } else if (action === "filter") {
           const view = form.dataset.view ?? "dashboard";
           await render(`mv://${view}?${new URLSearchParams(data)}`);
@@ -6434,7 +6485,7 @@ var TranscriptMemoryItemView = class extends import_obsidian2.ItemView {
     this.contentEl.empty();
     this.contentEl.addClass("transcript-memory-vault-host");
     try {
-      await mountObsidianUi(this.contentEl, this.getApi(), this.vaultNavigation, this.state.target ?? defaultTarget(this.type), () => this.registry.notifyMutation(this));
+      await mountObsidianUi(this.contentEl, this.getApi(), this.vaultNavigation, this.state.target ?? defaultTarget(this.type), () => this.registry.notifyMutation(this), (message) => new import_obsidian2.Notice(message));
     } catch (error) {
       console.error("Transcript Memory Vault view load failed", error);
       this.contentEl.empty();
@@ -6546,6 +6597,9 @@ function createUnavailableFrontendApi(getHealth) {
       return { required: true, ready: Boolean(getHealth().llmReady) };
     },
     async runExtraction() {
+      return unavailable(getHealth());
+    },
+    async deleteTranscript() {
       return unavailable(getHealth());
     }
   };

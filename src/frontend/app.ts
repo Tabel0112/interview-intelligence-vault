@@ -22,9 +22,9 @@ const mountControllers = new WeakMap<HTMLElement, AbortController>();
 
 // Frontend actions that change persisted data. After one succeeds, other open views are notified to
 // refresh so they cannot show stale status/items.
-const MUTATING_ACTIONS = new Set(["upload", "ask", "correction", "review", "sync-graph"]);
+const MUTATING_ACTIONS = new Set(["upload", "ask", "correction", "review", "sync-graph", "delete-transcript"]);
 
-export async function mountObsidianUi(root: HTMLElement, api: FrontendApi, navigation: ObsidianNavigation, initialTarget: string, onMutation?: () => void | Promise<void>): Promise<void> {
+export async function mountObsidianUi(root: HTMLElement, api: FrontendApi, navigation: ObsidianNavigation, initialTarget: string, onMutation?: () => void | Promise<void>, notify?: (message: string) => void): Promise<void> {
   // Abort any previous mount's listeners on this host so exactly one set is ever active.
   mountControllers.get(root)?.abort();
   const controller = new AbortController();
@@ -103,6 +103,13 @@ export async function mountObsidianUi(root: HTMLElement, api: FrontendApi, navig
           // plugin injects a real implementation; headless callers get an "unavailable" result.
           const summary = await api.syncGeneratedGraphNotes?.();
           if (result) result.innerHTML = renderSyncSummary(summary);
+        } else if (action === "delete-transcript") {
+          // Hard delete (irreversible). The required confirmation checkbox gates this in the browser.
+          const { summary } = await api.deleteTranscript(String(data.get("transcriptId") ?? ""));
+          const message = `Transcript deleted: ${summary.spansDeleted} span(s), ${summary.evidencePointersDeleted} evidence pointer(s), ${summary.evidenceItemsDeleted} evidence item(s) removed; ${summary.memoriesDowngraded} memory(ies) downgraded, ${summary.conflictsAffected} conflict(s) and ${summary.answersAffected} answer(s) affected. Run "Sync generated graph notes" to remove stale graph notes.`;
+          if (result) result.textContent = message;
+          notify?.(message);
+          await navigation.openDashboard();
         } else if (action === "filter") {
           const view = form.dataset.view ?? "dashboard";
           await render(`mv://${view}?${new URLSearchParams(data as never)}`);

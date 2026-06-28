@@ -204,6 +204,41 @@ function createTranscriptsRepo(db) {
     updateTranscriptStatus(id, status) {
       const result = db.prepare("UPDATE transcripts SET status = ?, updated_at = ? WHERE id = ?").run(status, now(), id);
       if (!result.changes) throw new NotFoundError(`Transcript not found: ${id}`);
+    },
+    /**
+     * Hard-delete a whole transcript and its derived provenance, transactionally. Raw transcript fields are
+     * NEVER edited — the whole row is removed. The two `ON DELETE RESTRICT` chains on transcript_spans
+     * (evidence_items, memory_object_evidence; evidence_items in turn restricted by legacy ai_answer_citations)
+     * are cleared explicitly, in order, before the transcript row is deleted; cascades + existing triggers then
+     * remove turns/spans/source_pointers/evidence_pointers/ask_ai_run_evidence/extraction_runs and downgrade any
+     * now-evidence-less memories and affected conflicts. Memory objects are NOT deleted directly. Generated
+     * Markdown is untouched here (it self-prunes on the next sync). Throws NotFoundError for an unknown id; the
+     * transaction leaves no half-deleted state.
+     */
+    deleteTranscript(id) {
+      if (!db.prepare("SELECT 1 FROM transcripts WHERE id = ?").get(id)) throw new NotFoundError(`Transcript not found: ${id}`);
+      return db.transaction(() => {
+        const spanIds = db.prepare("SELECT id FROM transcript_spans WHERE transcript_id = ?").all(id).map((r) => r.id);
+        const count = (sql, ...args) => db.prepare(sql).get(...args).c;
+        const inSpans = (column) => `${column} IN (${spanIds.map(() => "?").join(",")})`;
+        const evidenceItemIds = spanIds.length ? db.prepare(`SELECT id FROM evidence_items WHERE ${inSpans("span_id")}`).all(...spanIds).map((r) => r.id) : [];
+        const memoryEvidenceLinksDeleted = spanIds.length ? count(`SELECT COUNT(*) c FROM memory_object_evidence WHERE ${inSpans("span_id")}`, ...spanIds) : 0;
+        const evidencePointersDeleted = count("SELECT COUNT(*) c FROM evidence_pointers WHERE transcript_id = ?", id);
+        const conflictsAffected = count("SELECT COUNT(DISTINCT conflict_assessment_id) c FROM conflict_evidence_links WHERE evidence_pointer_id IN (SELECT evidence_pointer_id FROM evidence_pointers WHERE transcript_id = ?)", id);
+        const answersAffected = count("SELECT COUNT(DISTINCT ask_ai_run_id) c FROM ask_ai_run_evidence WHERE transcript_id = ?", id);
+        const activeMemoryIds = db.prepare("SELECT id FROM memory_objects WHERE status = 'active' OR extraction_status = 'active'").all().map((r) => r.id);
+        if (evidenceItemIds.length) db.prepare(`DELETE FROM ai_answer_citations WHERE evidence_item_id IN (${evidenceItemIds.map(() => "?").join(",")})`).run(...evidenceItemIds);
+        if (spanIds.length) {
+          db.prepare(`DELETE FROM evidence_items WHERE ${inSpans("span_id")}`).run(...spanIds);
+          db.prepare(`DELETE FROM memory_object_evidence WHERE ${inSpans("span_id")}`).run(...spanIds);
+        }
+        db.prepare("DELETE FROM transcripts WHERE id = ?").run(id);
+        const memoriesDowngraded = activeMemoryIds.filter((memoryId) => {
+          const row = db.prepare("SELECT status, extraction_status FROM memory_objects WHERE id = ?").get(memoryId);
+          return row != null && row.status !== "active" && row.extraction_status !== "active";
+        }).length;
+        return { deletedTranscriptId: id, spansDeleted: spanIds.length, evidenceItemsDeleted: evidenceItemIds.length, memoryEvidenceLinksDeleted, evidencePointersDeleted, memoriesDowngraded, conflictsAffected, answersAffected };
+      })();
     }
   };
 }
@@ -3823,6 +3858,9 @@ function createSqliteFrontendApi(db, options = {}) {
       } catch {
       }
       return { status: "extracted" };
+    },
+    async deleteTranscript(id) {
+      return { status: "deleted", summary: createTranscriptsRepo(db).deleteTranscript(id) };
     },
     async syncGeneratedGraphNotes() {
       if (!options.syncGeneratedViews) {
