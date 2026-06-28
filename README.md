@@ -21,6 +21,8 @@ The production build creates `dist/transcript-memory-vault/`, ready to copy into
 
 This plugin is desktop-only because it uses native `better-sqlite3` storage and requires a local filesystem vault.
 
+**Supported platform (current MVP):** Apple Silicon macOS only. The single packaged native binding is `darwin-arm64-abi140`, validated on Obsidian `1.12.7` / Electron `39.8.3`. There is no ABI/arch fallback by design — other OS/CPU/Electron-ABI setups fail safe with a readable health error until their exact native target is built and added. (The MCP server is more portable: it runs under system Node and resolves `better-sqlite3` for your Node at runtime.)
+
 ## Product direction: Claude Desktop + MCP
 
 The recommended main chat UI is **Claude Desktop**, connected to a local **MCP server** (`src/mcp/`) that bridges to this backend. SQLite/backend remain the source of truth; the Obsidian plugin is the evidence/answer/transcript/graph **viewer**. The primary tool is **`ask_vault`**, which calls the existing evidence-first Ask AI pipeline and returns a validated, citation-grounded answer bundle — Claude does not synthesize answers from raw chunks, and chat history is not evidence.

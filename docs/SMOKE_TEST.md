@@ -21,7 +21,7 @@ Manual end-to-end verification that the **built** plugin works inside a clean Ob
 
 ## 3. Startup health — checks 4–5
 - [ ] Open the dashboard via the database ribbon icon, or the **Open Transcript Memory Dashboard** command. The view loads and is **not blank**.
-- [ ] The dashboard "Database health" section shows: database connected, migration status current, applied = packaged migration count (`12/12`), database location under the plugin directory, and native target `darwin-arm64-abi140`.
+- [ ] The dashboard "Database health" section shows: database connected, migration status current, applied = packaged migration count (`13/13`), database location under the plugin directory, and native target `darwin-arm64-abi140`.
 
 ## 3a. Configure the LLM (required before AI features)
 - [ ] Open **Settings → Transcript Memory Vault**. Confirm the top shows **"AI is NOT configured"**.
@@ -69,6 +69,13 @@ With the real LLM key configured (it is now exercised by extraction + Ask AI), c
 - [ ] Confirm raw transcript immutability: the transcript view shows the original text unchanged; raw SQLite tables are never rewritten (enforced by DB triggers).
 - [ ] Any Obsidian Markdown the plugin produces is a **view/export**, not the database. (Note: generating Markdown views is **not currently exposed as a live command** in the plugin; SQLite remains the source of truth regardless.)
 - [ ] Restart Obsidian and reopen the dashboard. The transcript, the approved/rejected memory states, and any answers persist (reloaded from SQLite).
+
+## 10. (Optional) MCP / Claude Desktop — checks 18–19
+The MCP server is the recommended main chat UI. It runs as a **separate system-Node process** (not Electron), so its `better-sqlite3` is matched to your Node, independent of Obsidian's Electron ABI.
+
+- [ ] `npm install` (so `node_modules/better-sqlite3` exists — the MCP bundle resolves it at runtime, never bundles it) and `npm run mcp:build` (→ `dist/mcp/server.cjs` + `dist/mcp/migrations/`).
+- [ ] Point `TMV_DB_PATH` at the **same** vault DB the plugin uses: `<vault>/.obsidian/plugins/transcript-memory-vault/transcript-memory.sqlite`. Add the server to `claude_desktop_config.json` with `command: node`, `args: ["<repo>/dist/mcp/server.cjs"]`, and `env` `TMV_DB_PATH`, `TMV_LLM_PROVIDER`, `TMV_LLM_MODEL`, `TMV_LLM_API_KEY` (and optional `TMV_OBSIDIAN_VAULT`). See [MCP.md](MCP.md).
+- [ ] In Claude Desktop, call **`ask_vault`** with `What is the source of truth?`. Confirm a validated AnswerBundle with at least one citation, and that the `obsidian://` deep links open Obsidian to the right view. Missing `TMV_DB_PATH` must fail with a clear setup error; an unconfigured/failed LLM returns setup-required / llm-failed and persists no answer.
 
 ## Failure expectations
 Missing or incompatible native bindings, missing migrations, unsupported environments, and view-load failures must produce **readable, non-blank** health/error states. The plugin never proceeds as if unavailable data were trustworthy, and it exposes no database reset/delete action.

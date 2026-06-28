@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -67,5 +67,14 @@ describe("portability: no developer-specific paths, identifiers, or secrets leak
     }
     expect(status).not.toBe(0); // exits non-zero
     expect(stderr).toMatch(/path-to-vault|TRANSCRIPT_MEMORY_VAULT/); // with a clear usage message
+  });
+
+  it("the committed MCP dist bundle ships the server and every migration (matches source)", () => {
+    // verify:dist covers the plugin bundle; this covers the MCP bundle so a new migration can't ship to
+    // the plugin but be missing from dist/mcp (Claude Desktop opens/upgrades the same DB).
+    expect(existsSync(join(repoRoot, "dist/mcp/server.cjs"))).toBe(true);
+    const source = readdirSync(join(repoRoot, "src/db/migrations")).filter((f) => f.endsWith(".sql")).sort();
+    const packaged = readdirSync(join(repoRoot, "dist/mcp/migrations")).filter((f) => f.endsWith(".sql")).sort();
+    expect(packaged).toEqual(source);
   });
 });

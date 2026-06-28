@@ -45,7 +45,9 @@ npm run mcp:build      # -> dist/mcp/server.cjs (+ dist/mcp/migrations/)
 npm run mcp:start      # node dist/mcp/server.cjs (configured via env)
 ```
 
-The server runs as a **separate Node process over stdio**. It opens the SQLite database at `TMV_DB_PATH` and reuses the existing pipeline + `ExternalLlmProvider` (default Node fetch transport). It does **not** require Obsidian to be open. `better-sqlite3` must be installed (resolved at runtime; not bundled).
+The server runs as a **separate Node process over stdio**. It opens the SQLite database at `TMV_DB_PATH` and reuses the existing pipeline + `ExternalLlmProvider` (default Node fetch transport). It does **not** require Obsidian to be open.
+
+`better-sqlite3` is **resolved from `node_modules` at runtime, never bundled** — run `npm install` in the repo so `node_modules/better-sqlite3` exists, and launch `node dist/mcp/server.cjs` from the repo (Node resolves the dependency upward from `dist/mcp/`). Because the server runs under your **system Node** (not Obsidian's Electron), `npm install` fetches the prebuilt binary matching your Node — so on Apple Silicon this works regardless of the plugin's Electron ABI. If `better-sqlite3` is missing, the server logs a clear startup error and exits.
 
 ### Environment variables
 
