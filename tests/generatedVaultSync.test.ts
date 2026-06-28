@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -54,8 +55,7 @@ describe("Generated Obsidian graph sync (Phase 3 wiring)", () => {
     const find = (entityId: string, logicalType: string) => result.files.find((f) => f.entityId === entityId && f.logicalType === logicalType)!;
     // memory -> evidence and memory -> transcript span (native graph edges, not just mv:// text)
     const memory = await read(root, find(data.strong.id, "memory_note").relativePath);
-    expect(memory).toContain("[[Evidence/");
-    expect(memory).toContain(shortId(data.strongPtr.evidence_pointer_id)); // readable evidence link carries the short id
+    expect(memory).toContain(`[[Evidence/${shortId(data.strongPtr.evidence_pointer_id)}/`); // wikilink uses the new folder-based path
     expect(memory).toContain("[[Transcripts/");
     // evidence -> transcript span
     expect(await read(root, find(data.strongPtr.evidence_pointer_id, "evidence_note").relativePath)).toContain("[[Transcripts/");
@@ -76,29 +76,32 @@ describe("Generated Obsidian graph sync (Phase 3 wiring)", () => {
     expect(await read(root, find(data.weak.id, "memory_note").relativePath)).toContain("Weak or review-only evidence");
   });
 
-  it("uses readable filenames (slug + short id), not raw long ids, and keeps full ids in frontmatter/body", async () => {
+  it("puts the short id in a parent folder and keeps the filename basename a clean human label", async () => {
     const data = await seed();
     const result = await generateObsidianVault(db, { outputRoot: root, now: fixedNow });
     const find = (entityId: string, logicalType: string) => result.files.find((f) => f.entityId === entityId && f.logicalType === logicalType)!;
+    const basename = (p: string) => p.split("/").pop()!;
 
     const answer = find(data.answer.id, "answer_note");
-    expect(answer.relativePath).toContain(" - ");                       // readable "<slug> - <shortId>" form
-    expect(answer.relativePath).not.toContain(data.answer.id);          // full long id NOT the filename
-    expect(answer.relativePath).toContain(shortId(data.answer.id));     // short stable suffix kept
+    expect(answer.relativePath).toContain(`/${shortId(data.answer.id)}/`); // short id is a PARENT FOLDER
+    expect(answer.relativePath).not.toContain(data.answer.id);             // full long id never in the path
+    expect(basename(answer.relativePath)).not.toContain(" - ");            // no " - <id>" suffix in the filename
+    expect(basename(answer.relativePath)).not.toContain("ask_");           // no id token in the filename basename
     expect(await read(root, answer.relativePath)).toContain(`mv_entity_id: ${JSON.stringify(data.answer.id)}`); // full id in frontmatter
 
     const evidence = find(data.strongPtr.evidence_pointer_id, "evidence_note");
+    expect(evidence.relativePath).toContain(`/${shortId(data.strongPtr.evidence_pointer_id)}/`);
     expect(evidence.relativePath).not.toContain(data.strongPtr.evidence_pointer_id);
-    expect(evidence.relativePath).toContain(shortId(data.strongPtr.evidence_pointer_id));
+    expect(basename(evidence.relativePath)).not.toContain("evp_");
     expect(await read(root, evidence.relativePath)).toContain(data.strongPtr.evidence_pointer_id); // full id preserved in note body/frontmatter
 
     const memory = find(data.strong.id, "memory_note");
-    expect(memory.relativePath).toContain("SQLite truth - ");           // human-readable title
+    expect(memory.relativePath).toBe(`Memories/Decisions/${shortId(data.strong.id)}/SQLite truth.md`); // exact folder-based path
+    expect(basename(memory.relativePath)).toBe("SQLite truth.md");         // clean human label, no id
     expect(memory.relativePath).not.toContain(data.strong.id);
-    expect(memory.relativePath).toContain(shortId(data.strong.id));
   });
 
-  it("disambiguates duplicate titles via the short id suffix and sanitizes unsafe characters", async () => {
+  it("disambiguates duplicate titles via the short id folder and sanitizes unsafe characters", async () => {
     const data = await seed();
     const repos = createRepositories(db);
     const mk = (gen: string) => repos.memoryObjects.createMemoryObject(
@@ -107,11 +110,12 @@ describe("Generated Obsidian graph sync (Phase 3 wiring)", () => {
     const a = mk("first"), b = mk("second");
     const result = await generateObsidianVault(db, { outputRoot: root, now: fixedNow });
     const pathOf = (id: string) => result.files.find((f) => f.entityId === id && f.logicalType === "memory_note")!.relativePath;
-    expect(pathOf(a.id)).not.toBe(pathOf(b.id));                        // identical titles -> distinct files
-    expect(pathOf(a.id)).not.toMatch(/[:?]/);                          // ':' and '?' sanitized out of the path
-    expect(pathOf(a.id).startsWith("Memories/Decisions/")).toBe(true); // the '/' inside the title did NOT create a stray folder
-    expect(pathOf(a.id)).toContain(shortId(a.id));
-    expect(pathOf(b.id)).toContain(shortId(b.id));
+    const basename = (p: string) => p.split("/").pop()!;
+    expect(pathOf(a.id)).not.toBe(pathOf(b.id));                        // identical titles -> distinct files (distinct short-id folders)
+    expect(pathOf(a.id)).toContain(`/${shortId(a.id)}/`);              // short id is a parent folder
+    expect(pathOf(b.id)).toContain(`/${shortId(b.id)}/`);
+    expect(pathOf(a.id)).not.toMatch(/[:?]/);                          // ':' and '?' sanitized out of the whole path
+    expect(basename(pathOf(a.id))).toBe("A B choice.md");             // '/' in the title sanitized into the basename, NOT a stray folder
   });
 
   it("dashboard reports never-synced before, and last-synced status after a sync", async () => {
@@ -169,6 +173,23 @@ describe("Generated Obsidian graph sync (Phase 3 wiring)", () => {
     for (const forbidden of ["Bearer ", "Authorization", "sk-", "api_key", "apiKey", "TMV_LLM_API_KEY"]) {
       expect(dump).not.toContain(forbidden);
     }
+  });
+
+  it("first sync removes old-scheme (flat-named) generated files listed in the prior manifest, preserving user files", async () => {
+    await seed();
+    // Simulate a prior Phase 3.1 sync: an old flat "<title> - <shortId>.md" file + a manifest listing it.
+    const oldRel = "Evidence/Some title - evp_oldone.md";
+    await mkdir(join(root, "Evidence"), { recursive: true });
+    await writeFile(join(root, oldRel), "old generated note", "utf8");
+    await mkdir(join(root, "_system"), { recursive: true });
+    await writeFile(join(root, "_system/view-manifest.json"), JSON.stringify({ files: [{ relativePath: oldRel }] }), "utf8");
+    await writeFile(join(root, "My User Note.md"), "keep", "utf8"); // untracked user file must survive
+
+    await generateObsidianVault(db, { outputRoot: root, cleanBeforeWrite: true, now: fixedNow });
+
+    expect(existsSync(join(root, oldRel))).toBe(false);       // old flat-named file removed via the prior manifest
+    expect(await read(root, "My User Note.md")).toBe("keep"); // user file preserved
+    expect(existsSync(join(root, "00 Home.md"))).toBe(true);  // new folder-based generation written
   });
 
   it("cleanBeforeWrite removes only previously-generated files and preserves user files", async () => {

@@ -3231,14 +3231,15 @@ var shortId = (id, bodyChars = 6) => {
   const sep = id.indexOf("_");
   return sep > 0 && sep < id.length - 1 ? `${id.slice(0, sep + 1)}${id.slice(sep + 1, sep + 1 + bodyChars)}` : id.slice(0, bodyChars + 4);
 };
-var readableNoteName = (label, id) => `${safeName(labelFromText(label))} - ${shortId(id)}`;
-var transcriptPath = (title, id) => `Transcripts/${readableNoteName(title, id)}.md`;
+var noteBasename = (label) => safeName(labelFromText(label));
+var readableNotePath = (category, label, id) => `${category}/${shortId(id)}/${noteBasename(label)}.md`;
 var memoryFolder = (type) => type === "decision" ? "Decisions" : type === "preference" ? "Preferences" : type === "task" ? "Tasks" : type === "question" ? "Questions" : type === "claim" ? "Facts" : "Other";
-var memoryPath = (title, id, type) => `Memories/${memoryFolder(type)}/${readableNoteName(title, id)}.md`;
-var evidencePath = (label, id) => `Evidence/${readableNoteName(label, id)}.md`;
-var answerPath = (label, id) => `Answers/${readableNoteName(label, id)}.md`;
-var conflictPath = (label, id) => `Conflicts/${readableNoteName(label, id)}.md`;
-var entityPath = (kind, label, id) => `${kind === "person" ? "People" : kind === "topic" ? "Topics" : "Decisions"}/${readableNoteName(label, id)}.md`;
+var transcriptPath = (title, id) => readableNotePath("Transcripts", title, id);
+var memoryPath = (title, id, type) => readableNotePath(`Memories/${memoryFolder(type)}`, title, id);
+var evidencePath = (label, id) => readableNotePath("Evidence", label, id);
+var answerPath = (label, id) => readableNotePath("Answers", label, id);
+var conflictPath = (label, id) => readableNotePath("Conflicts", label, id);
+var entityPath = (kind, label, id) => readableNotePath(kind === "person" ? "People" : kind === "topic" ? "Topics" : "Decisions", label, id);
 
 // src/obsidian/graphBuilder.ts
 var edgeId = (source, target, type, evidence = "") => `ov_edge_${(0, import_node_crypto6.createHash)("sha256").update(`${source}:${target}:${type}:${evidence}`).digest("hex").slice(0, 24)}`;

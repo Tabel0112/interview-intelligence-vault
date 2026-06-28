@@ -20,17 +20,25 @@ export const shortId = (id: string, bodyChars = 6): string => {
     : id.slice(0, bodyChars + 4);
 };
 
-// Readable note basename: "<safe title> - <shortId>". Blank/missing titles fall back to "Untitled", and
-// distinct entities that share a title stay distinct via the id suffix. The FULL id lives in the note's
-// frontmatter/body — the filename is a disposable, human-readable view, never the only identifier.
-export const readableNoteName = (label: string, id: string): string => `${safeName(labelFromText(label))} - ${shortId(id)}`;
+// Clean, human-readable note basename: the sanitized title with NO id suffix. Blank/missing titles fall
+// back to "Untitled". Obsidian's native graph shows this basename as the node label, so it stays a clean
+// human label — the short id lives in the PARENT folder (below) for uniqueness, and the FULL id stays in
+// the note's frontmatter/body. `safeName` strips `/ : ? * " <> |` and control chars, so the basename can
+// never introduce an accidental subfolder.
+export const noteBasename = (label: string): string => safeName(labelFromText(label));
 
-export const transcriptPath = (title: string, id: string) => `Transcripts/${readableNoteName(title, id)}.md`;
+// Generated note path: "<category>/<shortId>/<clean title>.md". The short-id folder keeps distinct,
+// same-titled entities apart and is deterministic from the id; the basename is a disposable, human-readable
+// view and is never the only identifier. (A vanishingly rare shortId truncation collision with the same
+// title is caught loudly by generateObsidianVault's path-collision guard.)
+export const readableNotePath = (category: string, label: string, id: string): string => `${category}/${shortId(id)}/${noteBasename(label)}.md`;
+
 export const memoryFolder = (type: string) => type === "decision" ? "Decisions" : type === "preference" ? "Preferences" : type === "task" ? "Tasks" : type === "question" ? "Questions" : type === "claim" ? "Facts" : "Other";
-export const memoryPath = (title: string, id: string, type: string) => `Memories/${memoryFolder(type)}/${readableNoteName(title, id)}.md`;
-export const evidencePath = (label: string, id: string) => `Evidence/${readableNoteName(label, id)}.md`;
-export const answerPath = (label: string, id: string) => `Answers/${readableNoteName(label, id)}.md`;
-export const conflictPath = (label: string, id: string) => `Conflicts/${readableNoteName(label, id)}.md`;
-export const entityPath = (kind: "person" | "topic" | "decision", label: string, id: string) => `${kind === "person" ? "People" : kind === "topic" ? "Topics" : "Decisions"}/${readableNoteName(label, id)}.md`;
+export const transcriptPath = (title: string, id: string) => readableNotePath("Transcripts", title, id);
+export const memoryPath = (title: string, id: string, type: string) => readableNotePath(`Memories/${memoryFolder(type)}`, title, id);
+export const evidencePath = (label: string, id: string) => readableNotePath("Evidence", label, id);
+export const answerPath = (label: string, id: string) => readableNotePath("Answers", label, id);
+export const conflictPath = (label: string, id: string) => readableNotePath("Conflicts", label, id);
+export const entityPath = (kind: "person" | "topic" | "decision", label: string, id: string) => readableNotePath(kind === "person" ? "People" : kind === "topic" ? "Topics" : "Decisions", label, id);
 export const stripMd = (path: string) => path.replace(/\.md$/i, "");
 export const wikiLink = (path: string, label?: string, anchor?: string) => `[[${stripMd(path)}${anchor ? `#${anchor}` : ""}${label ? `|${label}` : ""}]]`;
