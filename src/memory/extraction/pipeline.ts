@@ -2,7 +2,7 @@ import type { SqliteDatabase } from "../../db/connection.js";
 import { MEMORY_EXTRACTION_PROMPT_VERSION } from "./prompt.js";
 import { findDuplicateMemoryObject } from "./duplicateDetection.js";
 import {
-  buildExtractionWindows, completeExtractionRun, createExtractionRun, failExtractionRun,
+  attachEvidenceToMemory, buildExtractionWindows, completeExtractionRun, createExtractionRun, failExtractionRun,
   loadSpansForTranscript, markDuplicate, storeMemoryObjectWithEvidence,
 } from "./repository.js";
 import type { ExtractionRunResult, MemoryExtractor } from "./types.js";
@@ -44,15 +44,29 @@ export async function extractMemoryObjectsForTranscript(db: SqliteDatabase, opti
           : validation.candidate;
         const duplicate = findDuplicateMemoryObject(db, candidate);
         if (duplicate) {
-          const rejected = duplicate.object.extraction_status === "rejected";
-          if (!duplicate.evidenceOverlaps && candidate.confidenceLabel === "high" && !rejected) {
-            markDuplicate(db, candidate, duplicate.object.id, runId, promptVersion);
+          const canonical = duplicate.object;
+          const blocked = canonical.extraction_status === "rejected" || canonical.extraction_status === "superseded";
+          if (!blocked && duplicate.kind === "exact") {
+            // EXACT duplicate (same type + identical normalized text = the same statement from another
+            // source): consolidate this source's evidence onto the canonical; never create a competing
+            // active memory. Idempotent, so re-running extraction does not create more duplicates.
+            attachEvidenceToMemory(db, canonical.id, candidate);
+            result.duplicatesSkipped++;
+            continue;
+          }
+          if (!blocked) {
+            // NEAR duplicate (similar wording, NOT identical): never auto-merge. Record a needs_review
+            // possible-duplicate suggestion linked to the canonical so a human decides — it is surfaced in
+            // the review queue, not hidden, and not promoted to an independent active memory.
+            markDuplicate(db, candidate, canonical.id, runId, promptVersion);
             result.objectsInserted++;
             result.duplicatesSkipped++;
             result.weakObjectsInserted++;
             continue;
           }
-          if (!options.force || duplicate.object.user_corrected === 1 || !rejected) { result.duplicatesSkipped++; continue; }
+          // Canonical is rejected/superseded: do not resurrect it into that lineage.
+          result.duplicatesSkipped++;
+          continue;
         }
         try {
           storeMemoryObjectWithEvidence(db, runId, promptVersion, candidate);

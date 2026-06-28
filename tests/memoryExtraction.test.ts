@@ -132,14 +132,17 @@ describe("memory extraction pipeline", () => {
     expect(db.prepare("SELECT generated_text,user_corrected FROM memory_objects WHERE id=?").get(object.id)).toEqual({ generated_text: "User corrected text", user_corrected: 1 });
   });
 
-  it("links high-confidence repeated ideas with different evidence", async () => {
+  it("auto-merges exact-duplicate ideas onto one canonical with consolidated evidence", async () => {
     const { imported, spans } = fixture();
     const make = (spanId: string): ExtractedMemoryCandidate => ({ type: "topic", title: "Source-backed memory", body: "Source-backed memory is important.", evidenceSpanIds: [spanId], confidence: 0.99 });
     await extractMemoryObjectsForTranscript(db, { transcriptId: imported.transcriptId, extractor: new StubExtractor(() => [make(spans[0].spanId)]) });
     await extractMemoryObjectsForTranscript(db, { transcriptId: imported.transcriptId, extractor: new StubExtractor(() => [make(spans[1].spanId)]) });
-    const objects = db.prepare("SELECT id,duplicate_of_id,extraction_status FROM memory_objects WHERE extraction_type='topic' ORDER BY created_at").all() as Array<{ id: string; duplicate_of_id: string | null; extraction_status: string }>;
-    expect(objects).toHaveLength(2);
-    expect(objects[1]).toMatchObject({ duplicate_of_id: objects[0].id, extraction_status: "needs_review" });
+    // EXACT duplicate (same type + normalized text) -> ONE canonical, evidence consolidated, no duplicate row.
+    const objects = db.prepare("SELECT id,duplicate_of_id FROM memory_objects WHERE extraction_type='topic'").all() as Array<{ id: string; duplicate_of_id: string | null }>;
+    expect(objects).toHaveLength(1);
+    expect(objects[0].duplicate_of_id).toBeNull();
+    const spanLinks = (db.prepare("SELECT DISTINCT span_id FROM memory_object_evidence WHERE memory_id=?").all(objects[0].id) as Array<{ span_id: string }>).map((s) => s.span_id).sort();
+    expect(spanLinks).toEqual([spans[0].spanId, spans[1].spanId].sort());
   });
 
   it("database blocks direct active extraction inserts before evidence exists", () => {

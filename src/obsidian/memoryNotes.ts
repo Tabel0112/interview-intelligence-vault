@@ -7,7 +7,12 @@ import { conflictPath, memoryPath, wikiLink } from "./paths.js";
 import type { GeneratedFile } from "./types.js";
 
 export function generateMemoryNotes(db: SqliteDatabase, maxQuoteLength = 300): GeneratedFile[] {
-  const rows = db.prepare("SELECT * FROM memory_objects ORDER BY id").all() as RawMemoryObjectForCanonical[];
+  // Generate a note only for CANONICAL memories — duplicate/superseded/rejected rows are a disposable view
+  // concern, excluded so the native graph shows one node per claim (full ids still live in SQLite).
+  const rows = db.prepare(`SELECT * FROM memory_objects
+    WHERE duplicate_of_id IS NULL AND status NOT IN ('superseded','rejected')
+      AND (extraction_status IS NULL OR extraction_status NOT IN ('superseded','rejected'))
+    ORDER BY id`).all() as RawMemoryObjectForCanonical[];
   return rows.map((row) => {
     const pointers = db.prepare("SELECT evidence_pointer_id FROM evidence_pointers WHERE target_type IN ('memory_object','claim','summary') AND target_id=? ORDER BY evidence_pointer_id").all(row.id) as Array<{ evidence_pointer_id: string }>;
     const legacy = db.prepare("SELECT span_id FROM memory_object_evidence WHERE memory_id=? ORDER BY span_id").all(row.id) as Array<{ span_id: string }>;

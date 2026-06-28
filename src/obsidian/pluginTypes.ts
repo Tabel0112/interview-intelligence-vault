@@ -32,6 +32,8 @@ export const OBSIDIAN_RIBBON = { icon: "database", title: "Open Transcript Memor
 export const OBSIDIAN_REINDEX_COMMAND = { id: "rebuild-embedding-index", name: "Rebuild Embedding Index" } as const;
 // Writes the disposable generated-Markdown view layer (so Obsidian's native ribbon graph has notes/links).
 export const OBSIDIAN_SYNC_GRAPH_COMMAND = { id: "sync-generated-graph-notes", name: "Sync generated graph notes" } as const;
+// Deterministic, idempotent repair: merge EXACT duplicate memories onto one canonical (consolidating evidence).
+export const OBSIDIAN_DEDUPE_COMMAND = { id: "merge-duplicate-memories", name: "Merge duplicate memories" } as const;
 // Folder (relative to the vault root) the generated Markdown view layer is written into. Disposable; SQLite stays truth.
 export const GENERATED_VAULT_FOLDER = "Transcript Memory Vault" as const;
 

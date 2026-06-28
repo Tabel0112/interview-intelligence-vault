@@ -3276,6 +3276,62 @@ function detectReindexNeeded(db, active, options = {}) {
   return { activeSpace, vectorCapable, documentCount, embeddedUnderActive, missingUnderActive, indexedSpaces, foreignSpaces, needsReindex, reasons };
 }
 
+// src/memory/dedup.ts
+function dedupeCanonicalMemories(db, options = {}) {
+  const ts = options.now ?? now;
+  const result = { canonicalGroups: 0, duplicatesSuperseded: 0, evidenceLinksConsolidated: 0 };
+  return db.transaction(() => {
+    const rows = db.prepare(`SELECT id, object_fingerprint, COALESCE(extraction_type,type) AS type, user_corrected, created_at
+      FROM memory_objects
+      WHERE object_fingerprint IS NOT NULL AND duplicate_of_id IS NULL
+        AND status NOT IN ('superseded','rejected')
+        AND (extraction_status IS NULL OR extraction_status NOT IN ('superseded','rejected'))`).all();
+    const groups = /* @__PURE__ */ new Map();
+    for (const row of rows) {
+      const key = `${row.type}|${row.object_fingerprint}`;
+      const list = groups.get(key);
+      if (list) list.push(row);
+      else groups.set(key, [row]);
+    }
+    for (const members of groups.values()) {
+      if (members.length < 2) continue;
+      const sorted = [...members].sort((a, b) => b.user_corrected - a.user_corrected || a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
+      const canonical = sorted[0];
+      let changed = false;
+      for (const dup of sorted.slice(1)) {
+        if (dup.user_corrected === 1) continue;
+        const evidence = db.prepare("SELECT span_id, transcript_id, turn_id, evidence_score FROM memory_object_evidence WHERE memory_id=?").all(dup.id);
+        for (const e of evidence) {
+          if (!db.prepare("SELECT 1 FROM memory_object_evidence WHERE memory_id=? AND span_id=? LIMIT 1").get(canonical.id, e.span_id)) {
+            const newId = stableProvenanceId("mev_", `${canonical.id}:${e.span_id}:supporting`);
+            db.prepare(`INSERT OR IGNORE INTO memory_object_evidence(
+              id,memory_id,span_id,role,evidence_score,created_at,metadata_json,transcript_id,turn_id,extraction_role
+            ) VALUES (?,?,?,'source',?,?, '{}',?,?, 'supporting')`).run(newId, canonical.id, e.span_id, e.evidence_score, ts(), e.transcript_id, e.turn_id);
+            result.evidenceLinksConsolidated += 1;
+          }
+          if (e.transcript_id) {
+            try {
+              linkMemoryObjectToSpan(db, { memoryObjectId: canonical.id, transcriptId: e.transcript_id, spanId: e.span_id });
+            } catch {
+            }
+          }
+        }
+        const updated = db.prepare(`UPDATE memory_objects
+          SET duplicate_of_id=?, status='superseded',
+              extraction_status=CASE WHEN extraction_status IS NULL THEN NULL ELSE 'superseded' END,
+              updated_at=?
+          WHERE id=? AND user_corrected=0`).run(canonical.id, ts(), dup.id);
+        if (updated.changes > 0) {
+          result.duplicatesSuperseded += updated.changes;
+          changed = true;
+        }
+      }
+      if (changed) result.canonicalGroups += 1;
+    }
+    return result;
+  })();
+}
+
 // src/memory/extraction/prompt.ts
 var MEMORY_EXTRACTION_PROMPT_VERSION = "mvp-memory-extraction-v1";
 var MEMORY_EXTRACTION_LLM_PROMPT_VERSION = "mvp-memory-extraction-llm-v1";
@@ -3523,6 +3579,21 @@ function storeMemoryObjectWithEvidence(db, runId, promptVersion, candidate, dupl
 function markDuplicate(db, candidate, existingObjectId, runId, promptVersion) {
   return storeMemoryObjectWithEvidence(db, runId, promptVersion, { ...candidate, status: "needs_review" }, existingObjectId);
 }
+function attachEvidenceToMemory(db, memoryId, candidate) {
+  return db.transaction(() => {
+    const timestamp = now();
+    let added = 0;
+    for (const span of candidate.evidenceSpans) {
+      if (db.prepare("SELECT 1 FROM memory_object_evidence WHERE memory_id=? AND span_id=? LIMIT 1").get(memoryId, span.spanId)) continue;
+      const evidenceId = stableProvenanceId("mev_", `${memoryId}:${span.spanId}:supporting`);
+      db.prepare(`INSERT OR IGNORE INTO memory_object_evidence(
+        id,memory_id,span_id,role,evidence_score,created_at,metadata_json,transcript_id,turn_id,extraction_role
+      ) VALUES (?,?,?,'source',?,?, '{}',?,?, 'supporting')`).run(evidenceId, memoryId, span.spanId, candidate.finalConfidence, timestamp, span.transcriptId, span.turnId);
+      added += 1;
+    }
+    return added;
+  })();
+}
 
 // src/memory/extraction/pipeline.ts
 async function extractMemoryObjectsForTranscript(db, options) {
@@ -3568,18 +3639,22 @@ async function extractMemoryObjectsForTranscript(db, options) {
         const candidate = options.extractor.kind === "llm" ? { ...validation.candidate, status: "needs_review" } : validation.candidate;
         const duplicate = findDuplicateMemoryObject(db, candidate);
         if (duplicate) {
-          const rejected = duplicate.object.extraction_status === "rejected";
-          if (!duplicate.evidenceOverlaps && candidate.confidenceLabel === "high" && !rejected) {
-            markDuplicate(db, candidate, duplicate.object.id, runId, promptVersion);
+          const canonical = duplicate.object;
+          const blocked = canonical.extraction_status === "rejected" || canonical.extraction_status === "superseded";
+          if (!blocked && duplicate.kind === "exact") {
+            attachEvidenceToMemory(db, canonical.id, candidate);
+            result.duplicatesSkipped++;
+            continue;
+          }
+          if (!blocked) {
+            markDuplicate(db, candidate, canonical.id, runId, promptVersion);
             result.objectsInserted++;
             result.duplicatesSkipped++;
             result.weakObjectsInserted++;
             continue;
           }
-          if (!options.force || duplicate.object.user_corrected === 1 || !rejected) {
-            result.duplicatesSkipped++;
-            continue;
-          }
+          result.duplicatesSkipped++;
+          continue;
         }
         try {
           storeMemoryObjectWithEvidence(db, runId, promptVersion, candidate);
@@ -4464,10 +4539,15 @@ function buildObsidianGraph(db) {
   };
   const transcripts = db.prepare("SELECT id,title FROM transcripts ORDER BY id").all();
   transcripts.forEach((row) => addNode({ id: transcriptNodeId(row.id), type: "transcript", label: row.title, notePath: transcriptPath(row.title, row.id), transcriptId: row.id }));
-  const memories = db.prepare("SELECT id,type,title,generated_text,confidence,status FROM memory_objects ORDER BY id").all();
+  const memories = db.prepare(`SELECT id,type,title,generated_text,confidence,status FROM memory_objects
+    WHERE duplicate_of_id IS NULL AND status NOT IN ('superseded','rejected')
+      AND (extraction_status IS NULL OR extraction_status NOT IN ('superseded','rejected'))
+    ORDER BY id`).all();
+  const canonicalMemoryIds = new Set(memories.map((row) => row.id));
   memories.forEach((row) => addNode({ id: memoryNodeId(row.id), type: row.type === "decision" ? "decision" : row.type === "person" ? "person" : row.type === "topic" ? "topic" : "memory", label: row.title ?? row.generated_text.slice(0, 80), notePath: row.type === "decision" ? entityPath("decision", row.title ?? row.generated_text.slice(0, 80), row.id) : memoryPath(row.title ?? row.generated_text.slice(0, 80), row.id, row.type), confidence: row.confidence, supportStatus: row.status }));
   const pointers = db.prepare("SELECT * FROM evidence_pointers ORDER BY evidence_pointer_id").all();
   for (const pointer of pointers) {
+    if (String(pointer.target_type) === "memory_object" && !canonicalMemoryIds.has(String(pointer.target_id))) continue;
     const id = String(pointer.evidence_pointer_id), resolved = resolveEvidencePointer(db, id);
     const evidenceLabel = resolved.ok ? labelFromText(resolved.spanText) || id : "Broken evidence";
     addNode({ id: evidenceNodeId(id), type: "evidence", label: resolved.ok ? evidenceLabel : id, notePath: evidencePath(evidenceLabel, id), evidenceUri: String(pointer.pointer_uri), transcriptId: String(pointer.transcript_id), spanId: String(pointer.span_id), confidence: Number(pointer.confidence), supportStatus: String(pointer.evidence_strength) });
@@ -5370,6 +5450,7 @@ var OBSIDIAN_COMMANDS = [
 var OBSIDIAN_RIBBON = { icon: "database", title: "Open Transcript Memory Dashboard" };
 var OBSIDIAN_REINDEX_COMMAND = { id: "rebuild-embedding-index", name: "Rebuild Embedding Index" };
 var OBSIDIAN_SYNC_GRAPH_COMMAND = { id: "sync-generated-graph-notes", name: "Sync generated graph notes" };
+var OBSIDIAN_DEDUPE_COMMAND = { id: "merge-duplicate-memories", name: "Merge duplicate memories" };
 var GENERATED_VAULT_FOLDER = "Transcript Memory Vault";
 var viewTitle = (type) => ({
   [OBSIDIAN_VIEW_TYPES.dashboard]: "Transcript Memory Dashboard",
@@ -5538,7 +5619,10 @@ ${conflict.explanation}`, "conflict", id);
 // src/obsidian/entityNotes.ts
 function generateEntityNotes(db) {
   const graphRows = db.prepare("SELECT * FROM graph_nodes WHERE node_type IN ('entity','topic') ORDER BY node_type,id").all();
-  const decisions = db.prepare("SELECT id,title,generated_text,status FROM memory_objects WHERE COALESCE(extraction_type,type)='decision' ORDER BY id").all();
+  const decisions = db.prepare(`SELECT id,title,generated_text,status FROM memory_objects
+    WHERE COALESCE(extraction_type,type)='decision' AND duplicate_of_id IS NULL AND status NOT IN ('superseded','rejected')
+      AND (extraction_status IS NULL OR extraction_status NOT IN ('superseded','rejected'))
+    ORDER BY id`).all();
   const graphNotes = graphRows.map((row) => {
     const kind = row.node_type === "entity" ? "person" : "topic";
     const evidence = db.prepare("SELECT evidence_pointer_id FROM evidence_pointers WHERE target_type='graph_node' AND target_id=? ORDER BY evidence_pointer_id").all(row.id).map((item) => renderEvidenceCitation(db, item.evidence_pointer_id).markdown).join("\n\n") || "_No direct source evidence pointers._";
@@ -5726,7 +5810,10 @@ function buildManifest(files, graph, warnings) {
 
 // src/obsidian/memoryNotes.ts
 function generateMemoryNotes(db, maxQuoteLength = 300) {
-  const rows = db.prepare("SELECT * FROM memory_objects ORDER BY id").all();
+  const rows = db.prepare(`SELECT * FROM memory_objects
+    WHERE duplicate_of_id IS NULL AND status NOT IN ('superseded','rejected')
+      AND (extraction_status IS NULL OR extraction_status NOT IN ('superseded','rejected'))
+    ORDER BY id`).all();
   return rows.map((row) => {
     const pointers = db.prepare("SELECT evidence_pointer_id FROM evidence_pointers WHERE target_type IN ('memory_object','claim','summary') AND target_id=? ORDER BY evidence_pointer_id").all(row.id);
     const legacy = db.prepare("SELECT span_id FROM memory_object_evidence WHERE memory_id=? ORDER BY span_id").all(row.id);
@@ -6678,6 +6765,7 @@ var TranscriptMemoryVaultPlugin = class extends import_obsidian5.Plugin {
     this.addCommand({ id: OBSIDIAN_REINDEX_COMMAND.id, name: OBSIDIAN_REINDEX_COMMAND.name, callback: () => void this.rebuildEmbeddingIndex() });
     this.addCommand({ id: "run-ai-extraction", name: "Run AI extraction for transcripts missing it", callback: () => void this.runPendingExtraction() });
     this.addCommand({ id: OBSIDIAN_SYNC_GRAPH_COMMAND.id, name: OBSIDIAN_SYNC_GRAPH_COMMAND.name, callback: () => void this.syncGeneratedGraphNotesCommand() });
+    this.addCommand({ id: OBSIDIAN_DEDUPE_COMMAND.id, name: OBSIDIAN_DEDUPE_COMMAND.name, callback: () => void this.mergeDuplicateMemoriesCommand() });
     this.addRibbonIcon(OBSIDIAN_RIBBON.icon, OBSIDIAN_RIBBON.title, () => void navigation.openDashboard());
     this.registerObsidianProtocolHandler(OBSIDIAN_PROTOCOL_ACTION, (params) => {
       const route = obsidianRouteFromProtocol(params);
@@ -6852,6 +6940,25 @@ var TranscriptMemoryVaultPlugin = class extends import_obsidian5.Plugin {
     } catch (error) {
       new import_obsidian5.Notice(`Graph notes sync failed: ${readableStartupError(error)}`);
       console.error("Transcript Memory Vault generated graph sync failed", error);
+    }
+  }
+  /**
+   * EXPLICIT manual action (command palette). Deterministic, idempotent: merges EXACT duplicate memories
+   * onto one canonical and consolidates their evidence. Never deletes raw data; never touches near-dups
+   * (those stay needs_review for human review). Reports the result via a Notice.
+   */
+  async mergeDuplicateMemoriesCommand() {
+    if (!this.db || this.health.status !== "ready") {
+      new import_obsidian5.Notice("Transcript Memory Vault is not ready; cannot merge duplicate memories.");
+      return;
+    }
+    try {
+      const r = dedupeCanonicalMemories(this.db);
+      new import_obsidian5.Notice(r.canonicalGroups === 0 ? "No exact duplicate memories found. Near-duplicates (if any) remain in the review queue." : `Merged duplicate memories: ${r.canonicalGroups} canonical group(s), ${r.duplicatesSuperseded} duplicate(s) superseded, ${r.evidenceLinksConsolidated} evidence link(s) consolidated. Resync graph notes to refresh the native graph.`);
+      await this.viewRegistry.notifyMutation();
+    } catch (error) {
+      new import_obsidian5.Notice(`Merge duplicate memories failed: ${readableStartupError(error)}`);
+      console.error("Transcript Memory Vault memory dedupe failed", error);
     }
   }
   /** Same sync, triggered from the dashboard button. Returns a frontend-friendly summary (no Notices). */

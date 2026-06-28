@@ -2318,6 +2318,21 @@ function storeMemoryObjectWithEvidence(db, runId, promptVersion, candidate, dupl
 function markDuplicate(db, candidate, existingObjectId, runId, promptVersion) {
   return storeMemoryObjectWithEvidence(db, runId, promptVersion, { ...candidate, status: "needs_review" }, existingObjectId);
 }
+function attachEvidenceToMemory(db, memoryId, candidate) {
+  return db.transaction(() => {
+    const timestamp = now();
+    let added = 0;
+    for (const span of candidate.evidenceSpans) {
+      if (db.prepare("SELECT 1 FROM memory_object_evidence WHERE memory_id=? AND span_id=? LIMIT 1").get(memoryId, span.spanId)) continue;
+      const evidenceId = stableProvenanceId("mev_", `${memoryId}:${span.spanId}:supporting`);
+      db.prepare(`INSERT OR IGNORE INTO memory_object_evidence(
+        id,memory_id,span_id,role,evidence_score,created_at,metadata_json,transcript_id,turn_id,extraction_role
+      ) VALUES (?,?,?,'source',?,?, '{}',?,?, 'supporting')`).run(evidenceId, memoryId, span.spanId, candidate.finalConfidence, timestamp, span.transcriptId, span.turnId);
+      added += 1;
+    }
+    return added;
+  })();
+}
 
 // src/memory/extraction/pipeline.ts
 async function extractMemoryObjectsForTranscript(db, options) {
@@ -2363,18 +2378,22 @@ async function extractMemoryObjectsForTranscript(db, options) {
         const candidate = options.extractor.kind === "llm" ? { ...validation.candidate, status: "needs_review" } : validation.candidate;
         const duplicate = findDuplicateMemoryObject(db, candidate);
         if (duplicate) {
-          const rejected = duplicate.object.extraction_status === "rejected";
-          if (!duplicate.evidenceOverlaps && candidate.confidenceLabel === "high" && !rejected) {
-            markDuplicate(db, candidate, duplicate.object.id, runId, promptVersion);
+          const canonical = duplicate.object;
+          const blocked = canonical.extraction_status === "rejected" || canonical.extraction_status === "superseded";
+          if (!blocked && duplicate.kind === "exact") {
+            attachEvidenceToMemory(db, canonical.id, candidate);
+            result.duplicatesSkipped++;
+            continue;
+          }
+          if (!blocked) {
+            markDuplicate(db, candidate, canonical.id, runId, promptVersion);
             result.objectsInserted++;
             result.duplicatesSkipped++;
             result.weakObjectsInserted++;
             continue;
           }
-          if (!options.force || duplicate.object.user_corrected === 1 || !rejected) {
-            result.duplicatesSkipped++;
-            continue;
-          }
+          result.duplicatesSkipped++;
+          continue;
         }
         try {
           storeMemoryObjectWithEvidence(db, runId, promptVersion, candidate);
@@ -3257,10 +3276,15 @@ function buildObsidianGraph(db) {
   };
   const transcripts = db.prepare("SELECT id,title FROM transcripts ORDER BY id").all();
   transcripts.forEach((row) => addNode({ id: transcriptNodeId(row.id), type: "transcript", label: row.title, notePath: transcriptPath(row.title, row.id), transcriptId: row.id }));
-  const memories = db.prepare("SELECT id,type,title,generated_text,confidence,status FROM memory_objects ORDER BY id").all();
+  const memories = db.prepare(`SELECT id,type,title,generated_text,confidence,status FROM memory_objects
+    WHERE duplicate_of_id IS NULL AND status NOT IN ('superseded','rejected')
+      AND (extraction_status IS NULL OR extraction_status NOT IN ('superseded','rejected'))
+    ORDER BY id`).all();
+  const canonicalMemoryIds = new Set(memories.map((row) => row.id));
   memories.forEach((row) => addNode({ id: memoryNodeId(row.id), type: row.type === "decision" ? "decision" : row.type === "person" ? "person" : row.type === "topic" ? "topic" : "memory", label: row.title ?? row.generated_text.slice(0, 80), notePath: row.type === "decision" ? entityPath("decision", row.title ?? row.generated_text.slice(0, 80), row.id) : memoryPath(row.title ?? row.generated_text.slice(0, 80), row.id, row.type), confidence: row.confidence, supportStatus: row.status }));
   const pointers = db.prepare("SELECT * FROM evidence_pointers ORDER BY evidence_pointer_id").all();
   for (const pointer of pointers) {
+    if (String(pointer.target_type) === "memory_object" && !canonicalMemoryIds.has(String(pointer.target_id))) continue;
     const id = String(pointer.evidence_pointer_id), resolved = resolveEvidencePointer(db, id);
     const evidenceLabel = resolved.ok ? labelFromText(resolved.spanText) || id : "Broken evidence";
     addNode({ id: evidenceNodeId(id), type: "evidence", label: resolved.ok ? evidenceLabel : id, notePath: evidencePath(evidenceLabel, id), evidenceUri: String(pointer.pointer_uri), transcriptId: String(pointer.transcript_id), spanId: String(pointer.span_id), confidence: Number(pointer.confidence), supportStatus: String(pointer.evidence_strength) });

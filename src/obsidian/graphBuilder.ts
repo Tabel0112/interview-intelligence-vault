@@ -17,10 +17,19 @@ export function buildObsidianGraph(db: SqliteDatabase): { graph: ObsidianGraph; 
   const addEdge = (edge: Omit<ObsidianGraphEdge, "id">) => { const id = edgeId(edge.source, edge.target, edge.type, edge.evidencePointerId); edges.set(id, { id, ...edge }); };
   const transcripts = db.prepare("SELECT id,title FROM transcripts ORDER BY id").all() as Array<{ id: string; title: string }>;
   transcripts.forEach((row) => addNode({ id: transcriptNodeId(row.id), type: "transcript", label: row.title, notePath: transcriptPath(row.title, row.id), transcriptId: row.id }));
-  const memories = db.prepare("SELECT id,type,title,generated_text,confidence,status FROM memory_objects ORDER BY id").all() as Array<{ id: string; type: string; title: string | null; generated_text: string; confidence: number; status: string }>;
+  // Only CANONICAL memories become active graph nodes: duplicates (duplicate_of_id set) and
+  // superseded/rejected rows are excluded so the same claim shows once, not many times.
+  const memories = db.prepare(`SELECT id,type,title,generated_text,confidence,status FROM memory_objects
+    WHERE duplicate_of_id IS NULL AND status NOT IN ('superseded','rejected')
+      AND (extraction_status IS NULL OR extraction_status NOT IN ('superseded','rejected'))
+    ORDER BY id`).all() as Array<{ id: string; type: string; title: string | null; generated_text: string; confidence: number; status: string }>;
+  const canonicalMemoryIds = new Set(memories.map((row) => row.id));
   memories.forEach((row) => addNode({ id: memoryNodeId(row.id), type: row.type === "decision" ? "decision" : row.type === "person" ? "person" : row.type === "topic" ? "topic" : "memory", label: row.title ?? row.generated_text.slice(0, 80), notePath: row.type === "decision" ? entityPath("decision", row.title ?? row.generated_text.slice(0, 80), row.id) : memoryPath(row.title ?? row.generated_text.slice(0, 80), row.id, row.type), confidence: row.confidence, supportStatus: row.status }));
   const pointers = db.prepare("SELECT * FROM evidence_pointers ORDER BY evidence_pointer_id").all() as Array<Record<string, unknown>>;
   for (const pointer of pointers) {
+    // Hide evidence that only backs a superseded/duplicate memory (its consolidated copy on the canonical
+    // is shown instead) — otherwise a merged duplicate's pointer would float as an orphan evidence node.
+    if (String(pointer.target_type) === "memory_object" && !canonicalMemoryIds.has(String(pointer.target_id))) continue;
     const id = String(pointer.evidence_pointer_id), resolved = resolveEvidencePointer(db, id);
     // Readable label/notePath from the resolved span text (must match evidenceNotes.ts so wikilinks resolve);
     // broken pointers fall back to a fixed label, identical to the evidence-note builder.

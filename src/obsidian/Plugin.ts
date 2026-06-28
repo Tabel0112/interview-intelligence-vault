@@ -6,12 +6,13 @@ import { validateMigrationPackage } from "../db/migrations/index.js";
 import { navigateInternal, obsidianRouteFromProtocol, OBSIDIAN_PROTOCOL_ACTION, type FrontendApi, type GeneratedSyncResult } from "../frontend/index.js";
 import { createObsidianNavigation } from "./ObsidianNavigation.js";
 import { generateObsidianVault } from "./generateVault.js";
+import { dedupeCanonicalMemories } from "../memory/index.js";
 import type { ObsidianViewResult } from "./types.js";
 import { nativeBindingLoadError, resolveNativeBinding } from "./nativeBindings.js";
 import { TranscriptMemorySettingsTab } from "./SettingsTab.js";
 import { TranscriptMemoryItemView } from "./TranscriptMemoryItemView.js";
 import { createObsidianAppApi } from "./services/ObsidianAppApi.js";
-import { GENERATED_VAULT_FOLDER, OBSIDIAN_COMMANDS, OBSIDIAN_REINDEX_COMMAND, OBSIDIAN_RIBBON, OBSIDIAN_SYNC_GRAPH_COMMAND, OBSIDIAN_VIEW_TYPES, type TranscriptMemoryViewType } from "./pluginTypes.js";
+import { GENERATED_VAULT_FOLDER, OBSIDIAN_COMMANDS, OBSIDIAN_DEDUPE_COMMAND, OBSIDIAN_REINDEX_COMMAND, OBSIDIAN_RIBBON, OBSIDIAN_SYNC_GRAPH_COMMAND, OBSIDIAN_VIEW_TYPES, type TranscriptMemoryViewType } from "./pluginTypes.js";
 import { createUnavailableFrontendApi, DESKTOP_ONLY_MESSAGE, initialPluginHealth, readableStartupError, startupSupport, type PluginHealth } from "./startup.js";
 import { DEFAULT_SETTINGS, isLlmConfigured, normalizeSettings, settingsHealthSummary, type TranscriptMemorySettings } from "./settings.js";
 import { embeddingReindexStatus, runEmbeddingReindex } from "./embeddingSettings.js";
@@ -44,6 +45,7 @@ export default class TranscriptMemoryVaultPlugin extends Plugin {
     this.addCommand({ id: OBSIDIAN_REINDEX_COMMAND.id, name: OBSIDIAN_REINDEX_COMMAND.name, callback: () => void this.rebuildEmbeddingIndex() });
     this.addCommand({ id: "run-ai-extraction", name: "Run AI extraction for transcripts missing it", callback: () => void this.runPendingExtraction() });
     this.addCommand({ id: OBSIDIAN_SYNC_GRAPH_COMMAND.id, name: OBSIDIAN_SYNC_GRAPH_COMMAND.name, callback: () => void this.syncGeneratedGraphNotesCommand() });
+    this.addCommand({ id: OBSIDIAN_DEDUPE_COMMAND.id, name: OBSIDIAN_DEDUPE_COMMAND.name, callback: () => void this.mergeDuplicateMemoriesCommand() });
     this.addRibbonIcon(OBSIDIAN_RIBBON.icon, OBSIDIAN_RIBBON.title, () => void navigation.openDashboard());
     // External deep links (e.g. from Claude Desktop): obsidian://transcript-memory-vault?route=<mv://...>.
     // Navigation only — the route is allowlist-validated to a known mv:// view, then opened via the existing
@@ -217,6 +219,25 @@ export default class TranscriptMemoryVaultPlugin extends Plugin {
     } catch (error) {
       new Notice(`Graph notes sync failed: ${readableStartupError(error)}`);
       console.error("Transcript Memory Vault generated graph sync failed", error);
+    }
+  }
+
+  /**
+   * EXPLICIT manual action (command palette). Deterministic, idempotent: merges EXACT duplicate memories
+   * onto one canonical and consolidates their evidence. Never deletes raw data; never touches near-dups
+   * (those stay needs_review for human review). Reports the result via a Notice.
+   */
+  private async mergeDuplicateMemoriesCommand(): Promise<void> {
+    if (!this.db || this.health.status !== "ready") { new Notice("Transcript Memory Vault is not ready; cannot merge duplicate memories."); return; }
+    try {
+      const r = dedupeCanonicalMemories(this.db);
+      new Notice(r.canonicalGroups === 0
+        ? "No exact duplicate memories found. Near-duplicates (if any) remain in the review queue."
+        : `Merged duplicate memories: ${r.canonicalGroups} canonical group(s), ${r.duplicatesSuperseded} duplicate(s) superseded, ${r.evidenceLinksConsolidated} evidence link(s) consolidated. Resync graph notes to refresh the native graph.`);
+      await this.viewRegistry.notifyMutation();
+    } catch (error) {
+      new Notice(`Merge duplicate memories failed: ${readableStartupError(error)}`);
+      console.error("Transcript Memory Vault memory dedupe failed", error);
     }
   }
 

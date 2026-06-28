@@ -6,7 +6,10 @@ import type { GeneratedFile } from "./types.js";
 
 export function generateEntityNotes(db: SqliteDatabase): GeneratedFile[] {
   const graphRows = db.prepare("SELECT * FROM graph_nodes WHERE node_type IN ('entity','topic') ORDER BY node_type,id").all() as Array<Record<string, unknown>>;
-  const decisions = db.prepare("SELECT id,title,generated_text,status FROM memory_objects WHERE COALESCE(extraction_type,type)='decision' ORDER BY id").all() as Array<Record<string, unknown>>;
+  const decisions = db.prepare(`SELECT id,title,generated_text,status FROM memory_objects
+    WHERE COALESCE(extraction_type,type)='decision' AND duplicate_of_id IS NULL AND status NOT IN ('superseded','rejected')
+      AND (extraction_status IS NULL OR extraction_status NOT IN ('superseded','rejected'))
+    ORDER BY id`).all() as Array<Record<string, unknown>>;
   const graphNotes = graphRows.map((row) => {
     const kind = row.node_type === "entity" ? "person" : "topic";
     const evidence = (db.prepare("SELECT evidence_pointer_id FROM evidence_pointers WHERE target_type='graph_node' AND target_id=? ORDER BY evidence_pointer_id").all(row.id) as Array<{ evidence_pointer_id: string }>)
