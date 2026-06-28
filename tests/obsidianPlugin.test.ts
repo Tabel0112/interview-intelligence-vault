@@ -59,17 +59,23 @@ describe("Obsidian plugin registration contract", () => {
 });
 
 describe("Obsidian internal provenance navigation", () => {
-  it("renders keyboard-accessible nav and quick actions with explicit internal route handlers", async () => {
+  it("renders keyboard-accessible nav with authoring demoted to Advanced, all routes reachable", async () => {
     const html = await renderRoute(createSqliteFrontendApi(db, { now }), routeHref.dashboard());
-    for (const target of [
-      routeHref.upload(), routeHref.ask(), routeHref.search(), routeHref.graph(), routeHref.reviewQueue(),
-    ]) {
-      expect(html).toContain(`type="button" class="route-action" data-route="${target}"`);
+    for (const target of [routeHref.upload(), routeHref.ask(), routeHref.search(), routeHref.graph(), routeHref.reviewQueue()]) {
+      expect(html).toContain(`data-route="${target}"`); // every route still reachable from the viewer dashboard/nav
       expect(isInternalNavigationTarget(target)).toBe(true);
     }
-    for (const label of ["Upload transcript", "Ask AI", "Search vault", "Open graph", "Review queue"]) {
-      expect(html).toContain(`>${label}</button>`);
-    }
+    // Primary nav (before the Advanced disclosure) leads with Search/Graph/Review and EXCLUDES Upload/Ask AI.
+    const navPrimary = html.slice(html.indexOf('aria-label="Primary"'), html.indexOf('<details class="nav-advanced"'));
+    expect(navPrimary).toContain(`data-route="${routeHref.search()}"`);
+    expect(navPrimary).toContain(`data-route="${routeHref.graph()}"`);
+    expect(navPrimary).toContain(`data-route="${routeHref.reviewQueue()}"`);
+    expect(navPrimary).not.toContain(`data-route="${routeHref.upload()}"`);
+    expect(navPrimary).not.toContain(`data-route="${routeHref.ask()}"`);
+    // The Advanced disclosure holds Upload + Ask AI, both still navigable internal routes.
+    const advanced = html.slice(html.indexOf('<details class="nav-advanced"'), html.indexOf("</details>"));
+    expect(advanced).toContain(`data-route="${routeHref.upload()}"`);
+    expect(advanced).toContain(`data-route="${routeHref.ask()}"`);
     expect(isInternalNavigationTarget("https://example.com")).toBe(false);
   });
 

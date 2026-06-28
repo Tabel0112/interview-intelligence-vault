@@ -218,6 +218,13 @@ export function createSqliteFrontendApi(
     async getDashboard(): Promise<DashboardView> {
       const answers = db.prepare("SELECT id,question,evidence_confidence,created_at FROM ask_ai_runs ORDER BY created_at DESC,id LIMIT 8").all() as Row[];
       const review = reviewItems(db);
+      // Read-only projection of existing review items — highest-severity weak/broken/conflicting first.
+      // No scoring/trust/review-semantics change; just a dashboard view.
+      const severityRank = { high: 3, medium: 2, low: 1 } as const;
+      const attention = review
+        .filter((item) => item.trustState === "weak" || item.trustState === "broken" || item.trustState === "conflicting")
+        .sort((a, b) => severityRank[b.severity] - severityRank[a.severity])
+        .slice(0, 5);
       return {
         totalTranscriptCount: transcriptList(db).length,
         transcripts: transcriptList(db).slice(0, 10),
@@ -230,6 +237,7 @@ export function createSqliteFrontendApi(
         llmRequired: !!options.llmRequired,
         llmReady: options.getLlmReady ? options.getLlmReady() : !options.llmRequired,
         generatedSync: generatedSyncStatus(db),
+        attention,
       };
     },
     async listTranscripts() { return transcriptList(db); },

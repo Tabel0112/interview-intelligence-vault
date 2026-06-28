@@ -23,9 +23,13 @@ export function routeButton(target: string, label: string, className = "route-ac
 }
 
 export function appShell(title: string, body: string): string {
+  // Viewer-first nav: Dashboard/Search/Graph/Review are primary; authoring (Upload, Ask AI) is demoted
+  // into an "Advanced" disclosure — still reachable, just not the default surface now that Claude Desktop
+  // (via MCP) is the recommended chat UI. Every target stays an internal mv:// route.
   return `<div class="transcript-memory-vault vault-app">
     <header class="app-header">${routeButton("mv://dashboard", "Interview Intelligence Vault", "route-action brand")}<nav aria-label="Primary">
-      ${routeButton("mv://upload", "Upload")}${routeButton("mv://ask", "Ask AI")}${routeButton("mv://search", "Search")}${routeButton("mv://graph", "Graph")}${routeButton("mv://review", "Review")}
+      ${routeButton("mv://dashboard", "Dashboard")}${routeButton("mv://search", "Search")}${routeButton("mv://graph", "Graph")}${routeButton("mv://review", "Review")}
+      <details class="nav-advanced"><summary>Advanced</summary><div class="nav-advanced-items">${routeButton("mv://upload", "Upload")}${routeButton("mv://ask", "Ask AI")}</div></details>
     </nav></header>
     <main><header class="page-header"><h1>${escapeHtml(title)}</h1></header>${body}</main>
   </div>`;

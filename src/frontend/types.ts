@@ -104,6 +104,8 @@ export interface DashboardView {
   llmReady?: boolean;
   /** Last generated-graph-notes sync (for Obsidian's native graph); omitted in unavailable-DB states. */
   generatedSync?: GeneratedSyncStatus;
+  /** Top weak/broken/conflicting review items to surface on the viewer dashboard (read-only projection). */
+  attention?: ReviewItemView[];
 }
 
 export interface SearchResultView {

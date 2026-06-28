@@ -144,3 +144,31 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+.transcript-memory-vault details.nav-advanced {
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+}
+
+.transcript-memory-vault details.nav-advanced > summary {
+  cursor: pointer;
+  color: var(--link-color);
+}
+
+.transcript-memory-vault .nav-advanced-items {
+  display: flex;
+  gap: var(--size-4-3);
+  flex-wrap: wrap;
+  align-items: center;
+  padding-block-start: var(--size-4-2);
+}
+
+.transcript-memory-vault .mcp-db-path code,
+.transcript-memory-vault .vault-status-section code {
+  word-break: break-all;
+}
+
+.transcript-memory-vault .attention-item {
+  display: block;
+}

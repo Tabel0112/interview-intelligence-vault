@@ -1535,7 +1535,8 @@ function routeButton(target, label, className = "route-action") {
 function appShell(title, body) {
   return `<div class="transcript-memory-vault vault-app">
     <header class="app-header">${routeButton("mv://dashboard", "Interview Intelligence Vault", "route-action brand")}<nav aria-label="Primary">
-      ${routeButton("mv://upload", "Upload")}${routeButton("mv://ask", "Ask AI")}${routeButton("mv://search", "Search")}${routeButton("mv://graph", "Graph")}${routeButton("mv://review", "Review")}
+      ${routeButton("mv://dashboard", "Dashboard")}${routeButton("mv://search", "Search")}${routeButton("mv://graph", "Graph")}${routeButton("mv://review", "Review")}
+      <details class="nav-advanced"><summary>Advanced</summary><div class="nav-advanced-items">${routeButton("mv://upload", "Upload")}${routeButton("mv://ask", "Ask AI")}</div></details>
     </nav></header>
     <main><header class="page-header"><h1>${escapeHtml(title)}</h1></header>${body}</main>
   </div>`;
@@ -4866,6 +4867,8 @@ function createSqliteFrontendApi(db, options = {}) {
     async getDashboard() {
       const answers = db.prepare("SELECT id,question,evidence_confidence,created_at FROM ask_ai_runs ORDER BY created_at DESC,id LIMIT 8").all();
       const review = reviewItems(db);
+      const severityRank = { high: 3, medium: 2, low: 1 };
+      const attention = review.filter((item) => item.trustState === "weak" || item.trustState === "broken" || item.trustState === "conflicting").sort((a, b) => severityRank[b.severity] - severityRank[a.severity]).slice(0, 5);
       return {
         totalTranscriptCount: transcriptList(db).length,
         transcripts: transcriptList(db).slice(0, 10),
@@ -4877,7 +4880,8 @@ function createSqliteFrontendApi(db, options = {}) {
         health: options.health,
         llmRequired: !!options.llmRequired,
         llmReady: options.getLlmReady ? options.getLlmReady() : !options.llmRequired,
-        generatedSync: generatedSyncStatus(db)
+        generatedSync: generatedSyncStatus(db),
+        attention
       };
     },
     async listTranscripts() {
@@ -5212,16 +5216,33 @@ async function renderPage(context) {
       const sync = view.generatedSync;
       const syncStatusLine = !sync ? "Generated graph notes status is unavailable in this context." : !sync.synced ? "Never synced \u2014 Obsidian's native graph has no generated notes yet. Sync after importing transcripts, running AI extraction, or asking AI." : `Last synced ${escapeHtml(sync.lastSyncedAt ?? "unknown")} \xB7 ${sync.fileCount ?? 0} files \xB7 ${sync.graphNodeCount ?? 0} nodes \xB7 ${sync.graphEdgeCount ?? 0} edges.`;
       const syncWarn = sync?.status === "failed" ? `<aside class="trust-warning">${trustBadge("broken", "last sync had errors")} ${escapeHtml(sync.error ?? "Some generated files could not be written.")}</aside>` : "";
-      const generatedNotesSection = section("Obsidian graph notes", `<p>These generated Markdown notes power Obsidian's <strong>native (ribbon) graph</strong>. The plugin's own Graph page reads SQLite live; the native graph only sees Markdown files and wiki links, so it needs these notes. SQLite stays the source of truth \u2014 editing a generated note never changes memory.</p>
+      const generatedNotesSection = section("Native Obsidian graph", `<p>These generated Markdown notes power Obsidian's <strong>native (ribbon) graph</strong>. The plugin's own Graph page reads SQLite live; the native graph only sees Markdown files and wiki links, so it needs these notes. SQLite stays the source of truth \u2014 editing a generated note never changes memory.</p>
         <p class="generated-sync-status">${syncStatusLine}</p>${syncWarn}
         <form data-action="sync-graph"><button type="submit">Sync Obsidian graph notes</button></form>
         <p data-loading-message hidden>Generating Markdown graph notes\u2026</p><div data-form-result></div>`, "generated-notes-section");
-      const body = `${readyStatus}${startupProblem}${llmBanner}<div class="metric-grid"><span>${view.totalTranscriptCount} total transcripts</span>${routeButton(routeHref.reviewQueue(), `${view.reviewCount} review items`, "route-action metric-action")}<span>${view.weakCount} weak/review</span><span>${view.conflictCount} conflicts</span><span>${view.brokenCount} broken pointers</span></div>
-        ${view.health ? healthView(view.health) : ""}
+      const vaultStatus = section("Vault status", `<p><strong>SQLite is the source of truth.</strong> Imported raw transcript snapshots are immutable; generated Markdown is a disposable view layer for Obsidian's native graph.</p>
+        <div class="metric-grid"><span>${view.totalTranscriptCount} transcripts</span>${routeButton(routeHref.reviewQueue(), `${view.reviewCount} review items`, "route-action metric-action")}<span>${view.weakCount} weak/review</span><span>${view.conflictCount} conflicts</span><span>${view.brokenCount} broken pointers</span></div>
+        ${view.health ? healthView(view.health) : ""}`, "vault-status-section");
+      const dbPath = view.health?.databasePath;
+      const mcpCard = section("Use Claude Desktop (MCP)", `<p><strong>Claude Desktop is the recommended chat UI.</strong> It connects to this vault through a local MCP server and answers from the same evidence-first pipeline. This plugin is your evidence viewer, graph browser, transcript/memory navigator, and review/control panel.</p>
+        ${dbPath ? `<p>Point Claude Desktop's <code>TMV_DB_PATH</code> at this vault's database:</p><p class="mcp-db-path"><code>${escapeHtml(dbPath)}</code></p>` : `<p><code>TMV_DB_PATH</code> will appear here once the plugin has initialized its database.</p>`}
+        <p>See <code>docs/MCP.md</code> for the full Claude Desktop / MCP setup. (Opening Claude Desktop is a manual step \u2014 there is no in-app launcher.)</p>`, "mcp-card");
+      const attention = view.attention ?? [];
+      const attentionSection = section("Evidence needing attention", attention.length ? attention.map((item) => `<article class="attention-item">${trustBadge(item.trustState)} <a href="${escapeHtml(item.href)}">${escapeHtml(item.title)}</a> <small>${escapeHtml(item.detail)}</small></article>`).join("") : emptyState("Nothing needs attention", "No weak, broken, or conflicting evidence right now."), "attention-section");
+      const recentAnswers = section("Recent answers", view.recentAnswers.map((item) => `<article>${trustBadge(item.confidence)} <a href="${escapeHtml(routeHref.answer(item.id))}">${escapeHtml(item.question)}</a></article>`).join("") || emptyState("No answers yet", "Ask in Claude Desktop, or use the Ask AI page under Advanced.", { href: routeHref.ask(), label: "Ask AI" }), "recent-answers-section");
+      const reviewSection = section("Review queue / conflicts", `<p>${view.reviewCount} open review item(s)${view.conflictCount ? `, including ${view.conflictCount} conflict(s)` : ""}.</p>${links([{ href: routeHref.reviewQueue(), label: "Open review queue" }])}`, "review-summary-section");
+      const transcriptsSection = section("Transcripts", `${view.transcripts.map((item) => `<article><a href="${escapeHtml(routeHref.transcript(item.id))}">${escapeHtml(item.title)}</a> \xB7 ${item.spanCount} spans</article>`).join("") || emptyState("No transcripts", "Import a transcript to begin.")}
+        ${links([{ href: routeHref.upload(), label: "Upload transcript" }])}`, "transcripts-section");
+      const searchSection = section("Search vault", `<p>Find transcripts, spans, memory objects, answers, and evidence.</p>${links([{ href: routeHref.search(), label: "Search vault" }])}`, "search-section");
+      const body = `${readyStatus}${startupProblem}${llmBanner}
+        ${vaultStatus}
+        ${mcpCard}
+        ${attentionSection}
+        ${recentAnswers}
+        ${reviewSection}
         ${generatedNotesSection}
-        ${section("Quick actions", links([{ href: routeHref.upload(), label: "Upload transcript" }, { href: routeHref.ask(), label: "Ask AI" }, { href: routeHref.search(), label: "Search vault" }, { href: routeHref.graph(), label: "Open graph" }, { href: routeHref.reviewQueue(), label: "Review queue" }]), "quick-actions")}
-        ${section("Transcripts", view.transcripts.map((item) => `<article><a href="${escapeHtml(routeHref.transcript(item.id))}">${escapeHtml(item.title)}</a> \xB7 ${item.spanCount} spans</article>`).join("") || emptyState("No transcripts", "Upload a transcript to begin.", { href: routeHref.upload(), label: "Upload transcript" }), "transcripts-section")}
-        ${section("Recent Ask AI answers", view.recentAnswers.map((item) => `<article>${trustBadge(item.confidence)} <a href="${escapeHtml(routeHref.answer(item.id))}">${escapeHtml(item.question)}</a></article>`).join("") || emptyState("No answers", "Ask a question after adding evidence.", { href: routeHref.ask(), label: "Ask AI" }), "recent-answers-section")}`;
+        ${transcriptsSection}
+        ${searchSection}`;
       return { title: "Dashboard", html: appShell("Dashboard", body) };
     }
     case "upload":
@@ -5235,13 +5256,14 @@ async function renderPage(context) {
     }
     case "ask": {
       const llm = await api.getLlmStatus();
+      const claudeDesktopBanner = `<aside class="immutable-notice claude-desktop-banner">Claude Desktop (via MCP) is the recommended chat UI; this page runs the same evidence-grounded, LLM-required pipeline.</aside>`;
       if (llm.required && !llm.ready) {
-        return { title: "Ask AI", html: appShell("Ask AI", `<section class="trust-warning ask-setup-required">${trustBadge("no_evidence", "LLM required")}<h2>Set up an LLM to use Ask AI</h2>
+        return { title: "Ask AI", html: appShell("Ask AI", `${claudeDesktopBanner}<section class="trust-warning ask-setup-required">${trustBadge("no_evidence", "LLM required")}<h2>Set up an LLM to use Ask AI</h2>
           <p>Ask AI answers only from your transcripts, with citations \u2014 but it needs a configured external LLM to generate the answer. Add a provider, model, and API key in the plugin Settings.</p>
           ${links([{ href: routeHref.dashboard(), label: "Open dashboard" }])}</section>`) };
       }
       const transcripts = (await api.listTranscripts()).slice(0, 100);
-      return { title: "Ask AI", html: appShell("Ask AI", `<aside class="immutable-notice">Ask AI retrieves and scores evidence before answering. Weak or conflicting evidence remains visibly labeled.</aside>
+      return { title: "Ask AI", html: appShell("Ask AI", `${claudeDesktopBanner}<aside class="immutable-notice">Ask AI retrieves and scores evidence before answering. Weak or conflicting evidence remains visibly labeled.</aside>
         <form data-action="ask"><label>Question <textarea name="question" required></textarea></label>
         <label>Optional transcript filter <select name="transcriptIds" multiple>${transcripts.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.title)}</option>`).join("")}</select></label>
         <button type="submit">Retrieve, score, and answer</button></form>

@@ -3603,6 +3603,8 @@ function createSqliteFrontendApi(db, options = {}) {
     async getDashboard() {
       const answers = db.prepare("SELECT id,question,evidence_confidence,created_at FROM ask_ai_runs ORDER BY created_at DESC,id LIMIT 8").all();
       const review = reviewItems(db);
+      const severityRank = { high: 3, medium: 2, low: 1 };
+      const attention = review.filter((item) => item.trustState === "weak" || item.trustState === "broken" || item.trustState === "conflicting").sort((a, b) => severityRank[b.severity] - severityRank[a.severity]).slice(0, 5);
       return {
         totalTranscriptCount: transcriptList(db).length,
         transcripts: transcriptList(db).slice(0, 10),
@@ -3614,7 +3616,8 @@ function createSqliteFrontendApi(db, options = {}) {
         health: options.health,
         llmRequired: !!options.llmRequired,
         llmReady: options.getLlmReady ? options.getLlmReady() : !options.llmRequired,
-        generatedSync: generatedSyncStatus(db)
+        generatedSync: generatedSyncStatus(db),
+        attention
       };
     },
     async listTranscripts() {

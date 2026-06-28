@@ -74,11 +74,16 @@ describe("migration packaging and first-run health", () => {
       'aria-label="Primary"',
       "<h1>Dashboard</h1>",
       'class="immutable-notice status-banner"',
+      'class="vault-section vault-status-section"',
       'class="metric-grid"',
       'class="vault-section database-health-section"',
-      'class="vault-section quick-actions"',
-      'class="vault-section transcripts-section"',
+      'class="vault-section mcp-card"',
+      'class="vault-section attention-section"',
       'class="vault-section recent-answers-section"',
+      'class="vault-section review-summary-section"',
+      'class="vault-section generated-notes-section"',
+      'class="vault-section transcripts-section"',
+      'class="vault-section search-section"',
     ];
     for (let index = 1; index < orderedContent.length; index += 1) {
       expect(html.indexOf(orderedContent[index])).toBeGreaterThan(html.indexOf(orderedContent[index - 1]));
