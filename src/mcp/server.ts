@@ -50,7 +50,7 @@ function main(): void {
       // No transport injected -> ExternalLlmProvider uses its default Node fetch HTTP transport.
       getSynthesis: () => askAiSynthesisFromSettings(config.settings),
     });
-    tools = createVaultTools({ db, api });
+    tools = createVaultTools({ db, api, obsidianVault: config.obsidianVault });
   } catch (error) {
     log(`Failed to open database at TMV_DB_PATH: ${error instanceof Error ? error.message : "unknown error"}`);
     process.exit(1);

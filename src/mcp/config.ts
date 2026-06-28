@@ -15,6 +15,8 @@ export interface McpConfig {
   settings: TranscriptMemorySettings;
   /** True when the env fully configures an external LLM. */
   llmReady: boolean;
+  /** Optional Obsidian vault name for external obsidian:// deep links (omit -> opens the active vault). */
+  obsidianVault?: string;
 }
 
 export class McpConfigError extends Error {
@@ -56,5 +58,6 @@ export function loadMcpConfig(env: Record<string, string | undefined> = process.
     migrationDirectory: trimmed(env.TMV_MIGRATIONS_DIR),
     settings,
     llmReady: isLlmConfigured(settings),
+    obsidianVault: trimmed(env.TMV_OBSIDIAN_VAULT),
   };
 }

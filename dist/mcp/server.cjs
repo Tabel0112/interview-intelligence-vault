@@ -629,6 +629,13 @@ function createRepositories(db) {
 }
 
 // src/frontend/router.ts
+var OBSIDIAN_PROTOCOL_ACTION = "transcript-memory-vault";
+function toObsidianUri(mvUri, opts = {}) {
+  const parts = [`route=${encodeURIComponent(mvUri)}`];
+  const vault = opts.vault?.trim();
+  if (vault) parts.push(`vault=${encodeURIComponent(vault)}`);
+  return `obsidian://${opts.action ?? OBSIDIAN_PROTOCOL_ACTION}?${parts.join("&")}`;
+}
 var routeHref = {
   dashboard: () => "mv://dashboard",
   upload: () => "mv://upload",
@@ -3976,7 +3983,8 @@ function loadMcpConfig(env = process.env) {
     dbPath,
     migrationDirectory: trimmed(env.TMV_MIGRATIONS_DIR),
     settings,
-    llmReady: isLlmConfigured(settings)
+    llmReady: isLlmConfigured(settings),
+    obsidianVault: trimmed(env.TMV_OBSIDIAN_VAULT)
   };
 }
 
@@ -3992,25 +4000,38 @@ var evidenceUri = (evidencePointerId) => routeHref.evidence(evidencePointerId);
 var claimWarning = (support) => support === "weakly_supported" ? "Supported only by weak/indirect evidence \u2014 treat cautiously." : support === "conflicting" ? "Sources conflict; both sides are preserved below." : support === "unsupported" ? "Not supported by the cited evidence." : void 0;
 function toAnswerBundle(response, options = {}) {
   const broken = new Set(options.brokenCitationIds ?? []);
-  const citations = response.citations.map((c) => ({
-    citation_id: c.id,
-    label: c.label,
-    evidence_pointer_id: c.evidencePointerId,
-    source_pointer_id: c.sourcePointerId,
-    quote_preview: clip(c.quotePreview),
-    source_span_uri: sourceSpanUri(c.transcriptId, c.spanId),
-    evidence_uri: evidenceUri(c.evidencePointerId),
-    obsidian_internal_uri: c.clickbackUri,
-    ...broken.has(c.id) ? { broken: true } : {}
-  }));
-  const evidence = response.evidence.map((e) => ({
-    evidence_pointer_id: e.evidencePointerId,
-    score: e.evidenceScore,
-    confidence: e.evidenceConfidence,
-    quote_preview: clip(e.quotePreview),
-    source_span_uri: sourceSpanUri(e.transcriptId, e.spanId),
-    evidence_uri: evidenceUri(e.evidencePointerId)
-  }));
+  const ext = (mvUri) => toObsidianUri(mvUri, { vault: options.obsidianVault });
+  const citations = response.citations.map((c) => {
+    const spanUri = sourceSpanUri(c.transcriptId, c.spanId);
+    const evUri = evidenceUri(c.evidencePointerId);
+    return {
+      citation_id: c.id,
+      label: c.label,
+      evidence_pointer_id: c.evidencePointerId,
+      source_pointer_id: c.sourcePointerId,
+      quote_preview: clip(c.quotePreview),
+      source_span_uri: spanUri,
+      evidence_uri: evUri,
+      obsidian_internal_uri: c.clickbackUri,
+      obsidian_uri: ext(evUri),
+      source_span_obsidian_uri: ext(spanUri),
+      ...broken.has(c.id) ? { broken: true } : {}
+    };
+  });
+  const evidence = response.evidence.map((e) => {
+    const spanUri = sourceSpanUri(e.transcriptId, e.spanId);
+    const evUri = evidenceUri(e.evidencePointerId);
+    return {
+      evidence_pointer_id: e.evidencePointerId,
+      score: e.evidenceScore,
+      confidence: e.evidenceConfidence,
+      obsidian_uri: ext(evUri),
+      source_span_obsidian_uri: ext(spanUri),
+      quote_preview: clip(e.quotePreview),
+      source_span_uri: spanUri,
+      evidence_uri: evUri
+    };
+  });
   const claims = response.claims.map((claim) => ({
     claim_id: claim.id,
     text: claim.text,
@@ -4047,7 +4068,16 @@ function toAnswerBundle(response, options = {}) {
     warnings,
     conflicts,
     followups: response.suggestedFollowups,
-    links: { answer_uri: routeHref.answer(response.id), evidence_uris: evidenceUris, source_span_uris: sourceSpanUris, graph_uri: routeHref.graph() },
+    links: {
+      answer_uri: routeHref.answer(response.id),
+      evidence_uris: evidenceUris,
+      source_span_uris: sourceSpanUris,
+      graph_uri: routeHref.graph(),
+      answer_obsidian_uri: ext(routeHref.answer(response.id)),
+      graph_obsidian_uri: ext(routeHref.graph()),
+      evidence_obsidian_uris: evidenceUris.map(ext),
+      source_span_obsidian_uris: sourceSpanUris.map(ext)
+    },
     created_at: response.createdAt,
     pipeline: {
       answer_mode: response.queryUnderstanding.answerMode,
@@ -4096,6 +4126,7 @@ var answerSummary = (row) => ({
 });
 function createVaultTools(deps) {
   const { db, api } = deps;
+  const obsidian = (mvUri) => toObsidianUri(mvUri, { vault: deps.obsidianVault });
   const definitions = [
     {
       name: "ask_vault",
@@ -4117,7 +4148,7 @@ function createVaultTools(deps) {
         const maxEvidence = args.max_evidence === void 0 ? void 0 : clampLimit(args.max_evidence, 8, 50);
         try {
           const answer = await api.ask(question, { transcriptIds, maxEvidence });
-          return { ok: true, answer_bundle: toAnswerBundle(answer) };
+          return { ok: true, answer_bundle: toAnswerBundle(answer, { obsidianVault: deps.obsidianVault }) };
         } catch (error) {
           if (error instanceof SynthesisSetupRequiredError) return { ok: false, state: "setup_required", message: error.message };
           if (error instanceof SynthesisFailedError) return { ok: false, state: "llm_failed", message: error.message };
@@ -4132,7 +4163,7 @@ function createVaultTools(deps) {
       handler: async (raw) => {
         const view = await api.getAnswer(requireString(asRecord(raw), "answer_id"));
         if (!view) return { ok: false, state: "not_found" };
-        return { ok: true, answer_bundle: toAnswerBundle(view, { brokenCitationIds: view.brokenCitationIds }) };
+        return { ok: true, answer_bundle: toAnswerBundle(view, { brokenCitationIds: view.brokenCitationIds, obsidianVault: deps.obsidianVault }) };
       }
     },
     {
@@ -4169,17 +4200,22 @@ function createVaultTools(deps) {
         const cards = candidates.map((candidate) => {
           const resolved = resolveEvidencePointer(db, candidate.targetId);
           if (!resolved.ok) {
-            return { evidence_pointer_id: candidate.targetId, score: candidate.finalScore, confidence: "broken", quote_preview: preview2(candidate.quote ?? candidate.textPreview), source_span_uri: null, evidence_uri: routeHref.evidence(candidate.targetId), warnings: [`broken: ${resolved.reason}`] };
+            const brokenEvUri = routeHref.evidence(candidate.targetId);
+            return { evidence_pointer_id: candidate.targetId, score: candidate.finalScore, confidence: "broken", quote_preview: preview2(candidate.quote ?? candidate.textPreview), source_span_uri: null, source_span_obsidian_uri: null, evidence_uri: brokenEvUri, obsidian_uri: obsidian(brokenEvUri), warnings: [`broken: ${resolved.reason}`] };
           }
           const e = resolved.evidence;
+          const spanUri = routeHref.transcript(e.transcript_id, e.span_id);
+          const evUri = routeHref.evidence(e.evidence_pointer_id);
           return {
             evidence_pointer_id: e.evidence_pointer_id,
             source_pointer_id: e.source_pointer_uri,
             score: candidate.finalScore,
             confidence: e.evidence_strength,
             quote_preview: preview2(resolved.spanText || candidate.quote),
-            source_span_uri: routeHref.transcript(e.transcript_id, e.span_id),
-            evidence_uri: routeHref.evidence(e.evidence_pointer_id),
+            source_span_uri: spanUri,
+            source_span_obsidian_uri: obsidian(spanUri),
+            evidence_uri: evUri,
+            obsidian_uri: obsidian(evUri),
             warnings: e.evidence_strength === "weak" ? ["weak evidence \u2014 do not treat as strong truth"] : []
           };
         });
@@ -4206,14 +4242,21 @@ function createVaultTools(deps) {
             confidence: view.memory.confidence,
             user_corrected: view.memory.userCorrected,
             memory_uri: routeHref.memory(view.memory.id),
-            evidence: view.evidence.map((e) => ({
-              evidence_pointer_id: e.id,
-              confidence: e.strength,
-              quote_preview: preview2(e.quotePreview || e.spanText),
-              source_span_uri: routeHref.transcript(e.transcriptId, e.spanId),
-              evidence_uri: routeHref.evidence(e.id),
-              broken: Boolean(e.brokenReason)
-            })),
+            memory_obsidian_uri: obsidian(routeHref.memory(view.memory.id)),
+            evidence: view.evidence.map((e) => {
+              const spanUri = routeHref.transcript(e.transcriptId, e.spanId);
+              const evUri = routeHref.evidence(e.id);
+              return {
+                evidence_pointer_id: e.id,
+                confidence: e.strength,
+                quote_preview: preview2(e.quotePreview || e.spanText),
+                source_span_uri: spanUri,
+                source_span_obsidian_uri: obsidian(spanUri),
+                evidence_uri: evUri,
+                obsidian_uri: obsidian(evUri),
+                broken: Boolean(e.brokenReason)
+              };
+            }),
             note: "Memory object text is not evidence on its own; rely on the linked evidence pointers."
           }
         };
@@ -4230,19 +4273,26 @@ function createVaultTools(deps) {
         const all = createConflictRepository(db).listActiveConflicts();
         const matched = (topic ? all.filter((c) => `${c.summary} ${c.explanation}`.toLowerCase().includes(topic)) : all).slice(0, limit);
         return {
-          conflicts: matched.map((c) => ({
-            conflict_id: c.id,
-            kind: c.kind,
-            status: c.status,
-            summary: c.summary,
-            explanation: preview2(c.explanation, 500),
-            trust_state: "conflicting",
-            sides: [
-              { target_type: c.leftTargetType, target_id: c.leftTargetId },
-              { target_type: c.rightTargetType, target_id: c.rightTargetId }
-            ],
-            evidence_uris: [...new Set(c.evidenceLinks.map((link) => routeHref.evidence(link.evidencePointerId)))]
-          }))
+          conflicts: matched.map((c) => {
+            const conflictUri = routeHref.review(`conflict:${c.id}`);
+            const evidenceUris = [...new Set(c.evidenceLinks.map((link) => routeHref.evidence(link.evidencePointerId)))];
+            return {
+              conflict_id: c.id,
+              kind: c.kind,
+              status: c.status,
+              summary: c.summary,
+              explanation: preview2(c.explanation, 500),
+              trust_state: "conflicting",
+              sides: [
+                { target_type: c.leftTargetType, target_id: c.leftTargetId },
+                { target_type: c.rightTargetType, target_id: c.rightTargetId }
+              ],
+              conflict_uri: conflictUri,
+              conflict_obsidian_uri: obsidian(conflictUri),
+              evidence_uris: evidenceUris,
+              evidence_obsidian_uris: evidenceUris.map(obsidian)
+            };
+          })
         };
       }
     }
@@ -4286,7 +4336,7 @@ function main() {
       // No transport injected -> ExternalLlmProvider uses its default Node fetch HTTP transport.
       getSynthesis: () => askAiSynthesisFromSettings(config.settings)
     });
-    tools = createVaultTools({ db, api });
+    tools = createVaultTools({ db, api, obsidianVault: config.obsidianVault });
   } catch (error) {
     log(`Failed to open database at TMV_DB_PATH: ${error instanceof Error ? error.message : "unknown error"}`);
     process.exit(1);

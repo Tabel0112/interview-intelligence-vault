@@ -13,7 +13,7 @@ import { SynthesisFailedError, SynthesisSetupRequiredError } from "../ask-ai/ind
 import { createConflictRepository } from "../conflicts/index.js";
 import type { SqliteDatabase } from "../db/connection.js";
 import type { FrontendApi } from "../frontend/index.js";
-import { routeHref } from "../frontend/router.js";
+import { routeHref, toObsidianUri } from "../frontend/router.js";
 import { resolveEvidencePointer } from "../provenance/index.js";
 import { searchEvidencePointers } from "../retrieval/index.js";
 import { toAnswerBundle } from "./answerBundle.js";
@@ -65,10 +65,13 @@ const answerSummary = (row: AnswerRunRow) => ({
 export interface VaultToolDeps {
   db: SqliteDatabase;
   api: FrontendApi;
+  /** Optional Obsidian vault name for external obsidian:// deep links (omit -> active vault). */
+  obsidianVault?: string;
 }
 
 export function createVaultTools(deps: VaultToolDeps): { definitions: McpToolDefinition[]; call: (name: string, args: unknown) => Promise<unknown> } {
   const { db, api } = deps;
+  const obsidian = (mvUri: string) => toObsidianUri(mvUri, { vault: deps.obsidianVault });
 
   const definitions: McpToolDefinition[] = [
     {
@@ -92,7 +95,7 @@ export function createVaultTools(deps: VaultToolDeps): { definitions: McpToolDef
         const maxEvidence = args.max_evidence === undefined ? undefined : clampLimit(args.max_evidence, 8, 50);
         try {
           const answer = await api.ask(question, { transcriptIds, maxEvidence });
-          return { ok: true, answer_bundle: toAnswerBundle(answer) };
+          return { ok: true, answer_bundle: toAnswerBundle(answer, { obsidianVault: deps.obsidianVault }) };
         } catch (error) {
           if (error instanceof SynthesisSetupRequiredError) return { ok: false, state: "setup_required", message: error.message };
           if (error instanceof SynthesisFailedError) return { ok: false, state: "llm_failed", message: error.message };
@@ -107,7 +110,7 @@ export function createVaultTools(deps: VaultToolDeps): { definitions: McpToolDef
       handler: async (raw) => {
         const view = await api.getAnswer(requireString(asRecord(raw), "answer_id"));
         if (!view) return { ok: false, state: "not_found" };
-        return { ok: true, answer_bundle: toAnswerBundle(view, { brokenCitationIds: view.brokenCitationIds }) };
+        return { ok: true, answer_bundle: toAnswerBundle(view, { brokenCitationIds: view.brokenCitationIds, obsidianVault: deps.obsidianVault }) };
       },
     },
     {
@@ -144,17 +147,22 @@ export function createVaultTools(deps: VaultToolDeps): { definitions: McpToolDef
         const cards = candidates.map((candidate) => {
           const resolved = resolveEvidencePointer(db, candidate.targetId);
           if (!resolved.ok) {
-            return { evidence_pointer_id: candidate.targetId, score: candidate.finalScore, confidence: "broken", quote_preview: preview(candidate.quote ?? candidate.textPreview), source_span_uri: null, evidence_uri: routeHref.evidence(candidate.targetId), warnings: [`broken: ${resolved.reason}`] };
+            const brokenEvUri = routeHref.evidence(candidate.targetId);
+            return { evidence_pointer_id: candidate.targetId, score: candidate.finalScore, confidence: "broken", quote_preview: preview(candidate.quote ?? candidate.textPreview), source_span_uri: null, source_span_obsidian_uri: null, evidence_uri: brokenEvUri, obsidian_uri: obsidian(brokenEvUri), warnings: [`broken: ${resolved.reason}`] };
           }
           const e = resolved.evidence;
+          const spanUri = routeHref.transcript(e.transcript_id, e.span_id);
+          const evUri = routeHref.evidence(e.evidence_pointer_id);
           return {
             evidence_pointer_id: e.evidence_pointer_id,
             source_pointer_id: e.source_pointer_uri,
             score: candidate.finalScore,
             confidence: e.evidence_strength,
             quote_preview: preview(resolved.spanText || candidate.quote),
-            source_span_uri: routeHref.transcript(e.transcript_id, e.span_id),
-            evidence_uri: routeHref.evidence(e.evidence_pointer_id),
+            source_span_uri: spanUri,
+            source_span_obsidian_uri: obsidian(spanUri),
+            evidence_uri: evUri,
+            obsidian_uri: obsidian(evUri),
             warnings: e.evidence_strength === "weak" ? ["weak evidence — do not treat as strong truth"] : [],
           };
         });
@@ -181,14 +189,21 @@ export function createVaultTools(deps: VaultToolDeps): { definitions: McpToolDef
             confidence: view.memory.confidence,
             user_corrected: view.memory.userCorrected,
             memory_uri: routeHref.memory(view.memory.id),
-            evidence: view.evidence.map((e) => ({
-              evidence_pointer_id: e.id,
-              confidence: e.strength,
-              quote_preview: preview(e.quotePreview || e.spanText),
-              source_span_uri: routeHref.transcript(e.transcriptId, e.spanId),
-              evidence_uri: routeHref.evidence(e.id),
-              broken: Boolean(e.brokenReason),
-            })),
+            memory_obsidian_uri: obsidian(routeHref.memory(view.memory.id)),
+            evidence: view.evidence.map((e) => {
+              const spanUri = routeHref.transcript(e.transcriptId, e.spanId);
+              const evUri = routeHref.evidence(e.id);
+              return {
+                evidence_pointer_id: e.id,
+                confidence: e.strength,
+                quote_preview: preview(e.quotePreview || e.spanText),
+                source_span_uri: spanUri,
+                source_span_obsidian_uri: obsidian(spanUri),
+                evidence_uri: evUri,
+                obsidian_uri: obsidian(evUri),
+                broken: Boolean(e.brokenReason),
+              };
+            }),
             note: "Memory object text is not evidence on its own; rely on the linked evidence pointers.",
           },
         };
@@ -205,19 +220,26 @@ export function createVaultTools(deps: VaultToolDeps): { definitions: McpToolDef
         const all = createConflictRepository(db).listActiveConflicts();
         const matched = (topic ? all.filter((c) => `${c.summary} ${c.explanation}`.toLowerCase().includes(topic)) : all).slice(0, limit);
         return {
-          conflicts: matched.map((c) => ({
-            conflict_id: c.id,
-            kind: c.kind,
-            status: c.status,
-            summary: c.summary,
-            explanation: preview(c.explanation, 500),
-            trust_state: "conflicting",
-            sides: [
-              { target_type: c.leftTargetType, target_id: c.leftTargetId },
-              { target_type: c.rightTargetType, target_id: c.rightTargetId },
-            ],
-            evidence_uris: [...new Set(c.evidenceLinks.map((link) => routeHref.evidence(link.evidencePointerId)))],
-          })),
+          conflicts: matched.map((c) => {
+            const conflictUri = routeHref.review(`conflict:${c.id}`);
+            const evidenceUris = [...new Set(c.evidenceLinks.map((link) => routeHref.evidence(link.evidencePointerId)))];
+            return {
+              conflict_id: c.id,
+              kind: c.kind,
+              status: c.status,
+              summary: c.summary,
+              explanation: preview(c.explanation, 500),
+              trust_state: "conflicting",
+              sides: [
+                { target_type: c.leftTargetType, target_id: c.leftTargetId },
+                { target_type: c.rightTargetType, target_id: c.rightTargetId },
+              ],
+              conflict_uri: conflictUri,
+              conflict_obsidian_uri: obsidian(conflictUri),
+              evidence_uris: evidenceUris,
+              evidence_obsidian_uris: evidenceUris.map(obsidian),
+            };
+          }),
         };
       },
     },

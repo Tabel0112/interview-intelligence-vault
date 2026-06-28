@@ -3,7 +3,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { openDatabase, type SqliteDatabase } from "../db/index.js";
 import { validateMigrationPackage } from "../db/migrations/index.js";
-import type { FrontendApi } from "../frontend/index.js";
+import { navigateInternal, obsidianRouteFromProtocol, OBSIDIAN_PROTOCOL_ACTION, type FrontendApi } from "../frontend/index.js";
 import { createObsidianNavigation } from "./ObsidianNavigation.js";
 import { nativeBindingLoadError, resolveNativeBinding } from "./nativeBindings.js";
 import { TranscriptMemorySettingsTab } from "./SettingsTab.js";
@@ -40,6 +40,14 @@ export default class TranscriptMemoryVaultPlugin extends Plugin {
     this.addCommand({ id: OBSIDIAN_REINDEX_COMMAND.id, name: OBSIDIAN_REINDEX_COMMAND.name, callback: () => void this.rebuildEmbeddingIndex() });
     this.addCommand({ id: "run-ai-extraction", name: "Run AI extraction for transcripts missing it", callback: () => void this.runPendingExtraction() });
     this.addRibbonIcon(OBSIDIAN_RIBBON.icon, OBSIDIAN_RIBBON.title, () => void navigation.openDashboard());
+    // External deep links (e.g. from Claude Desktop): obsidian://transcript-memory-vault?route=<mv://...>.
+    // Navigation only — the route is allowlist-validated to a known mv:// view, then opened via the existing
+    // navigation path. Invalid links show a readable Notice and never navigate or mutate data.
+    this.registerObsidianProtocolHandler(OBSIDIAN_PROTOCOL_ACTION, (params) => {
+      const route = obsidianRouteFromProtocol(params);
+      if (route) void navigateInternal(navigation, route);
+      else new Notice("Transcript Memory Vault: could not open that link (unrecognized or invalid route).");
+    });
     this.addSettingTab(new TranscriptMemorySettingsTab(this.app, this, () => this.health, navigation, () => this.pluginSettings, (next) => this.saveSettings(next)));
 
     const adapter = this.app.vault.adapter;

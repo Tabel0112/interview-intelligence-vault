@@ -7,7 +7,7 @@
 // previews are length-limited. `pipeline` carries only non-secret synthesis metadata (mode/provider/model).
 
 import type { AskAIResponse } from "../ask-ai/index.js";
-import { routeHref } from "../frontend/router.js";
+import { routeHref, toObsidianUri } from "../frontend/router.js";
 
 export const ANSWER_BUNDLE_VERSION = "mcp-answerbundle-v1";
 const QUOTE_PREVIEW_LIMIT = 280;
@@ -36,12 +36,17 @@ export interface AnswerBundleCitation {
   source_span_uri: string;
   evidence_uri: string;
   obsidian_internal_uri?: string;
+  /** OS-openable external deep links (open Obsidian to the evidence view / transcript span). */
+  obsidian_uri?: string;
+  source_span_obsidian_uri?: string;
   broken?: boolean;
 }
 export interface AnswerBundleEvidence {
   evidence_pointer_id: string;
   score: number;
   confidence: string;
+  obsidian_uri?: string;
+  source_span_obsidian_uri?: string;
   quote_preview: string;
   source_span_uri: string;
   evidence_uri: string;
@@ -56,6 +61,11 @@ export interface AnswerBundleLinks {
   evidence_uris: string[];
   source_span_uris: string[];
   graph_uri?: string;
+  /** OS-openable external deep links (open Obsidian to the matching view). */
+  answer_obsidian_uri?: string;
+  graph_obsidian_uri?: string;
+  evidence_obsidian_uris?: string[];
+  source_span_obsidian_uris?: string[];
 }
 export interface AnswerBundlePipeline {
   answer_mode: string;
@@ -89,27 +99,41 @@ const claimWarning = (support: string): string | undefined =>
     : support === "conflicting" ? "Sources conflict; both sides are preserved below."
       : support === "unsupported" ? "Not supported by the cited evidence." : undefined;
 
-export function toAnswerBundle(response: AskAIResponse, options: { brokenCitationIds?: string[] } = {}): AnswerBundle {
+export function toAnswerBundle(response: AskAIResponse, options: { brokenCitationIds?: string[]; obsidianVault?: string } = {}): AnswerBundle {
   const broken = new Set(options.brokenCitationIds ?? []);
-  const citations: AnswerBundleCitation[] = response.citations.map((c) => ({
-    citation_id: c.id,
-    label: c.label,
-    evidence_pointer_id: c.evidencePointerId,
-    source_pointer_id: c.sourcePointerId,
-    quote_preview: clip(c.quotePreview),
-    source_span_uri: sourceSpanUri(c.transcriptId, c.spanId),
-    evidence_uri: evidenceUri(c.evidencePointerId),
-    obsidian_internal_uri: c.clickbackUri,
-    ...(broken.has(c.id) ? { broken: true } : {}),
-  }));
-  const evidence: AnswerBundleEvidence[] = response.evidence.map((e) => ({
-    evidence_pointer_id: e.evidencePointerId,
-    score: e.evidenceScore,
-    confidence: e.evidenceConfidence,
-    quote_preview: clip(e.quotePreview),
-    source_span_uri: sourceSpanUri(e.transcriptId, e.spanId),
-    evidence_uri: evidenceUri(e.evidencePointerId),
-  }));
+  // External deep link from a canonical mv:// route. Navigation only; no secrets are ever in a route.
+  const ext = (mvUri: string) => toObsidianUri(mvUri, { vault: options.obsidianVault });
+  const citations: AnswerBundleCitation[] = response.citations.map((c) => {
+    const spanUri = sourceSpanUri(c.transcriptId, c.spanId);
+    const evUri = evidenceUri(c.evidencePointerId);
+    return {
+      citation_id: c.id,
+      label: c.label,
+      evidence_pointer_id: c.evidencePointerId,
+      source_pointer_id: c.sourcePointerId,
+      quote_preview: clip(c.quotePreview),
+      source_span_uri: spanUri,
+      evidence_uri: evUri,
+      obsidian_internal_uri: c.clickbackUri,
+      obsidian_uri: ext(evUri),
+      source_span_obsidian_uri: ext(spanUri),
+      ...(broken.has(c.id) ? { broken: true } : {}),
+    };
+  });
+  const evidence: AnswerBundleEvidence[] = response.evidence.map((e) => {
+    const spanUri = sourceSpanUri(e.transcriptId, e.spanId);
+    const evUri = evidenceUri(e.evidencePointerId);
+    return {
+      evidence_pointer_id: e.evidencePointerId,
+      score: e.evidenceScore,
+      confidence: e.evidenceConfidence,
+      obsidian_uri: ext(evUri),
+      source_span_obsidian_uri: ext(spanUri),
+      quote_preview: clip(e.quotePreview),
+      source_span_uri: spanUri,
+      evidence_uri: evUri,
+    };
+  });
   const claims: AnswerBundleClaim[] = response.claims.map((claim) => ({
     claim_id: claim.id,
     text: claim.text,
@@ -150,7 +174,11 @@ export function toAnswerBundle(response: AskAIResponse, options: { brokenCitatio
     warnings,
     conflicts,
     followups: response.suggestedFollowups,
-    links: { answer_uri: routeHref.answer(response.id), evidence_uris: evidenceUris, source_span_uris: sourceSpanUris, graph_uri: routeHref.graph() },
+    links: {
+      answer_uri: routeHref.answer(response.id), evidence_uris: evidenceUris, source_span_uris: sourceSpanUris, graph_uri: routeHref.graph(),
+      answer_obsidian_uri: ext(routeHref.answer(response.id)), graph_obsidian_uri: ext(routeHref.graph()),
+      evidence_obsidian_uris: evidenceUris.map(ext), source_span_obsidian_uris: sourceSpanUris.map(ext),
+    },
     created_at: response.createdAt,
     pipeline: {
       answer_mode: response.queryUnderstanding.answerMode,

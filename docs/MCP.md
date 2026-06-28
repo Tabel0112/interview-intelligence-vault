@@ -26,9 +26,12 @@
 
 ### AnswerBundle (shape)
 
-`answer_id`, `question`, `answer_markdown`, `evidence_confidence`, `not_enough_evidence`, `claims[]` (`claim_id`, `text`, `kind`, `support_state`, `citation_ids`, `warning?`), `citations[]` (`citation_id`, `label`, `evidence_pointer_id`, `source_pointer_id?`, `quote_preview`, `source_span_uri`, `evidence_uri`, `obsidian_internal_uri?`, `broken?`), `evidence[]`, `warnings[]`, `conflicts[]`, `followups[]`, `links` (`answer_uri`, `evidence_uris`, `source_span_uris`, `graph_uri`), `created_at`, `pipeline` (answer mode, claim kinds, evidence confidence, version, non-secret synthesis mode/provider/model).
+`answer_id`, `question`, `answer_markdown`, `evidence_confidence`, `not_enough_evidence`, `claims[]` (`claim_id`, `text`, `kind`, `support_state`, `citation_ids`, `warning?`), `citations[]` (`citation_id`, `label`, `evidence_pointer_id`, `source_pointer_id?`, `quote_preview`, `source_span_uri`, `evidence_uri`, `obsidian_internal_uri?`, `obsidian_uri?`, `source_span_obsidian_uri?`, `broken?`), `evidence[]` (`…`, `obsidian_uri?`, `source_span_obsidian_uri?`), `warnings[]`, `conflicts[]`, `followups[]`, `links` (`answer_uri`, `evidence_uris`, `source_span_uris`, `graph_uri`, `answer_obsidian_uri?`, `graph_obsidian_uri?`, `evidence_obsidian_uris?`, `source_span_obsidian_uris?`), `created_at`, `pipeline` (answer mode, claim kinds, evidence confidence, version, non-secret synthesis mode/provider/model).
 
-Links are the existing stable `mv://…` plugin routes (e.g. `mv://answers/<id>`, `mv://evidence/<id>`, `mv://transcripts/<id>?span=<span>`). They open inside the Obsidian plugin's views. (An OS-level `obsidian://` deep-link handler is **not** in Phase 1.)
+Two parallel link families, both navigation-only:
+
+- **`mv://…` (canonical)** — the existing stable plugin routes (e.g. `mv://answers/<id>`, `mv://evidence/<id>`, `mv://transcripts/<id>?span=<span>`). These are the source-of-truth routes used inside the Obsidian plugin's views.
+- **`obsidian://…` (Phase 2 deep links)** — OS-openable wrappers of the *same* `mv://` route: `obsidian://transcript-memory-vault?route=<encodeURIComponent(mv://…)>[&vault=<TMV_OBSIDIAN_VAULT>]`. Clicking one in Claude Desktop opens (or focuses) Obsidian and navigates the plugin to that view. The handler is an **allowlist**: it decodes the `route`, requires an `mv://` URI that resolves to a known route, then calls the existing internal navigation — nothing else. Unknown/invalid/non-`mv://` links show a readable notice and never navigate. Deep links **carry no secrets** (only an `mv://` route + optional vault name) and **create/modify no data** — SQLite stays the source of truth and `mv://` stays canonical.
 
 **Never** in tool output or persisted metadata: API keys, Authorization headers, full prompts, provider objects, raw upstream errors, or full raw transcript text (quote previews are length-limited and provenance-backed).
 
@@ -52,6 +55,7 @@ The server runs as a **separate Node process over stdio**. It opens the SQLite d
 | `TMV_LLM_BASE_URL` | no | Override the OpenAI-compatible endpoint. |
 | `TMV_LLM_API_KEY` | for AI features | API key. **Never logged or persisted.** |
 | `TMV_MIGRATIONS_DIR` | no | Override the migrations directory (defaults to `dist/mcp/migrations`). |
+| `TMV_OBSIDIAN_VAULT` | no | Obsidian vault **name** to focus when an `obsidian://` deep link is opened. Omit to target the active vault. Navigation only; never a secret. |
 
 Without a fully configured LLM (`provider + model + key`), `ask_vault` returns `setup_required` — it never produces deterministic/local output. API keys are **not** read from Obsidian `data.json` in Phase 1.
 
@@ -69,12 +73,15 @@ Add to Claude Desktop's MCP config (e.g. `claude_desktop_config.json`):
         "TMV_DB_PATH": "/absolute/path/to/transcript-memory.sqlite",
         "TMV_LLM_PROVIDER": "openai",
         "TMV_LLM_MODEL": "gpt-4o-mini",
-        "TMV_LLM_API_KEY": "sk-..."
+        "TMV_LLM_API_KEY": "sk-...",
+        "TMV_OBSIDIAN_VAULT": "My Vault"
       }
     }
   }
 }
 ```
+
+`TMV_OBSIDIAN_VAULT` is optional — set it to the Obsidian vault name so the `obsidian://` deep links in answers open that specific vault; omit it to target whichever vault is active.
 
 ## Concurrency
 
@@ -88,6 +95,7 @@ Evidence-first retrieval; every final claim cites selected evidence and quote-an
 
 - No ask threads / conversation history (each `ask_vault` is an independent evidence-first question).
 - No write tools except `ask_vault` answer persistence (no upload/review/correction/delete/reprocess/reindex tools).
-- No Obsidian `obsidian://` protocol deep links yet (links are internal `mv://` routes).
 - No graph subgraph tool, no chat UI rewrite, no business/abstract prompt work, no query rewrite.
+
+**Phase 2 (now included):** OS-openable `obsidian://transcript-memory-vault?route=<mv://…>` deep links on the `AnswerBundle` (citations, evidence, answer/graph/evidence/source-span links) and on `search_evidence` / `get_memory_object` / `get_conflicts` (`get_conflicts` uses `mv://review/conflict:<id>`). These are **navigation-only** allowlisted wrappers of the canonical `mv://` routes; they add no new tools, no write paths, and no truth-bearing data.
 - The stdio server is a minimal, dependency-free JSON-RPC implementation; it can be swapped for the official `@modelcontextprotocol/sdk` later without changing the tool logic in `src/mcp/tools.ts`.

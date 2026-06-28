@@ -67,6 +67,19 @@ The dashboard and plugin settings display:
 
 Missing or incompatible native bindings, missing migrations, unsupported environments, and view-loading failures produce readable errors. Views and settings remain available to show health information. The plugin does not continue as if unavailable data were trustworthy, and it does not expose database reset/delete actions.
 
+## Deep Links (`obsidian://`)
+
+The plugin registers an OS-level protocol handler so other apps — primarily **Claude Desktop** via the MCP bridge (see `docs/MCP.md`) — can open Obsidian directly to a plugin view:
+
+```txt
+obsidian://transcript-memory-vault?route=<encodeURIComponent(mv://…)>[&vault=<vault name>]
+```
+
+- **What it does:** decodes `route`, validates it against an **allowlist** (it must be an `mv://` URI that resolves to a known plugin route — answer, evidence, transcript span, memory, graph, search, review, or a `mv://review/conflict:<id>` item), then opens that view through the plugin's existing internal navigation. The optional `vault` param (Obsidian's own) focuses a specific vault; omit it to use the active vault.
+- **Navigation only.** A deep link never creates or modifies data, never bypasses evidence validation, and carries no secrets — only an `mv://` route plus an optional vault name. It is exactly equivalent to clicking the corresponding in-app link.
+- **Failure mode:** an unrecognized, malformed, non-`mv://` (e.g. `file://`, `https://`), or unknown-route link shows a readable **Notice** and does **not** navigate. Nothing is opened or changed.
+- **Canonical routing is unchanged.** `mv://…` remains the source-of-truth route inside the plugin; `obsidian://…` is only an OS-openable wrapper around it. **SQLite remains the source of truth.**
+
 ## Providers, Keys, And Secret Safety
 
 The plugin is **LLM-required**: Ask AI and AI memory extraction need a configured external (OpenAI-compatible) LLM (provider + model + API key in plugin settings). Until one is configured, the dashboard and Ask AI show a **setup-required** state and AI features are disabled — the plugin does **not** generate deterministic/local output, and it does not silently fall back if the LLM fails (it shows a generic failure). Uploading a transcript still imports the immutable raw text; run the **Run AI extraction for transcripts missing it** command after configuring the LLM to extract memory from transcripts imported earlier. External **embeddings are optional** — retrieval uses a local keyword index until you configure and rebuild an embedding provider.

@@ -12,6 +12,7 @@ import { ExternalLlmProvider, type LlmTransport } from "../src/llm/index.js";
 import { createSqliteFrontendApi, type FrontendApi } from "../src/frontend/index.js";
 import { createVaultTools, McpInputError } from "../src/mcp/tools.js";
 import { loadMcpConfig, McpConfigError } from "../src/mcp/config.js";
+import type { AnswerBundle } from "../src/mcp/answerBundle.js";
 
 const RAW = "Alex: We decided to use SQLite as the source of truth for the vault.";
 const SECRET = "sk-mcp-PLANTED-SECRET-1234567890";
@@ -185,6 +186,78 @@ describe("MCP tools", () => {
     expect(Array.isArray(result.conflicts)).toBe(true); // none seeded -> []
   });
 
+  it("AnswerBundle carries parallel obsidian:// deep links (vault threaded) that decode back to the mv:// routes", async () => {
+    await seedEvidence();
+    const VAULT = "My Vault";
+    const t = createVaultTools({ db, api: makeApi(groundedTransport), obsidianVault: VAULT });
+    const result = await t.call("ask_vault", { question: QUESTION }) as { ok: boolean; answer_bundle: AnswerBundle };
+    expect(result.ok).toBe(true);
+    const b = result.answer_bundle;
+    // Every external link is an obsidian://transcript-memory-vault deep link whose decoded route is the
+    // SAME canonical mv:// URI (navigation only; no extra/secret data is smuggled in the link).
+    const decodeRoute = (obsidianUri: string | undefined): string | null => {
+      expect(obsidianUri).toBeTruthy();
+      const url = new URL(obsidianUri!);
+      expect(url.protocol).toBe("obsidian:");
+      expect(url.host).toBe("transcript-memory-vault");
+      expect(url.searchParams.get("vault")).toBe(VAULT);
+      return url.searchParams.get("route");
+    };
+    expect(b.citations.length).toBeGreaterThan(0);
+    for (const c of b.citations) {
+      expect(decodeRoute(c.obsidian_uri)).toBe(c.evidence_uri);
+      expect(decodeRoute(c.source_span_obsidian_uri)).toBe(c.source_span_uri);
+      expect(c.obsidian_internal_uri?.startsWith("mv://")).toBe(true); // existing clickback unchanged
+    }
+    for (const e of b.evidence) {
+      expect(decodeRoute(e.obsidian_uri)).toBe(e.evidence_uri);
+      expect(decodeRoute(e.source_span_obsidian_uri)).toBe(e.source_span_uri);
+    }
+    expect(decodeRoute(b.links.answer_obsidian_uri)).toBe(b.links.answer_uri);
+    expect(decodeRoute(b.links.graph_obsidian_uri)).toBe(b.links.graph_uri);
+    expect(b.links.evidence_obsidian_uris?.map(decodeRoute)).toEqual(b.links.evidence_uris);
+    expect(b.links.source_span_obsidian_uris?.map(decodeRoute)).toEqual(b.links.source_span_uris);
+  });
+
+  it("inspection tools (search_evidence, get_memory_object) carry obsidian:// deep links beside the mv:// links", async () => {
+    const memoryId = await seedEvidence();
+    const VAULT = "Vault Two";
+    const t = createVaultTools({ db, api: makeApi(null), obsidianVault: VAULT });
+    const decodeRoute = (obsidianUri: string | undefined): string | null => {
+      expect(obsidianUri).toBeTruthy();
+      const url = new URL(obsidianUri!);
+      expect(url.searchParams.get("vault")).toBe(VAULT);
+      return url.searchParams.get("route");
+    };
+    const search = await t.call("search_evidence", { query: "SQLite source of truth", limit: 5 }) as {
+      evidence: Array<{ evidence_uri: string; obsidian_uri?: string; source_span_uri: string | null; source_span_obsidian_uri?: string | null }>;
+    };
+    expect(search.evidence.length).toBeGreaterThan(0);
+    for (const card of search.evidence) {
+      expect(decodeRoute(card.obsidian_uri)).toBe(card.evidence_uri);
+      if (card.source_span_uri) expect(decodeRoute(card.source_span_obsidian_uri ?? undefined)).toBe(card.source_span_uri);
+      else expect(card.source_span_obsidian_uri).toBeNull();
+    }
+    const mem = await t.call("get_memory_object", { memory_object_id: memoryId }) as {
+      memory_object: { memory_uri: string; memory_obsidian_uri: string; evidence: Array<{ evidence_uri: string; obsidian_uri: string; source_span_uri: string; source_span_obsidian_uri: string }> };
+    };
+    expect(decodeRoute(mem.memory_object.memory_obsidian_uri)).toBe(mem.memory_object.memory_uri);
+    expect(mem.memory_object.evidence.length).toBeGreaterThan(0);
+    for (const e of mem.memory_object.evidence) {
+      expect(decodeRoute(e.obsidian_uri)).toBe(e.evidence_uri);
+      expect(decodeRoute(e.source_span_obsidian_uri)).toBe(e.source_span_uri);
+    }
+  });
+
+  it("omits the vault param from deep links when no obsidianVault is configured", async () => {
+    await seedEvidence();
+    const result = await tools(groundedTransport).call("ask_vault", { question: QUESTION }) as { answer_bundle: AnswerBundle };
+    const uri = result.answer_bundle.links.answer_obsidian_uri!;
+    expect(uri.startsWith("obsidian://transcript-memory-vault?")).toBe(true);
+    expect(new URL(uri).searchParams.get("vault")).toBeNull();
+    expect(new URL(uri).searchParams.get("route")).toBe(result.answer_bundle.links.answer_uri);
+  });
+
   it("never leaks the API key / Authorization header / raw provider error into MCP output or persisted rows", async () => {
     await seedEvidence();
     const ok = await tools(groundedTransport).call("ask_vault", { question: QUESTION });
@@ -207,5 +280,11 @@ describe("loadMcpConfig", () => {
 
   it("reports llmReady false when the LLM is not fully configured", () => {
     expect(loadMcpConfig({ TMV_DB_PATH: "/tmp/v.sqlite" }).llmReady).toBe(false); // no model/key
+  });
+
+  it("threads TMV_OBSIDIAN_VAULT into obsidianVault (optional; trimmed; absent -> undefined)", () => {
+    expect(loadMcpConfig({ TMV_DB_PATH: "/tmp/v.sqlite", TMV_OBSIDIAN_VAULT: "My Vault" }).obsidianVault).toBe("My Vault");
+    expect(loadMcpConfig({ TMV_DB_PATH: "/tmp/v.sqlite" }).obsidianVault).toBeUndefined();
+    expect(loadMcpConfig({ TMV_DB_PATH: "/tmp/v.sqlite", TMV_OBSIDIAN_VAULT: "   " }).obsidianVault).toBeUndefined();
   });
 });

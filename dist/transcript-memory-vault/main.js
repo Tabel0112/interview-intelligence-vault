@@ -1418,366 +1418,6 @@ function createRepositories(db) {
   };
 }
 
-// src/obsidian/pluginTypes.ts
-var OBSIDIAN_VIEW_TYPES = {
-  dashboard: "transcript-memory-dashboard",
-  upload: "transcript-memory-upload",
-  transcript: "transcript-memory-transcript",
-  ask: "transcript-memory-ask",
-  answer: "transcript-memory-answer",
-  evidence: "transcript-memory-evidence",
-  memory: "transcript-memory-memory-object",
-  graph: "transcript-memory-graph",
-  search: "transcript-memory-search",
-  review: "transcript-memory-review"
-};
-var OBSIDIAN_COMMANDS = [
-  { id: "open-dashboard", name: "Open Transcript Memory Dashboard", viewType: OBSIDIAN_VIEW_TYPES.dashboard },
-  { id: "upload-transcript", name: "Upload Transcript", viewType: OBSIDIAN_VIEW_TYPES.upload },
-  { id: "ask-ai", name: "Ask AI About Transcripts", viewType: OBSIDIAN_VIEW_TYPES.ask },
-  { id: "search-vault", name: "Search Transcript Memory Vault", viewType: OBSIDIAN_VIEW_TYPES.search },
-  { id: "open-graph", name: "Open Memory Graph", viewType: OBSIDIAN_VIEW_TYPES.graph },
-  { id: "open-review", name: "Open Review Queue", viewType: OBSIDIAN_VIEW_TYPES.review }
-];
-var OBSIDIAN_RIBBON = { icon: "database", title: "Open Transcript Memory Dashboard" };
-var OBSIDIAN_REINDEX_COMMAND = { id: "rebuild-embedding-index", name: "Rebuild Embedding Index" };
-var viewTitle = (type) => ({
-  [OBSIDIAN_VIEW_TYPES.dashboard]: "Transcript Memory Dashboard",
-  [OBSIDIAN_VIEW_TYPES.upload]: "Upload Transcript",
-  [OBSIDIAN_VIEW_TYPES.transcript]: "Transcript Source",
-  [OBSIDIAN_VIEW_TYPES.ask]: "Ask AI",
-  [OBSIDIAN_VIEW_TYPES.answer]: "AI Answer",
-  [OBSIDIAN_VIEW_TYPES.evidence]: "Evidence",
-  [OBSIDIAN_VIEW_TYPES.memory]: "Memory Object",
-  [OBSIDIAN_VIEW_TYPES.graph]: "Memory Graph",
-  [OBSIDIAN_VIEW_TYPES.search]: "Search Transcript Memory",
-  [OBSIDIAN_VIEW_TYPES.review]: "Review Queue"
-})[type];
-var defaultTarget = (type) => ({
-  [OBSIDIAN_VIEW_TYPES.dashboard]: "mv://dashboard",
-  [OBSIDIAN_VIEW_TYPES.upload]: "mv://upload",
-  [OBSIDIAN_VIEW_TYPES.transcript]: "mv://transcripts/missing",
-  [OBSIDIAN_VIEW_TYPES.ask]: "mv://ask",
-  [OBSIDIAN_VIEW_TYPES.answer]: "mv://answers/missing",
-  [OBSIDIAN_VIEW_TYPES.evidence]: "mv://evidence/missing",
-  [OBSIDIAN_VIEW_TYPES.memory]: "mv://memory/missing",
-  [OBSIDIAN_VIEW_TYPES.graph]: "mv://graph",
-  [OBSIDIAN_VIEW_TYPES.search]: "mv://search",
-  [OBSIDIAN_VIEW_TYPES.review]: "mv://review"
-})[type];
-
-// src/obsidian/ObsidianNavigation.ts
-function createObsidianNavigation(app) {
-  const open = async (type, target) => {
-    const leaf = app.workspace.getLeaf("tab");
-    await leaf.setViewState({ type, active: true, state: { target } });
-    app.workspace.revealLeaf(leaf);
-  };
-  return {
-    openDashboard: () => open(OBSIDIAN_VIEW_TYPES.dashboard, "mv://dashboard"),
-    openUpload: () => open(OBSIDIAN_VIEW_TYPES.upload, "mv://upload"),
-    openTranscript: (id, options) => open(OBSIDIAN_VIEW_TYPES.transcript, `mv://transcripts/${encodeURIComponent(id)}${options?.spanId ? `?span=${encodeURIComponent(options.spanId)}` : ""}`),
-    openAskAI: (options) => open(OBSIDIAN_VIEW_TYPES.ask, `mv://ask${options?.transcriptIds?.length ? `?transcriptIds=${options.transcriptIds.map(encodeURIComponent).join(",")}` : ""}`),
-    openAnswer: (id) => open(OBSIDIAN_VIEW_TYPES.answer, `mv://answers/${encodeURIComponent(id)}`),
-    openEvidence: (id) => open(OBSIDIAN_VIEW_TYPES.evidence, `mv://evidence/${encodeURIComponent(id)}`),
-    openMemoryObject: (id) => open(OBSIDIAN_VIEW_TYPES.memory, `mv://memory/${encodeURIComponent(id)}`),
-    openGraph: (options) => {
-      const params = new URLSearchParams();
-      if (options?.selectedNodeId) params.set("selectedNode", options.selectedNodeId);
-      if (options?.selectedEdgeId) params.set("selectedEdge", options.selectedEdgeId);
-      if (options?.query) params.set("q", options.query);
-      return open(OBSIDIAN_VIEW_TYPES.graph, `mv://graph${params.size ? `?${params}` : ""}`);
-    },
-    openSearch: (query) => open(OBSIDIAN_VIEW_TYPES.search, `mv://search${query ? `?q=${encodeURIComponent(query)}` : ""}`),
-    openReviewQueue: (options) => open(OBSIDIAN_VIEW_TYPES.review, options?.reviewItemId ? `mv://review/${encodeURIComponent(options.reviewItemId)}` : "mv://review")
-  };
-}
-
-// src/obsidian/nativeBindings.ts
-var import_node_fs2 = require("node:fs");
-var import_node_path2 = require("node:path");
-var nativeBindingTarget = (runtime) => `${runtime.platform}-${runtime.arch}-abi${runtime.modules ?? "unknown"}`;
-function currentNativeRuntime() {
-  return {
-    platform: process.platform,
-    arch: process.arch,
-    modules: process.versions.modules,
-    electron: process.versions.electron
-  };
-}
-function listPackagedNativeTargets(pluginDirectory) {
-  const nativeDirectory = (0, import_node_path2.join)(pluginDirectory, "native");
-  try {
-    return (0, import_node_fs2.readdirSync)(nativeDirectory, { withFileTypes: true }).filter((entry) => entry.isDirectory() && (0, import_node_fs2.existsSync)((0, import_node_path2.join)(nativeDirectory, entry.name, "better_sqlite3.node"))).map((entry) => entry.name).sort();
-  } catch {
-    return [];
-  }
-}
-function resolveNativeBinding(pluginDirectory, runtime = currentNativeRuntime()) {
-  const target = nativeBindingTarget(runtime);
-  const packagedTargets = listPackagedNativeTargets(pluginDirectory);
-  const bindingPath = (0, import_node_path2.join)(pluginDirectory, "native", target, "better_sqlite3.node");
-  if ((0, import_node_fs2.existsSync)(bindingPath)) return { ok: true, target, bindingPath, packagedTargets, error: null };
-  const electron = runtime.electron ? ` Electron ${runtime.electron}` : "";
-  return {
-    ok: false,
-    target,
-    bindingPath: null,
-    packagedTargets,
-    error: `SQLite native binding unavailable for ${target}.${electron} Packaged targets: ${packagedTargets.join(", ") || "none"}.`
-  };
-}
-function nativeBindingLoadError(resolution, error) {
-  const detail = error instanceof Error ? error.message : String(error);
-  return new Error(`SQLite native binding ${resolution.target} is unavailable or incompatible: ${detail}`);
-}
-
-// src/obsidian/SettingsTab.ts
-var import_obsidian = require("obsidian");
-
-// src/obsidian/settings.ts
-var LLM_PROVIDER_OPTIONS = ["none", "openai"];
-var EMBEDDING_PROVIDER_OPTIONS = ["deterministic-test", "noop", "openai"];
-var EXTERNAL_LLM_PROVIDERS = ["openai"];
-var isExternalLlmProvider = (providerId) => EXTERNAL_LLM_PROVIDERS.includes(providerId);
-var EXTERNAL_EMBEDDING_PROVIDERS = ["openai"];
-var isExternalEmbeddingProvider = (providerId) => EXTERNAL_EMBEDDING_PROVIDERS.includes(providerId);
-function isLlmConfigured(settings) {
-  return settings.mode === "external" && isExternalLlmProvider(settings.llm.provider) && settings.llm.model.trim().length > 0 && (settings.apiKeys[settings.llm.provider]?.trim().length ?? 0) > 0;
-}
-var DEFAULT_SETTINGS = {
-  schemaVersion: 1,
-  mode: "local",
-  llm: { provider: "none", model: "" },
-  embedding: { provider: "deterministic-test", model: "token-hash-v1" },
-  apiKeys: {}
-};
-var isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
-var asString = (value, fallback) => typeof value === "string" ? value : fallback;
-var normalizeMode = (value) => value === "external" ? "external" : "local";
-var positiveInt = (value) => {
-  const n = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
-  return Number.isInteger(n) && n > 0 ? n : void 0;
-};
-var positiveNumber = (value) => {
-  const n = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
-  return Number.isFinite(n) && n > 0 ? n : void 0;
-};
-var normalizeBaseUrl = (value) => typeof value === "string" && value.trim().length > 0 ? value.trim() : void 0;
-var normalizeLlmSelection = (value, fallback) => {
-  const record = isRecord(value) ? value : {};
-  const result = {
-    provider: asString(record.provider, fallback.provider),
-    model: asString(record.model, fallback.model)
-  };
-  const baseUrl = normalizeBaseUrl(record.baseUrl);
-  if (baseUrl !== void 0) result.baseUrl = baseUrl;
-  const timeoutMs = positiveNumber(record.timeoutMs);
-  if (timeoutMs !== void 0) result.timeoutMs = timeoutMs;
-  return result;
-};
-var normalizeEmbeddingSelection = (value, fallback) => {
-  const record = isRecord(value) ? value : {};
-  const result = {
-    provider: asString(record.provider, fallback.provider),
-    model: asString(record.model, fallback.model)
-  };
-  const dimensions = positiveInt(record.dimensions);
-  if (dimensions !== void 0) result.dimensions = dimensions;
-  const baseUrl = normalizeBaseUrl(record.baseUrl);
-  if (baseUrl !== void 0) result.baseUrl = baseUrl;
-  const timeoutMs = positiveNumber(record.timeoutMs);
-  if (timeoutMs !== void 0) result.timeoutMs = timeoutMs;
-  return result;
-};
-var normalizeApiKeys = (value) => {
-  if (!isRecord(value)) return {};
-  const result = {};
-  for (const [key, raw] of Object.entries(value)) {
-    if (typeof raw === "string" && raw.trim().length > 0) result[key] = raw;
-  }
-  return result;
-};
-function normalizeSettings(raw) {
-  const record = isRecord(raw) ? raw : {};
-  return {
-    schemaVersion: 1,
-    mode: normalizeMode(record.mode),
-    llm: normalizeLlmSelection(record.llm, DEFAULT_SETTINGS.llm),
-    embedding: normalizeEmbeddingSelection(record.embedding, DEFAULT_SETTINGS.embedding),
-    apiKeys: normalizeApiKeys(record.apiKeys)
-  };
-}
-function setApiKey(settings, providerId, key) {
-  const apiKeys = { ...settings.apiKeys };
-  const trimmed = key.trim();
-  if (trimmed) apiKeys[providerId] = trimmed;
-  else delete apiKeys[providerId];
-  return { ...settings, apiKeys };
-}
-function redactApiKey(key) {
-  return key && key.trim().length > 0 ? "configured" : "not set";
-}
-function settingsHealthSummary(settings) {
-  return {
-    providerMode: settings.mode,
-    llmProvider: settings.llm.provider,
-    llmModel: settings.llm.model,
-    embeddingProvider: settings.embedding.provider,
-    embeddingModel: settings.embedding.model,
-    apiKeyConfigured: Object.values(settings.apiKeys).some((value) => value.trim().length > 0),
-    llmReady: isLlmConfigured(settings)
-  };
-}
-
-// src/obsidian/SettingsTab.ts
-var TranscriptMemorySettingsTab = class extends import_obsidian.PluginSettingTab {
-  constructor(app, plugin, getHealth, navigation, getSettings, onSave) {
-    super(app, plugin);
-    this.getHealth = getHealth;
-    this.navigation = navigation;
-    this.getSettings = getSettings;
-    this.onSave = onSave;
-  }
-  getHealth;
-  navigation;
-  getSettings;
-  onSave;
-  display() {
-    const health = this.getHealth();
-    const settings = this.getSettings();
-    this.containerEl.empty();
-    this.containerEl.createEl("h2", { text: "Transcript Memory Vault" });
-    this.containerEl.createEl("h3", { text: "AI providers" });
-    const warning = this.containerEl.createEl("p", {
-      text: `API keys are stored in this plugin's local data file (data.json) as plain text. If your vault is synced, the key may sync with it. Run the "Rebuild Embedding Index" command to (re)build the index with the configured provider \u2014 that command is the only action that may make a network call.`
-    });
-    warning.addClass("setting-item-description");
-    const required = this.containerEl.createEl("p", {
-      text: isLlmConfigured(settings) ? `AI is configured: ${settings.llm.provider} / ${settings.llm.model}. Ask AI and AI memory extraction are enabled.` : "AI is NOT configured. Ask AI and AI memory extraction require an external LLM provider, model, and API key. Configure one below to enable AI features."
-    });
-    required.addClass("setting-item-description");
-    new import_obsidian.Setting(this.containerEl).setName("LLM provider").setDesc('Required. Ask AI and AI memory extraction use this external provider. Select "none" to disable AI features.').addDropdown((dropdown) => {
-      for (const option of LLM_PROVIDER_OPTIONS) dropdown.addOption(option, option);
-      dropdown.setValue(settings.llm.provider).onChange(async (value) => {
-        const mode = value !== "none" ? "external" : "local";
-        await this.onSave({ ...this.getSettings(), mode, llm: { ...this.getSettings().llm, provider: value } });
-        this.display();
-      });
-    });
-    new import_obsidian.Setting(this.containerEl).setName("LLM model").setDesc("Model identifier. Required for an external provider.").addText(
-      (text) => text.setPlaceholder("e.g. gpt-4o-mini").setValue(settings.llm.model).onChange(async (value) => {
-        await this.onSave({ ...this.getSettings(), llm: { ...this.getSettings().llm, model: value } });
-      })
-    );
-    new import_obsidian.Setting(this.containerEl).setName("LLM base URL").setDesc("Optional. Override the OpenAI-compatible endpoint for the external LLM provider.").addText(
-      (text) => text.setPlaceholder("https://api.openai.com/v1").setValue(settings.llm.baseUrl ?? "").onChange(async (value) => {
-        const baseUrl = value.trim().length > 0 ? value.trim() : void 0;
-        await this.onSave({ ...this.getSettings(), llm: { ...this.getSettings().llm, baseUrl } });
-      })
-    );
-    new import_obsidian.Setting(this.containerEl).setName("LLM request timeout (ms)").setDesc("Optional. Applied to the external LLM provider; the local provider ignores it.").addText(
-      (text) => text.setPlaceholder("e.g. 30000").setValue(settings.llm.timeoutMs != null ? String(settings.llm.timeoutMs) : "").onChange(async (value) => {
-        const parsed = Number(value.trim());
-        const timeoutMs = Number.isFinite(parsed) && parsed > 0 ? parsed : void 0;
-        await this.onSave({ ...this.getSettings(), llm: { ...this.getSettings().llm, timeoutMs } });
-      })
-    );
-    new import_obsidian.Setting(this.containerEl).setName("Embedding provider").setDesc("For future semantic retrieval. The deterministic test provider is the default.").addDropdown((dropdown) => {
-      for (const option of EMBEDDING_PROVIDER_OPTIONS) dropdown.addOption(option, option);
-      dropdown.setValue(settings.embedding.provider).onChange(async (value) => {
-        await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, provider: value } });
-        this.display();
-      });
-    });
-    new import_obsidian.Setting(this.containerEl).setName("Embedding model").setDesc("Model identifier placeholder.").addText(
-      (text) => text.setPlaceholder("token-hash-v1").setValue(settings.embedding.model).onChange(async (value) => {
-        await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, model: value } });
-      })
-    );
-    const embeddingProviderId = settings.embedding.provider;
-    const embeddingIsExternal = isExternalEmbeddingProvider(embeddingProviderId);
-    new import_obsidian.Setting(this.containerEl).setName("Embedding dimensions").setDesc("Required for an external embedding provider: the vector length the model returns.").addText(
-      (text) => text.setPlaceholder("e.g. 1536").setValue(settings.embedding.dimensions != null ? String(settings.embedding.dimensions) : "").onChange(async (value) => {
-        const parsed = Number(value.trim());
-        const dimensions = Number.isInteger(parsed) && parsed > 0 ? parsed : void 0;
-        await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, dimensions } });
-      })
-    );
-    new import_obsidian.Setting(this.containerEl).setName("Embedding base URL").setDesc("Optional. Override the OpenAI-compatible endpoint for the external embedding provider.").addText(
-      (text) => text.setPlaceholder("https://api.openai.com/v1").setValue(settings.embedding.baseUrl ?? "").onChange(async (value) => {
-        const baseUrl = value.trim().length > 0 ? value.trim() : void 0;
-        await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, baseUrl } });
-      })
-    );
-    new import_obsidian.Setting(this.containerEl).setName("Embedding request timeout (ms)").setDesc("Optional. Applied only to the external embedding HTTP transport.").addText(
-      (text) => text.setPlaceholder("e.g. 30000").setValue(settings.embedding.timeoutMs != null ? String(settings.embedding.timeoutMs) : "").onChange(async (value) => {
-        const parsed = Number(value.trim());
-        const timeoutMs = Number.isFinite(parsed) && parsed > 0 ? parsed : void 0;
-        await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, timeoutMs } });
-      })
-    );
-    new import_obsidian.Setting(this.containerEl).setName("Embedding API key").setDesc(
-      embeddingIsExternal ? `Stored for "${embeddingProviderId}": ${redactApiKey(settings.apiKeys[embeddingProviderId])}. Type a new key to replace it; leave blank to keep the existing one.` : "The selected embedding provider runs locally and needs no API key."
-    ).addText((text) => {
-      text.inputEl.type = "password";
-      text.setPlaceholder("Enter API key").onChange(async (value) => {
-        if (!embeddingIsExternal) return;
-        const trimmed = value.trim();
-        if (!trimmed) return;
-        await this.onSave(setApiKey(this.getSettings(), embeddingProviderId, trimmed));
-      });
-    }).addButton(
-      (button) => button.setButtonText("Clear").onClick(async () => {
-        if (!embeddingIsExternal) return;
-        await this.onSave(setApiKey(this.getSettings(), embeddingProviderId, ""));
-        this.display();
-      })
-    );
-    const llmProviderId = settings.llm.provider;
-    const llmKeyStatus = redactApiKey(settings.apiKeys[llmProviderId]);
-    new import_obsidian.Setting(this.containerEl).setName("LLM API key").setDesc(
-      llmProviderId === "none" ? "Select an LLM provider to set its API key." : `Stored for "${llmProviderId}": ${llmKeyStatus}. Type a new key to replace it; leave blank to keep the existing one.`
-    ).addText((text) => {
-      text.inputEl.type = "password";
-      text.setPlaceholder("Enter API key").onChange(async (value) => {
-        if (llmProviderId === "none") return;
-        const trimmed = value.trim();
-        if (!trimmed) return;
-        await this.onSave(setApiKey(this.getSettings(), llmProviderId, trimmed));
-      });
-    }).addButton(
-      (button) => button.setButtonText("Clear").onClick(async () => {
-        if (llmProviderId === "none") return;
-        await this.onSave(setApiKey(this.getSettings(), llmProviderId, ""));
-        this.display();
-      })
-    );
-    this.containerEl.createEl("h3", { text: "Status" });
-    new import_obsidian.Setting(this.containerEl).setName("Plugin status").setDesc(health.status);
-    new import_obsidian.Setting(this.containerEl).setName("API key").setDesc(health.apiKeyConfigured ? "configured" : "not configured");
-    new import_obsidian.Setting(this.containerEl).setName("AI (LLM)").setDesc(
-      isLlmConfigured(settings) ? `Configured: ${settings.llm.provider}${settings.llm.model ? ` / ${settings.llm.model}` : ""} (external).` : "Not configured. Ask AI and AI memory extraction are disabled until you set an LLM provider, model, and API key."
-    );
-    new import_obsidian.Setting(this.containerEl).setName("Embedding index").setDesc(
-      health.reindexNeeded === void 0 ? "Status unavailable until the database is ready." : health.reindexNeeded ? `Reindex needed \u2014 run the "Rebuild Embedding Index" command. ${health.reindexSummary ?? ""}`.trim() : `Up to date. ${health.reindexSummary ?? ""}`.trim()
-    );
-    if (health.embeddingUsedFallback) {
-      new import_obsidian.Setting(this.containerEl).setName("Embedding fallback").setDesc("The configured external embedding provider is not fully set up; using local token-hash-v1.");
-    }
-    new import_obsidian.Setting(this.containerEl).setName("Database location").setDesc(health.databasePath ?? "Unavailable");
-    new import_obsidian.Setting(this.containerEl).setName("SQLite storage").setDesc(health.realSqliteStorage ? "Connected to real local SQLite storage" : "Not connected");
-    new import_obsidian.Setting(this.containerEl).setName("Migration status").setDesc(`${health.migrationStatus}: ${health.appliedMigrationCount}/${health.packagedMigrationCount} applied`);
-    new import_obsidian.Setting(this.containerEl).setName("Last initialization error").setDesc(health.lastInitializationError ?? "None");
-    new import_obsidian.Setting(this.containerEl).setName("Native binding target").setDesc(health.nativeBindingTarget ?? "Unresolved");
-    new import_obsidian.Setting(this.containerEl).setName("Packaged native targets").setDesc(health.packagedNativeTargets.join(", ") || "None");
-    new import_obsidian.Setting(this.containerEl).setName("Dashboard").addButton((button) => button.setButtonText("Open dashboard").onClick(() => void this.navigation.openDashboard()));
-  }
-};
-
-// src/obsidian/TranscriptMemoryItemView.ts
-var import_obsidian2 = require("obsidian");
-
 // src/frontend/router.ts
 var patterns = [
   { id: "dashboard", pattern: /^\/(?:dashboard\/?)?$/ },
@@ -1807,6 +1447,19 @@ function matchRoute(input) {
     };
   }
   return { id: "not_found", path: url.pathname, params: {}, query: url.searchParams };
+}
+var OBSIDIAN_PROTOCOL_ACTION = "transcript-memory-vault";
+function obsidianRouteFromProtocol(params, opts = {}) {
+  if (typeof params.action === "string" && params.action !== (opts.action ?? OBSIDIAN_PROTOCOL_ACTION)) return null;
+  const route = params.route;
+  if (typeof route !== "string" || !route.startsWith("mv://")) return null;
+  let parsed;
+  try {
+    parsed = matchRoute(route);
+  } catch {
+    return null;
+  }
+  return parsed.id === "not_found" ? null : route;
 }
 var routeHref = {
   dashboard: () => "mv://dashboard",
@@ -4437,10 +4090,10 @@ function computeRawSha256(rawText) {
 }
 
 // src/ingest/detectTranscriptFormat.ts
-var import_node_path3 = require("node:path");
+var import_node_path2 = require("node:path");
 var supported = /* @__PURE__ */ new Set(["txt", "md", "srt", "vtt"]);
 function detectTranscriptFormat(filename, _rawText) {
-  const extension = (0, import_node_path3.extname)(filename).slice(1).toLowerCase();
+  const extension = (0, import_node_path2.extname)(filename).slice(1).toLowerCase();
   if (!supported.has(extension)) {
     throw new ValidationError(`Unsupported transcript extension: ${extension || "(none)"}`);
   }
@@ -5631,7 +5284,365 @@ async function performReviewAction(api, memoryId, decision, refresh, currentTarg
   await refresh(refreshTargetAfterAction(currentTarget));
 }
 
+// src/obsidian/pluginTypes.ts
+var OBSIDIAN_VIEW_TYPES = {
+  dashboard: "transcript-memory-dashboard",
+  upload: "transcript-memory-upload",
+  transcript: "transcript-memory-transcript",
+  ask: "transcript-memory-ask",
+  answer: "transcript-memory-answer",
+  evidence: "transcript-memory-evidence",
+  memory: "transcript-memory-memory-object",
+  graph: "transcript-memory-graph",
+  search: "transcript-memory-search",
+  review: "transcript-memory-review"
+};
+var OBSIDIAN_COMMANDS = [
+  { id: "open-dashboard", name: "Open Transcript Memory Dashboard", viewType: OBSIDIAN_VIEW_TYPES.dashboard },
+  { id: "upload-transcript", name: "Upload Transcript", viewType: OBSIDIAN_VIEW_TYPES.upload },
+  { id: "ask-ai", name: "Ask AI About Transcripts", viewType: OBSIDIAN_VIEW_TYPES.ask },
+  { id: "search-vault", name: "Search Transcript Memory Vault", viewType: OBSIDIAN_VIEW_TYPES.search },
+  { id: "open-graph", name: "Open Memory Graph", viewType: OBSIDIAN_VIEW_TYPES.graph },
+  { id: "open-review", name: "Open Review Queue", viewType: OBSIDIAN_VIEW_TYPES.review }
+];
+var OBSIDIAN_RIBBON = { icon: "database", title: "Open Transcript Memory Dashboard" };
+var OBSIDIAN_REINDEX_COMMAND = { id: "rebuild-embedding-index", name: "Rebuild Embedding Index" };
+var viewTitle = (type) => ({
+  [OBSIDIAN_VIEW_TYPES.dashboard]: "Transcript Memory Dashboard",
+  [OBSIDIAN_VIEW_TYPES.upload]: "Upload Transcript",
+  [OBSIDIAN_VIEW_TYPES.transcript]: "Transcript Source",
+  [OBSIDIAN_VIEW_TYPES.ask]: "Ask AI",
+  [OBSIDIAN_VIEW_TYPES.answer]: "AI Answer",
+  [OBSIDIAN_VIEW_TYPES.evidence]: "Evidence",
+  [OBSIDIAN_VIEW_TYPES.memory]: "Memory Object",
+  [OBSIDIAN_VIEW_TYPES.graph]: "Memory Graph",
+  [OBSIDIAN_VIEW_TYPES.search]: "Search Transcript Memory",
+  [OBSIDIAN_VIEW_TYPES.review]: "Review Queue"
+})[type];
+var defaultTarget = (type) => ({
+  [OBSIDIAN_VIEW_TYPES.dashboard]: "mv://dashboard",
+  [OBSIDIAN_VIEW_TYPES.upload]: "mv://upload",
+  [OBSIDIAN_VIEW_TYPES.transcript]: "mv://transcripts/missing",
+  [OBSIDIAN_VIEW_TYPES.ask]: "mv://ask",
+  [OBSIDIAN_VIEW_TYPES.answer]: "mv://answers/missing",
+  [OBSIDIAN_VIEW_TYPES.evidence]: "mv://evidence/missing",
+  [OBSIDIAN_VIEW_TYPES.memory]: "mv://memory/missing",
+  [OBSIDIAN_VIEW_TYPES.graph]: "mv://graph",
+  [OBSIDIAN_VIEW_TYPES.search]: "mv://search",
+  [OBSIDIAN_VIEW_TYPES.review]: "mv://review"
+})[type];
+
+// src/obsidian/ObsidianNavigation.ts
+function createObsidianNavigation(app) {
+  const open = async (type, target) => {
+    const leaf = app.workspace.getLeaf("tab");
+    await leaf.setViewState({ type, active: true, state: { target } });
+    app.workspace.revealLeaf(leaf);
+  };
+  return {
+    openDashboard: () => open(OBSIDIAN_VIEW_TYPES.dashboard, "mv://dashboard"),
+    openUpload: () => open(OBSIDIAN_VIEW_TYPES.upload, "mv://upload"),
+    openTranscript: (id, options) => open(OBSIDIAN_VIEW_TYPES.transcript, `mv://transcripts/${encodeURIComponent(id)}${options?.spanId ? `?span=${encodeURIComponent(options.spanId)}` : ""}`),
+    openAskAI: (options) => open(OBSIDIAN_VIEW_TYPES.ask, `mv://ask${options?.transcriptIds?.length ? `?transcriptIds=${options.transcriptIds.map(encodeURIComponent).join(",")}` : ""}`),
+    openAnswer: (id) => open(OBSIDIAN_VIEW_TYPES.answer, `mv://answers/${encodeURIComponent(id)}`),
+    openEvidence: (id) => open(OBSIDIAN_VIEW_TYPES.evidence, `mv://evidence/${encodeURIComponent(id)}`),
+    openMemoryObject: (id) => open(OBSIDIAN_VIEW_TYPES.memory, `mv://memory/${encodeURIComponent(id)}`),
+    openGraph: (options) => {
+      const params = new URLSearchParams();
+      if (options?.selectedNodeId) params.set("selectedNode", options.selectedNodeId);
+      if (options?.selectedEdgeId) params.set("selectedEdge", options.selectedEdgeId);
+      if (options?.query) params.set("q", options.query);
+      return open(OBSIDIAN_VIEW_TYPES.graph, `mv://graph${params.size ? `?${params}` : ""}`);
+    },
+    openSearch: (query) => open(OBSIDIAN_VIEW_TYPES.search, `mv://search${query ? `?q=${encodeURIComponent(query)}` : ""}`),
+    openReviewQueue: (options) => open(OBSIDIAN_VIEW_TYPES.review, options?.reviewItemId ? `mv://review/${encodeURIComponent(options.reviewItemId)}` : "mv://review")
+  };
+}
+
+// src/obsidian/nativeBindings.ts
+var import_node_fs2 = require("node:fs");
+var import_node_path3 = require("node:path");
+var nativeBindingTarget = (runtime) => `${runtime.platform}-${runtime.arch}-abi${runtime.modules ?? "unknown"}`;
+function currentNativeRuntime() {
+  return {
+    platform: process.platform,
+    arch: process.arch,
+    modules: process.versions.modules,
+    electron: process.versions.electron
+  };
+}
+function listPackagedNativeTargets(pluginDirectory) {
+  const nativeDirectory = (0, import_node_path3.join)(pluginDirectory, "native");
+  try {
+    return (0, import_node_fs2.readdirSync)(nativeDirectory, { withFileTypes: true }).filter((entry) => entry.isDirectory() && (0, import_node_fs2.existsSync)((0, import_node_path3.join)(nativeDirectory, entry.name, "better_sqlite3.node"))).map((entry) => entry.name).sort();
+  } catch {
+    return [];
+  }
+}
+function resolveNativeBinding(pluginDirectory, runtime = currentNativeRuntime()) {
+  const target = nativeBindingTarget(runtime);
+  const packagedTargets = listPackagedNativeTargets(pluginDirectory);
+  const bindingPath = (0, import_node_path3.join)(pluginDirectory, "native", target, "better_sqlite3.node");
+  if ((0, import_node_fs2.existsSync)(bindingPath)) return { ok: true, target, bindingPath, packagedTargets, error: null };
+  const electron = runtime.electron ? ` Electron ${runtime.electron}` : "";
+  return {
+    ok: false,
+    target,
+    bindingPath: null,
+    packagedTargets,
+    error: `SQLite native binding unavailable for ${target}.${electron} Packaged targets: ${packagedTargets.join(", ") || "none"}.`
+  };
+}
+function nativeBindingLoadError(resolution, error) {
+  const detail = error instanceof Error ? error.message : String(error);
+  return new Error(`SQLite native binding ${resolution.target} is unavailable or incompatible: ${detail}`);
+}
+
+// src/obsidian/SettingsTab.ts
+var import_obsidian = require("obsidian");
+
+// src/obsidian/settings.ts
+var LLM_PROVIDER_OPTIONS = ["none", "openai"];
+var EMBEDDING_PROVIDER_OPTIONS = ["deterministic-test", "noop", "openai"];
+var EXTERNAL_LLM_PROVIDERS = ["openai"];
+var isExternalLlmProvider = (providerId) => EXTERNAL_LLM_PROVIDERS.includes(providerId);
+var EXTERNAL_EMBEDDING_PROVIDERS = ["openai"];
+var isExternalEmbeddingProvider = (providerId) => EXTERNAL_EMBEDDING_PROVIDERS.includes(providerId);
+function isLlmConfigured(settings) {
+  return settings.mode === "external" && isExternalLlmProvider(settings.llm.provider) && settings.llm.model.trim().length > 0 && (settings.apiKeys[settings.llm.provider]?.trim().length ?? 0) > 0;
+}
+var DEFAULT_SETTINGS = {
+  schemaVersion: 1,
+  mode: "local",
+  llm: { provider: "none", model: "" },
+  embedding: { provider: "deterministic-test", model: "token-hash-v1" },
+  apiKeys: {}
+};
+var isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+var asString = (value, fallback) => typeof value === "string" ? value : fallback;
+var normalizeMode = (value) => value === "external" ? "external" : "local";
+var positiveInt = (value) => {
+  const n = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
+  return Number.isInteger(n) && n > 0 ? n : void 0;
+};
+var positiveNumber = (value) => {
+  const n = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
+  return Number.isFinite(n) && n > 0 ? n : void 0;
+};
+var normalizeBaseUrl = (value) => typeof value === "string" && value.trim().length > 0 ? value.trim() : void 0;
+var normalizeLlmSelection = (value, fallback) => {
+  const record = isRecord(value) ? value : {};
+  const result = {
+    provider: asString(record.provider, fallback.provider),
+    model: asString(record.model, fallback.model)
+  };
+  const baseUrl = normalizeBaseUrl(record.baseUrl);
+  if (baseUrl !== void 0) result.baseUrl = baseUrl;
+  const timeoutMs = positiveNumber(record.timeoutMs);
+  if (timeoutMs !== void 0) result.timeoutMs = timeoutMs;
+  return result;
+};
+var normalizeEmbeddingSelection = (value, fallback) => {
+  const record = isRecord(value) ? value : {};
+  const result = {
+    provider: asString(record.provider, fallback.provider),
+    model: asString(record.model, fallback.model)
+  };
+  const dimensions = positiveInt(record.dimensions);
+  if (dimensions !== void 0) result.dimensions = dimensions;
+  const baseUrl = normalizeBaseUrl(record.baseUrl);
+  if (baseUrl !== void 0) result.baseUrl = baseUrl;
+  const timeoutMs = positiveNumber(record.timeoutMs);
+  if (timeoutMs !== void 0) result.timeoutMs = timeoutMs;
+  return result;
+};
+var normalizeApiKeys = (value) => {
+  if (!isRecord(value)) return {};
+  const result = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (typeof raw === "string" && raw.trim().length > 0) result[key] = raw;
+  }
+  return result;
+};
+function normalizeSettings(raw) {
+  const record = isRecord(raw) ? raw : {};
+  return {
+    schemaVersion: 1,
+    mode: normalizeMode(record.mode),
+    llm: normalizeLlmSelection(record.llm, DEFAULT_SETTINGS.llm),
+    embedding: normalizeEmbeddingSelection(record.embedding, DEFAULT_SETTINGS.embedding),
+    apiKeys: normalizeApiKeys(record.apiKeys)
+  };
+}
+function setApiKey(settings, providerId, key) {
+  const apiKeys = { ...settings.apiKeys };
+  const trimmed = key.trim();
+  if (trimmed) apiKeys[providerId] = trimmed;
+  else delete apiKeys[providerId];
+  return { ...settings, apiKeys };
+}
+function redactApiKey(key) {
+  return key && key.trim().length > 0 ? "configured" : "not set";
+}
+function settingsHealthSummary(settings) {
+  return {
+    providerMode: settings.mode,
+    llmProvider: settings.llm.provider,
+    llmModel: settings.llm.model,
+    embeddingProvider: settings.embedding.provider,
+    embeddingModel: settings.embedding.model,
+    apiKeyConfigured: Object.values(settings.apiKeys).some((value) => value.trim().length > 0),
+    llmReady: isLlmConfigured(settings)
+  };
+}
+
+// src/obsidian/SettingsTab.ts
+var TranscriptMemorySettingsTab = class extends import_obsidian.PluginSettingTab {
+  constructor(app, plugin, getHealth, navigation, getSettings, onSave) {
+    super(app, plugin);
+    this.getHealth = getHealth;
+    this.navigation = navigation;
+    this.getSettings = getSettings;
+    this.onSave = onSave;
+  }
+  getHealth;
+  navigation;
+  getSettings;
+  onSave;
+  display() {
+    const health = this.getHealth();
+    const settings = this.getSettings();
+    this.containerEl.empty();
+    this.containerEl.createEl("h2", { text: "Transcript Memory Vault" });
+    this.containerEl.createEl("h3", { text: "AI providers" });
+    const warning = this.containerEl.createEl("p", {
+      text: `API keys are stored in this plugin's local data file (data.json) as plain text. If your vault is synced, the key may sync with it. Run the "Rebuild Embedding Index" command to (re)build the index with the configured provider \u2014 that command is the only action that may make a network call.`
+    });
+    warning.addClass("setting-item-description");
+    const required = this.containerEl.createEl("p", {
+      text: isLlmConfigured(settings) ? `AI is configured: ${settings.llm.provider} / ${settings.llm.model}. Ask AI and AI memory extraction are enabled.` : "AI is NOT configured. Ask AI and AI memory extraction require an external LLM provider, model, and API key. Configure one below to enable AI features."
+    });
+    required.addClass("setting-item-description");
+    new import_obsidian.Setting(this.containerEl).setName("LLM provider").setDesc('Required. Ask AI and AI memory extraction use this external provider. Select "none" to disable AI features.').addDropdown((dropdown) => {
+      for (const option of LLM_PROVIDER_OPTIONS) dropdown.addOption(option, option);
+      dropdown.setValue(settings.llm.provider).onChange(async (value) => {
+        const mode = value !== "none" ? "external" : "local";
+        await this.onSave({ ...this.getSettings(), mode, llm: { ...this.getSettings().llm, provider: value } });
+        this.display();
+      });
+    });
+    new import_obsidian.Setting(this.containerEl).setName("LLM model").setDesc("Model identifier. Required for an external provider.").addText(
+      (text) => text.setPlaceholder("e.g. gpt-4o-mini").setValue(settings.llm.model).onChange(async (value) => {
+        await this.onSave({ ...this.getSettings(), llm: { ...this.getSettings().llm, model: value } });
+      })
+    );
+    new import_obsidian.Setting(this.containerEl).setName("LLM base URL").setDesc("Optional. Override the OpenAI-compatible endpoint for the external LLM provider.").addText(
+      (text) => text.setPlaceholder("https://api.openai.com/v1").setValue(settings.llm.baseUrl ?? "").onChange(async (value) => {
+        const baseUrl = value.trim().length > 0 ? value.trim() : void 0;
+        await this.onSave({ ...this.getSettings(), llm: { ...this.getSettings().llm, baseUrl } });
+      })
+    );
+    new import_obsidian.Setting(this.containerEl).setName("LLM request timeout (ms)").setDesc("Optional. Applied to the external LLM provider; the local provider ignores it.").addText(
+      (text) => text.setPlaceholder("e.g. 30000").setValue(settings.llm.timeoutMs != null ? String(settings.llm.timeoutMs) : "").onChange(async (value) => {
+        const parsed = Number(value.trim());
+        const timeoutMs = Number.isFinite(parsed) && parsed > 0 ? parsed : void 0;
+        await this.onSave({ ...this.getSettings(), llm: { ...this.getSettings().llm, timeoutMs } });
+      })
+    );
+    new import_obsidian.Setting(this.containerEl).setName("Embedding provider").setDesc("For future semantic retrieval. The deterministic test provider is the default.").addDropdown((dropdown) => {
+      for (const option of EMBEDDING_PROVIDER_OPTIONS) dropdown.addOption(option, option);
+      dropdown.setValue(settings.embedding.provider).onChange(async (value) => {
+        await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, provider: value } });
+        this.display();
+      });
+    });
+    new import_obsidian.Setting(this.containerEl).setName("Embedding model").setDesc("Model identifier placeholder.").addText(
+      (text) => text.setPlaceholder("token-hash-v1").setValue(settings.embedding.model).onChange(async (value) => {
+        await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, model: value } });
+      })
+    );
+    const embeddingProviderId = settings.embedding.provider;
+    const embeddingIsExternal = isExternalEmbeddingProvider(embeddingProviderId);
+    new import_obsidian.Setting(this.containerEl).setName("Embedding dimensions").setDesc("Required for an external embedding provider: the vector length the model returns.").addText(
+      (text) => text.setPlaceholder("e.g. 1536").setValue(settings.embedding.dimensions != null ? String(settings.embedding.dimensions) : "").onChange(async (value) => {
+        const parsed = Number(value.trim());
+        const dimensions = Number.isInteger(parsed) && parsed > 0 ? parsed : void 0;
+        await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, dimensions } });
+      })
+    );
+    new import_obsidian.Setting(this.containerEl).setName("Embedding base URL").setDesc("Optional. Override the OpenAI-compatible endpoint for the external embedding provider.").addText(
+      (text) => text.setPlaceholder("https://api.openai.com/v1").setValue(settings.embedding.baseUrl ?? "").onChange(async (value) => {
+        const baseUrl = value.trim().length > 0 ? value.trim() : void 0;
+        await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, baseUrl } });
+      })
+    );
+    new import_obsidian.Setting(this.containerEl).setName("Embedding request timeout (ms)").setDesc("Optional. Applied only to the external embedding HTTP transport.").addText(
+      (text) => text.setPlaceholder("e.g. 30000").setValue(settings.embedding.timeoutMs != null ? String(settings.embedding.timeoutMs) : "").onChange(async (value) => {
+        const parsed = Number(value.trim());
+        const timeoutMs = Number.isFinite(parsed) && parsed > 0 ? parsed : void 0;
+        await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, timeoutMs } });
+      })
+    );
+    new import_obsidian.Setting(this.containerEl).setName("Embedding API key").setDesc(
+      embeddingIsExternal ? `Stored for "${embeddingProviderId}": ${redactApiKey(settings.apiKeys[embeddingProviderId])}. Type a new key to replace it; leave blank to keep the existing one.` : "The selected embedding provider runs locally and needs no API key."
+    ).addText((text) => {
+      text.inputEl.type = "password";
+      text.setPlaceholder("Enter API key").onChange(async (value) => {
+        if (!embeddingIsExternal) return;
+        const trimmed = value.trim();
+        if (!trimmed) return;
+        await this.onSave(setApiKey(this.getSettings(), embeddingProviderId, trimmed));
+      });
+    }).addButton(
+      (button) => button.setButtonText("Clear").onClick(async () => {
+        if (!embeddingIsExternal) return;
+        await this.onSave(setApiKey(this.getSettings(), embeddingProviderId, ""));
+        this.display();
+      })
+    );
+    const llmProviderId = settings.llm.provider;
+    const llmKeyStatus = redactApiKey(settings.apiKeys[llmProviderId]);
+    new import_obsidian.Setting(this.containerEl).setName("LLM API key").setDesc(
+      llmProviderId === "none" ? "Select an LLM provider to set its API key." : `Stored for "${llmProviderId}": ${llmKeyStatus}. Type a new key to replace it; leave blank to keep the existing one.`
+    ).addText((text) => {
+      text.inputEl.type = "password";
+      text.setPlaceholder("Enter API key").onChange(async (value) => {
+        if (llmProviderId === "none") return;
+        const trimmed = value.trim();
+        if (!trimmed) return;
+        await this.onSave(setApiKey(this.getSettings(), llmProviderId, trimmed));
+      });
+    }).addButton(
+      (button) => button.setButtonText("Clear").onClick(async () => {
+        if (llmProviderId === "none") return;
+        await this.onSave(setApiKey(this.getSettings(), llmProviderId, ""));
+        this.display();
+      })
+    );
+    this.containerEl.createEl("h3", { text: "Status" });
+    new import_obsidian.Setting(this.containerEl).setName("Plugin status").setDesc(health.status);
+    new import_obsidian.Setting(this.containerEl).setName("API key").setDesc(health.apiKeyConfigured ? "configured" : "not configured");
+    new import_obsidian.Setting(this.containerEl).setName("AI (LLM)").setDesc(
+      isLlmConfigured(settings) ? `Configured: ${settings.llm.provider}${settings.llm.model ? ` / ${settings.llm.model}` : ""} (external).` : "Not configured. Ask AI and AI memory extraction are disabled until you set an LLM provider, model, and API key."
+    );
+    new import_obsidian.Setting(this.containerEl).setName("Embedding index").setDesc(
+      health.reindexNeeded === void 0 ? "Status unavailable until the database is ready." : health.reindexNeeded ? `Reindex needed \u2014 run the "Rebuild Embedding Index" command. ${health.reindexSummary ?? ""}`.trim() : `Up to date. ${health.reindexSummary ?? ""}`.trim()
+    );
+    if (health.embeddingUsedFallback) {
+      new import_obsidian.Setting(this.containerEl).setName("Embedding fallback").setDesc("The configured external embedding provider is not fully set up; using local token-hash-v1.");
+    }
+    new import_obsidian.Setting(this.containerEl).setName("Database location").setDesc(health.databasePath ?? "Unavailable");
+    new import_obsidian.Setting(this.containerEl).setName("SQLite storage").setDesc(health.realSqliteStorage ? "Connected to real local SQLite storage" : "Not connected");
+    new import_obsidian.Setting(this.containerEl).setName("Migration status").setDesc(`${health.migrationStatus}: ${health.appliedMigrationCount}/${health.packagedMigrationCount} applied`);
+    new import_obsidian.Setting(this.containerEl).setName("Last initialization error").setDesc(health.lastInitializationError ?? "None");
+    new import_obsidian.Setting(this.containerEl).setName("Native binding target").setDesc(health.nativeBindingTarget ?? "Unresolved");
+    new import_obsidian.Setting(this.containerEl).setName("Packaged native targets").setDesc(health.packagedNativeTargets.join(", ") || "None");
+    new import_obsidian.Setting(this.containerEl).setName("Dashboard").addButton((button) => button.setButtonText("Open dashboard").onClick(() => void this.navigation.openDashboard()));
+  }
+};
+
 // src/obsidian/TranscriptMemoryItemView.ts
+var import_obsidian2 = require("obsidian");
 var TranscriptMemoryItemView = class extends import_obsidian2.ItemView {
   constructor(leaf, type, getApi, vaultNavigation, registry) {
     super(leaf);
@@ -6114,6 +6125,11 @@ var TranscriptMemoryVaultPlugin = class extends import_obsidian5.Plugin {
     this.addCommand({ id: OBSIDIAN_REINDEX_COMMAND.id, name: OBSIDIAN_REINDEX_COMMAND.name, callback: () => void this.rebuildEmbeddingIndex() });
     this.addCommand({ id: "run-ai-extraction", name: "Run AI extraction for transcripts missing it", callback: () => void this.runPendingExtraction() });
     this.addRibbonIcon(OBSIDIAN_RIBBON.icon, OBSIDIAN_RIBBON.title, () => void navigation.openDashboard());
+    this.registerObsidianProtocolHandler(OBSIDIAN_PROTOCOL_ACTION, (params) => {
+      const route = obsidianRouteFromProtocol(params);
+      if (route) void navigateInternal(navigation, route);
+      else new import_obsidian5.Notice("Transcript Memory Vault: could not open that link (unrecognized or invalid route).");
+    });
     this.addSettingTab(new TranscriptMemorySettingsTab(this.app, this, () => this.health, navigation, () => this.pluginSettings, (next) => this.saveSettings(next)));
     const adapter = this.app.vault.adapter;
     const fileSystemAdapter = adapter instanceof import_obsidian5.FileSystemAdapter ? adapter : null;
