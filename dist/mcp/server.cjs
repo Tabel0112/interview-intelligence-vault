@@ -48,7 +48,8 @@ var PACKAGED_MIGRATIONS = [
   { id: "009", name: "ask_ai_pipeline", filename: "009_ask_ai_pipeline.sql" },
   { id: "010", name: "conflict_detection", filename: "010_conflict_detection.sql" },
   { id: "011", name: "agent_orchestration_hermes", filename: "011_agent_orchestration_hermes.sql" },
-  { id: "012", name: "obsidian_views", filename: "012_obsidian_views.sql" }
+  { id: "012", name: "obsidian_views", filename: "012_obsidian_views.sql" },
+  { id: "013", name: "ask_ai_claim_support", filename: "013_ask_ai_claim_support.sql" }
 ];
 var PACKAGED_MIGRATION_COUNT = PACKAGED_MIGRATIONS.length;
 function validateMigrationPackage(directory = defaultMigrationDirectory()) {
@@ -1579,7 +1580,19 @@ var answerConfidence = (confidence) => confidence === "strong" ? "high" : confid
 var itemStance = (stance) => stance === "opposes" ? "contradicts" : stance === "qualifies" ? "qualifies" : stance === "supports" || stance === "updates" ? "supports" : "unknown";
 var pointerRole = (stance) => stance === "opposes" ? "opposition" : stance === "qualifies" ? "conditional" : stance === "supports" || stance === "updates" ? "support" : "unclear";
 var pointerStrength = (strength) => strength === "no_evidence" ? "weak" : strength;
-var claimSupportStatus = (status) => status === "supported" ? "supported" : status === "weakly_supported" ? "weakly_supported" : status === "conflicted" ? "conflicting" : "unsupported";
+var reconstructClaimSupport = (stored, evidenceConfidence) => {
+  if (stored === "supported" || stored === "weakly_supported" || stored === "conflicting" || stored === "unsupported") return stored;
+  switch (evidenceConfidence) {
+    case "no_evidence":
+      return "unsupported";
+    case "conflicting":
+      return "conflicting";
+    case "weak":
+      return "weakly_supported";
+    default:
+      return "supported";
+  }
+};
 function persistAskAIResponse(db, response) {
   db.transaction(() => {
     const repos = createRepositories(db);
@@ -1620,7 +1633,7 @@ function persistAskAIResponse(db, response) {
     const selected = new Map(response.evidence.map((item) => [item.evidencePointerId, item]));
     response.claims.forEach((claim, index) => {
       const stored = createAnswerClaim(db, { answerId: answer.id, claimText: claim.text, claimOrder: index });
-      db.prepare("INSERT INTO ask_ai_claim_metadata(answer_claim_id,kind,explanation) VALUES (?,?,?)").run(stored.answer_claim_id, claim.kind, claim.explanation ?? null);
+      db.prepare("INSERT INTO ask_ai_claim_metadata(answer_claim_id,kind,explanation,support_status) VALUES (?,?,?,?)").run(stored.answer_claim_id, claim.kind, claim.explanation ?? null, claim.supportStatus);
       claim.evidencePointerIds.forEach((pointerId) => {
         const item = selected.get(pointerId);
         if (!item) throw new ValidationError(`Ask AI claim references unselected evidence: ${pointerId}`);
@@ -1676,23 +1689,43 @@ function getAskAIResponse(db, id) {
   const run = db.prepare("SELECT * FROM ask_ai_runs WHERE id=?").get(id);
   if (!run) throw new NotFoundError(`Ask AI run not found: ${id}`);
   const evidenceRows = db.prepare("SELECT * FROM ask_ai_run_evidence WHERE ask_ai_run_id=? ORDER BY rank").all(id);
-  const claimRows = db.prepare(`SELECT c.*,m.kind,m.explanation FROM answer_claims c JOIN ask_ai_claim_metadata m ON m.answer_claim_id=c.answer_claim_id
+  const claimRows = db.prepare(`SELECT c.*,m.kind,m.explanation,m.support_status AS claim_support_status FROM answer_claims c
+    JOIN ask_ai_claim_metadata m ON m.answer_claim_id=c.answer_claim_id
     WHERE c.answer_id=? ORDER BY c.claim_order`).all(run.answer_id);
   const linkRows = db.prepare(`SELECT l.*,e.source_pointer_uri,e.transcript_id,e.span_id,e.quote_preview
     FROM citation_links l JOIN evidence_pointers e ON e.evidence_pointer_id=l.evidence_pointer_id
     WHERE l.answer_id=? ORDER BY l.citation_order`).all(run.answer_id);
   const followups = db.prepare("SELECT text FROM ask_ai_suggested_followups WHERE ask_ai_run_id=? ORDER BY rank").all(id);
   const conflicts = db.prepare("SELECT conflict_assessment_id FROM ask_ai_run_conflicts WHERE ask_ai_run_id=? ORDER BY conflict_assessment_id").all(id).map((row) => createConflictRepository(db).get(row.conflict_assessment_id)).filter(Boolean);
-  const citations = linkRows.map((item) => ({
-    id: String(item.citation_link_id),
-    label: String(item.citation_label),
+  const evidenceConfidence = run.evidence_confidence;
+  const evidence = evidenceRows.map((item) => ({
     evidencePointerId: String(item.evidence_pointer_id),
-    sourcePointerId: String(item.source_pointer_uri),
+    sourcePointerId: item.source_pointer_id == null ? void 0 : String(item.source_pointer_id),
     transcriptId: String(item.transcript_id),
     spanId: String(item.span_id),
     quotePreview: String(item.quote_preview),
-    clickbackUri: `mv://evidence/${String(item.evidence_pointer_id)}`
+    evidenceScore: Number(item.evidence_score),
+    evidenceConfidence: item.evidence_confidence,
+    scoringExplanation: String(item.scoring_explanation),
+    clickbackUri: `mv://evidence/${String(item.evidence_pointer_id)}`,
+    stance: "unknown",
+    sourceKind: "raw_transcript_span"
   }));
+  const selectedBySpan = new Map(evidence.map((item) => [`${item.transcriptId}::${item.spanId}`, item]));
+  const citations = linkRows.map((item) => {
+    const selected = selectedBySpan.get(`${String(item.transcript_id)}::${String(item.span_id)}`);
+    const evidencePointerId = selected?.evidencePointerId ?? String(item.evidence_pointer_id);
+    return {
+      id: String(item.citation_link_id),
+      label: String(item.citation_label),
+      evidencePointerId,
+      sourcePointerId: selected?.sourcePointerId ?? String(item.source_pointer_uri),
+      transcriptId: String(item.transcript_id),
+      spanId: String(item.span_id),
+      quotePreview: selected?.quotePreview ?? String(item.quote_preview),
+      clickbackUri: `mv://evidence/${evidencePointerId}`
+    };
+  });
   const answerMeta = db.prepare("SELECT metadata_json FROM ai_answers WHERE id=?").get(run.answer_id);
   let synthesis;
   try {
@@ -1705,31 +1738,19 @@ function getAskAIResponse(db, id) {
     id,
     question: String(run.question),
     answerMarkdown: String(run.answer_markdown),
-    evidenceConfidence: run.evidence_confidence,
+    evidenceConfidence,
     notEnoughEvidence: Boolean(run.not_enough_evidence),
     createdAt: String(run.created_at),
     queryUnderstanding: JSON.parse(String(run.query_understanding_json)),
     scoreRunId: run.score_run_id == null ? void 0 : String(run.score_run_id),
-    evidence: evidenceRows.map((item) => ({
-      evidencePointerId: String(item.evidence_pointer_id),
-      sourcePointerId: item.source_pointer_id == null ? void 0 : String(item.source_pointer_id),
-      transcriptId: String(item.transcript_id),
-      spanId: String(item.span_id),
-      quotePreview: String(item.quote_preview),
-      evidenceScore: Number(item.evidence_score),
-      evidenceConfidence: item.evidence_confidence,
-      scoringExplanation: String(item.scoring_explanation),
-      clickbackUri: `mv://evidence/${String(item.evidence_pointer_id)}`,
-      stance: "unknown",
-      sourceKind: "raw_transcript_span"
-    })),
+    evidence,
     claims: claimRows.map((item) => {
       const claimCitations = citations.filter((citation) => linkRows.some((link) => link.answer_claim_id === item.answer_claim_id && link.citation_link_id === citation.id));
       return {
         id: String(item.answer_claim_id),
         kind: item.kind,
         text: String(item.claim_text),
-        supportStatus: claimSupportStatus(item.support_status),
+        supportStatus: reconstructClaimSupport(item.claim_support_status, evidenceConfidence),
         evidencePointerIds: claimCitations.map((citation) => citation.evidencePointerId),
         citationIds: claimCitations.map((citation) => citation.id),
         explanation: item.explanation == null ? void 0 : String(item.explanation)

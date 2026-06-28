@@ -94,13 +94,26 @@ describe("MCP tools", () => {
     expect(count("ask_ai_runs")).toBe(before + 1); // answer persisted through the existing path
   });
 
-  it("get_answer reconstructs the same persisted validated bundle", async () => {
+  it("get_answer reconstructs the same persisted bundle: trust fields preserved, citations aligned with evidence", async () => {
     await seedEvidence();
-    const asked = await tools(groundedTransport).call("ask_vault", { question: QUESTION }) as { answer_bundle: { answer_id: string; claims: unknown[] } };
-    const reloaded = await tools(groundedTransport).call("get_answer", { answer_id: asked.answer_bundle.answer_id }) as { ok: boolean; answer_bundle: { answer_id: string; claims: unknown[] } };
+    type Bundle = { answer_id: string; claims: Array<{ support_state: string }>; citations: Array<{ evidence_pointer_id: string }>; evidence: Array<{ evidence_pointer_id: string }> };
+    const asked = await tools(groundedTransport).call("ask_vault", { question: QUESTION }) as { answer_bundle: Bundle };
+    const reloaded = await tools(groundedTransport).call("get_answer", { answer_id: asked.answer_bundle.answer_id }) as { ok: boolean; answer_bundle: Bundle };
     expect(reloaded.ok).toBe(true);
     expect(reloaded.answer_bundle.answer_id).toBe(asked.answer_bundle.answer_id);
     expect(reloaded.answer_bundle.claims.length).toBe(asked.answer_bundle.claims.length);
+
+    // Trust-bearing claim support_state must be preserved (never stronger than the live pipeline).
+    const order = { unsupported: 0, weakly_supported: 1, conflicting: 1, supported: 2 } as Record<string, number>;
+    reloaded.answer_bundle.claims.forEach((claim, i) => {
+      expect(claim.support_state).toBe(asked.answer_bundle.claims[i].support_state);
+      expect(order[claim.support_state]).toBeLessThanOrEqual(order[asked.answer_bundle.claims[i].support_state]);
+    });
+    // Every reconstructed citation pointer must line up with an item in evidence[].
+    const evidencePtrs = new Set(reloaded.answer_bundle.evidence.map((e) => e.evidence_pointer_id));
+    expect(reloaded.answer_bundle.citations.length).toBeGreaterThan(0);
+    for (const c of reloaded.answer_bundle.citations) expect(evidencePtrs.has(c.evidence_pointer_id)).toBe(true);
+
     expect(await tools(groundedTransport).call("get_answer", { answer_id: "missing" })).toMatchObject({ ok: false, state: "not_found" });
   });
 

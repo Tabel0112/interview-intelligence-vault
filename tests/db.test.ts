@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   DuplicateContentError, EvidenceRequiredError, InvalidEvidenceError, ValidationError,
-  contentHash, createRepositories, openDatabase, runMigrations,
+  contentHash, createRepositories, openDatabase, runMigrations, PACKAGED_MIGRATION_COUNT,
   type SqliteDatabase,
 } from "../src/db/index.js";
 
@@ -36,7 +36,7 @@ describe("migrations", () => {
       expect(names).toContain(name);
     }
     expect(db.pragma("foreign_keys", { simple: true })).toBe(1);
-    expect((db.prepare("SELECT COUNT(*) count FROM schema_migrations").get() as { count: number }).count).toBe(12);
+    expect((db.prepare("SELECT COUNT(*) count FROM schema_migrations").get() as { count: number }).count).toBe(PACKAGED_MIGRATION_COUNT);
   });
 });
 
