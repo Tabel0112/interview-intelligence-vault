@@ -272,6 +272,7 @@ describe("MCP tools", () => {
 describe("loadMcpConfig", () => {
   it("requires TMV_DB_PATH and builds settings from env without reading Obsidian data.json", () => {
     expect(() => loadMcpConfig({})).toThrow(McpConfigError);
+    expect(() => loadMcpConfig({})).toThrow(/TMV_DB_PATH/); // missing DB path fails with a clear, actionable message
     const cfg = loadMcpConfig({ TMV_DB_PATH: "/tmp/vault.sqlite", TMV_LLM_PROVIDER: "openai", TMV_LLM_MODEL: "gpt-x", TMV_LLM_API_KEY: SECRET });
     expect(cfg.dbPath).toBe("/tmp/vault.sqlite");
     expect(cfg.llmReady).toBe(true);
