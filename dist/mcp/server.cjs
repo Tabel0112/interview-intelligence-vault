@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 "use strict";
 var __create = Object.create;
 var __defProp = Object.defineProperty;
@@ -5,17 +6,6 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __commonJS = (cb, mod) => function __require() {
-  try {
-    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
-  } catch (e) {
-    throw mod = 0, e;
-  }
-};
-var __export = (target, all) => {
-  for (var name in all)
-    __defProp(target, name, { get: all[name], enumerable: true });
-};
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
     for (let key of __getOwnPropNames(from))
@@ -32,800 +22,20 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
   mod
 ));
-var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// node_modules/better-sqlite3/lib/util.js
-var require_util = __commonJS({
-  "node_modules/better-sqlite3/lib/util.js"(exports2) {
-    "use strict";
-    exports2.getBooleanOption = (options, key) => {
-      let value = false;
-      if (key in options && typeof (value = options[key]) !== "boolean") {
-        throw new TypeError(`Expected the "${key}" option to be a boolean`);
-      }
-      return value;
-    };
-    exports2.cppdb = /* @__PURE__ */ Symbol();
-    exports2.inspect = /* @__PURE__ */ Symbol.for("nodejs.util.inspect.custom");
-  }
-});
-
-// node_modules/better-sqlite3/lib/sqlite-error.js
-var require_sqlite_error = __commonJS({
-  "node_modules/better-sqlite3/lib/sqlite-error.js"(exports2, module2) {
-    "use strict";
-    var descriptor = { value: "SqliteError", writable: true, enumerable: false, configurable: true };
-    function SqliteError(message, code) {
-      if (new.target !== SqliteError) {
-        return new SqliteError(message, code);
-      }
-      if (typeof code !== "string") {
-        throw new TypeError("Expected second argument to be a string");
-      }
-      Error.call(this, message);
-      descriptor.value = "" + message;
-      Object.defineProperty(this, "message", descriptor);
-      Error.captureStackTrace(this, SqliteError);
-      this.code = code;
-    }
-    Object.setPrototypeOf(SqliteError, Error);
-    Object.setPrototypeOf(SqliteError.prototype, Error.prototype);
-    Object.defineProperty(SqliteError.prototype, "name", descriptor);
-    module2.exports = SqliteError;
-  }
-});
-
-// node_modules/file-uri-to-path/index.js
-var require_file_uri_to_path = __commonJS({
-  "node_modules/file-uri-to-path/index.js"(exports2, module2) {
-    var sep = require("path").sep || "/";
-    module2.exports = fileUriToPath;
-    function fileUriToPath(uri) {
-      if ("string" != typeof uri || uri.length <= 7 || "file://" != uri.substring(0, 7)) {
-        throw new TypeError("must pass in a file:// URI to convert to a file path");
-      }
-      var rest = decodeURI(uri.substring(7));
-      var firstSlash = rest.indexOf("/");
-      var host = rest.substring(0, firstSlash);
-      var path = rest.substring(firstSlash + 1);
-      if ("localhost" == host) host = "";
-      if (host) {
-        host = sep + sep + host;
-      }
-      path = path.replace(/^(.+)\|/, "$1:");
-      if (sep == "\\") {
-        path = path.replace(/\//g, "\\");
-      }
-      if (/^.+\:/.test(path)) {
-      } else {
-        path = sep + path;
-      }
-      return host + path;
-    }
-  }
-});
-
-// node_modules/bindings/bindings.js
-var require_bindings = __commonJS({
-  "node_modules/bindings/bindings.js"(exports2, module2) {
-    var fs = require("fs");
-    var path = require("path");
-    var fileURLToPath2 = require_file_uri_to_path();
-    var join4 = path.join;
-    var dirname2 = path.dirname;
-    var exists = fs.accessSync && function(path2) {
-      try {
-        fs.accessSync(path2);
-      } catch (e) {
-        return false;
-      }
-      return true;
-    } || fs.existsSync || path.existsSync;
-    var defaults = {
-      arrow: process.env.NODE_BINDINGS_ARROW || " \u2192 ",
-      compiled: process.env.NODE_BINDINGS_COMPILED_DIR || "compiled",
-      platform: process.platform,
-      arch: process.arch,
-      nodePreGyp: "node-v" + process.versions.modules + "-" + process.platform + "-" + process.arch,
-      version: process.versions.node,
-      bindings: "bindings.node",
-      try: [
-        // node-gyp's linked version in the "build" dir
-        ["module_root", "build", "bindings"],
-        // node-waf and gyp_addon (a.k.a node-gyp)
-        ["module_root", "build", "Debug", "bindings"],
-        ["module_root", "build", "Release", "bindings"],
-        // Debug files, for development (legacy behavior, remove for node v0.9)
-        ["module_root", "out", "Debug", "bindings"],
-        ["module_root", "Debug", "bindings"],
-        // Release files, but manually compiled (legacy behavior, remove for node v0.9)
-        ["module_root", "out", "Release", "bindings"],
-        ["module_root", "Release", "bindings"],
-        // Legacy from node-waf, node <= 0.4.x
-        ["module_root", "build", "default", "bindings"],
-        // Production "Release" buildtype binary (meh...)
-        ["module_root", "compiled", "version", "platform", "arch", "bindings"],
-        // node-qbs builds
-        ["module_root", "addon-build", "release", "install-root", "bindings"],
-        ["module_root", "addon-build", "debug", "install-root", "bindings"],
-        ["module_root", "addon-build", "default", "install-root", "bindings"],
-        // node-pre-gyp path ./lib/binding/{node_abi}-{platform}-{arch}
-        ["module_root", "lib", "binding", "nodePreGyp", "bindings"]
-      ]
-    };
-    function bindings(opts) {
-      if (typeof opts == "string") {
-        opts = { bindings: opts };
-      } else if (!opts) {
-        opts = {};
-      }
-      Object.keys(defaults).map(function(i2) {
-        if (!(i2 in opts)) opts[i2] = defaults[i2];
-      });
-      if (!opts.module_root) {
-        opts.module_root = exports2.getRoot(exports2.getFileName());
-      }
-      if (path.extname(opts.bindings) != ".node") {
-        opts.bindings += ".node";
-      }
-      var requireFunc = typeof __webpack_require__ === "function" ? __non_webpack_require__ : require;
-      var tries = [], i = 0, l = opts.try.length, n, b, err;
-      for (; i < l; i++) {
-        n = join4.apply(
-          null,
-          opts.try[i].map(function(p) {
-            return opts[p] || p;
-          })
-        );
-        tries.push(n);
-        try {
-          b = opts.path ? requireFunc.resolve(n) : requireFunc(n);
-          if (!opts.path) {
-            b.path = n;
-          }
-          return b;
-        } catch (e) {
-          if (e.code !== "MODULE_NOT_FOUND" && e.code !== "QUALIFIED_PATH_RESOLUTION_FAILED" && !/not find/i.test(e.message)) {
-            throw e;
-          }
-        }
-      }
-      err = new Error(
-        "Could not locate the bindings file. Tried:\n" + tries.map(function(a) {
-          return opts.arrow + a;
-        }).join("\n")
-      );
-      err.tries = tries;
-      throw err;
-    }
-    module2.exports = exports2 = bindings;
-    exports2.getFileName = function getFileName(calling_file) {
-      var origPST = Error.prepareStackTrace, origSTL = Error.stackTraceLimit, dummy = {}, fileName;
-      Error.stackTraceLimit = 10;
-      Error.prepareStackTrace = function(e, st) {
-        for (var i = 0, l = st.length; i < l; i++) {
-          fileName = st[i].getFileName();
-          if (fileName !== __filename) {
-            if (calling_file) {
-              if (fileName !== calling_file) {
-                return;
-              }
-            } else {
-              return;
-            }
-          }
-        }
-      };
-      Error.captureStackTrace(dummy);
-      dummy.stack;
-      Error.prepareStackTrace = origPST;
-      Error.stackTraceLimit = origSTL;
-      var fileSchema = "file://";
-      if (fileName.indexOf(fileSchema) === 0) {
-        fileName = fileURLToPath2(fileName);
-      }
-      return fileName;
-    };
-    exports2.getRoot = function getRoot(file) {
-      var dir = dirname2(file), prev;
-      while (true) {
-        if (dir === ".") {
-          dir = process.cwd();
-        }
-        if (exists(join4(dir, "package.json")) || exists(join4(dir, "node_modules"))) {
-          return dir;
-        }
-        if (prev === dir) {
-          throw new Error(
-            'Could not find module root given file: "' + file + '". Do you have a `package.json` file? '
-          );
-        }
-        prev = dir;
-        dir = join4(dir, "..");
-      }
-    };
-  }
-});
-
-// node_modules/better-sqlite3/lib/methods/wrappers.js
-var require_wrappers = __commonJS({
-  "node_modules/better-sqlite3/lib/methods/wrappers.js"(exports2) {
-    "use strict";
-    var { cppdb } = require_util();
-    exports2.prepare = function prepare(sql) {
-      return this[cppdb].prepare(sql, this, false);
-    };
-    exports2.exec = function exec(sql) {
-      this[cppdb].exec(sql);
-      return this;
-    };
-    exports2.close = function close() {
-      this[cppdb].close();
-      return this;
-    };
-    exports2.loadExtension = function loadExtension(...args) {
-      this[cppdb].loadExtension(...args);
-      return this;
-    };
-    exports2.defaultSafeIntegers = function defaultSafeIntegers(...args) {
-      this[cppdb].defaultSafeIntegers(...args);
-      return this;
-    };
-    exports2.unsafeMode = function unsafeMode(...args) {
-      this[cppdb].unsafeMode(...args);
-      return this;
-    };
-    exports2.getters = {
-      name: {
-        get: function name() {
-          return this[cppdb].name;
-        },
-        enumerable: true
-      },
-      open: {
-        get: function open() {
-          return this[cppdb].open;
-        },
-        enumerable: true
-      },
-      inTransaction: {
-        get: function inTransaction() {
-          return this[cppdb].inTransaction;
-        },
-        enumerable: true
-      },
-      readonly: {
-        get: function readonly() {
-          return this[cppdb].readonly;
-        },
-        enumerable: true
-      },
-      memory: {
-        get: function memory() {
-          return this[cppdb].memory;
-        },
-        enumerable: true
-      }
-    };
-  }
-});
-
-// node_modules/better-sqlite3/lib/methods/transaction.js
-var require_transaction = __commonJS({
-  "node_modules/better-sqlite3/lib/methods/transaction.js"(exports2, module2) {
-    "use strict";
-    var { cppdb } = require_util();
-    var controllers = /* @__PURE__ */ new WeakMap();
-    module2.exports = function transaction(fn) {
-      if (typeof fn !== "function") throw new TypeError("Expected first argument to be a function");
-      const db = this[cppdb];
-      const controller = getController(db, this);
-      const { apply } = Function.prototype;
-      const properties = {
-        default: { value: wrapTransaction(apply, fn, db, controller.default) },
-        deferred: { value: wrapTransaction(apply, fn, db, controller.deferred) },
-        immediate: { value: wrapTransaction(apply, fn, db, controller.immediate) },
-        exclusive: { value: wrapTransaction(apply, fn, db, controller.exclusive) },
-        database: { value: this, enumerable: true }
-      };
-      Object.defineProperties(properties.default.value, properties);
-      Object.defineProperties(properties.deferred.value, properties);
-      Object.defineProperties(properties.immediate.value, properties);
-      Object.defineProperties(properties.exclusive.value, properties);
-      return properties.default.value;
-    };
-    var getController = (db, self) => {
-      let controller = controllers.get(db);
-      if (!controller) {
-        const shared = {
-          commit: db.prepare("COMMIT", self, false),
-          rollback: db.prepare("ROLLBACK", self, false),
-          savepoint: db.prepare("SAVEPOINT `	_bs3.	`", self, false),
-          release: db.prepare("RELEASE `	_bs3.	`", self, false),
-          rollbackTo: db.prepare("ROLLBACK TO `	_bs3.	`", self, false)
-        };
-        controllers.set(db, controller = {
-          default: Object.assign({ begin: db.prepare("BEGIN", self, false) }, shared),
-          deferred: Object.assign({ begin: db.prepare("BEGIN DEFERRED", self, false) }, shared),
-          immediate: Object.assign({ begin: db.prepare("BEGIN IMMEDIATE", self, false) }, shared),
-          exclusive: Object.assign({ begin: db.prepare("BEGIN EXCLUSIVE", self, false) }, shared)
-        });
-      }
-      return controller;
-    };
-    var wrapTransaction = (apply, fn, db, { begin, commit, rollback, savepoint, release, rollbackTo }) => function sqliteTransaction() {
-      let before, after, undo;
-      if (db.inTransaction) {
-        before = savepoint;
-        after = release;
-        undo = rollbackTo;
-      } else {
-        before = begin;
-        after = commit;
-        undo = rollback;
-      }
-      before.run();
-      try {
-        const result = apply.call(fn, this, arguments);
-        if (result && typeof result.then === "function") {
-          throw new TypeError("Transaction function cannot return a promise");
-        }
-        after.run();
-        return result;
-      } catch (ex) {
-        if (db.inTransaction) {
-          undo.run();
-          if (undo !== rollback) after.run();
-        }
-        throw ex;
-      }
-    };
-  }
-});
-
-// node_modules/better-sqlite3/lib/methods/pragma.js
-var require_pragma = __commonJS({
-  "node_modules/better-sqlite3/lib/methods/pragma.js"(exports2, module2) {
-    "use strict";
-    var { getBooleanOption, cppdb } = require_util();
-    module2.exports = function pragma(source, options) {
-      if (options == null) options = {};
-      if (typeof source !== "string") throw new TypeError("Expected first argument to be a string");
-      if (typeof options !== "object") throw new TypeError("Expected second argument to be an options object");
-      const simple = getBooleanOption(options, "simple");
-      const stmt = this[cppdb].prepare(`PRAGMA ${source}`, this, true);
-      return simple ? stmt.pluck().get() : stmt.all();
-    };
-  }
-});
-
-// node_modules/better-sqlite3/lib/methods/backup.js
-var require_backup = __commonJS({
-  "node_modules/better-sqlite3/lib/methods/backup.js"(exports2, module2) {
-    "use strict";
-    var fs = require("fs");
-    var path = require("path");
-    var { promisify } = require("util");
-    var { cppdb } = require_util();
-    var fsAccess = promisify(fs.access);
-    module2.exports = async function backup(filename, options) {
-      if (options == null) options = {};
-      if (typeof filename !== "string") throw new TypeError("Expected first argument to be a string");
-      if (typeof options !== "object") throw new TypeError("Expected second argument to be an options object");
-      filename = filename.trim();
-      const attachedName = "attached" in options ? options.attached : "main";
-      const handler = "progress" in options ? options.progress : null;
-      if (!filename) throw new TypeError("Backup filename cannot be an empty string");
-      if (filename === ":memory:") throw new TypeError('Invalid backup filename ":memory:"');
-      if (typeof attachedName !== "string") throw new TypeError('Expected the "attached" option to be a string');
-      if (!attachedName) throw new TypeError('The "attached" option cannot be an empty string');
-      if (handler != null && typeof handler !== "function") throw new TypeError('Expected the "progress" option to be a function');
-      await fsAccess(path.dirname(filename)).catch(() => {
-        throw new TypeError("Cannot save backup because the directory does not exist");
-      });
-      const isNewFile = await fsAccess(filename).then(() => false, () => true);
-      return runBackup(this[cppdb].backup(this, attachedName, filename, isNewFile), handler || null);
-    };
-    var runBackup = (backup, handler) => {
-      let rate = 0;
-      let useDefault = true;
-      return new Promise((resolve, reject) => {
-        setImmediate(function step() {
-          try {
-            const progress = backup.transfer(rate);
-            if (!progress.remainingPages) {
-              backup.close();
-              resolve(progress);
-              return;
-            }
-            if (useDefault) {
-              useDefault = false;
-              rate = 100;
-            }
-            if (handler) {
-              const ret = handler(progress);
-              if (ret !== void 0) {
-                if (typeof ret === "number" && ret === ret) rate = Math.max(0, Math.min(2147483647, Math.round(ret)));
-                else throw new TypeError("Expected progress callback to return a number or undefined");
-              }
-            }
-            setImmediate(step);
-          } catch (err) {
-            backup.close();
-            reject(err);
-          }
-        });
-      });
-    };
-  }
-});
-
-// node_modules/better-sqlite3/lib/methods/serialize.js
-var require_serialize = __commonJS({
-  "node_modules/better-sqlite3/lib/methods/serialize.js"(exports2, module2) {
-    "use strict";
-    var { cppdb } = require_util();
-    module2.exports = function serialize(options) {
-      if (options == null) options = {};
-      if (typeof options !== "object") throw new TypeError("Expected first argument to be an options object");
-      const attachedName = "attached" in options ? options.attached : "main";
-      if (typeof attachedName !== "string") throw new TypeError('Expected the "attached" option to be a string');
-      if (!attachedName) throw new TypeError('The "attached" option cannot be an empty string');
-      return this[cppdb].serialize(attachedName);
-    };
-  }
-});
-
-// node_modules/better-sqlite3/lib/methods/function.js
-var require_function = __commonJS({
-  "node_modules/better-sqlite3/lib/methods/function.js"(exports2, module2) {
-    "use strict";
-    var { getBooleanOption, cppdb } = require_util();
-    module2.exports = function defineFunction(name, options, fn) {
-      if (options == null) options = {};
-      if (typeof options === "function") {
-        fn = options;
-        options = {};
-      }
-      if (typeof name !== "string") throw new TypeError("Expected first argument to be a string");
-      if (typeof fn !== "function") throw new TypeError("Expected last argument to be a function");
-      if (typeof options !== "object") throw new TypeError("Expected second argument to be an options object");
-      if (!name) throw new TypeError("User-defined function name cannot be an empty string");
-      const safeIntegers = "safeIntegers" in options ? +getBooleanOption(options, "safeIntegers") : 2;
-      const deterministic = getBooleanOption(options, "deterministic");
-      const directOnly = getBooleanOption(options, "directOnly");
-      const varargs = getBooleanOption(options, "varargs");
-      let argCount = -1;
-      if (!varargs) {
-        argCount = fn.length;
-        if (!Number.isInteger(argCount) || argCount < 0) throw new TypeError("Expected function.length to be a positive integer");
-        if (argCount > 100) throw new RangeError("User-defined functions cannot have more than 100 arguments");
-      }
-      this[cppdb].function(fn, name, argCount, safeIntegers, deterministic, directOnly);
-      return this;
-    };
-  }
-});
-
-// node_modules/better-sqlite3/lib/methods/aggregate.js
-var require_aggregate = __commonJS({
-  "node_modules/better-sqlite3/lib/methods/aggregate.js"(exports2, module2) {
-    "use strict";
-    var { getBooleanOption, cppdb } = require_util();
-    module2.exports = function defineAggregate(name, options) {
-      if (typeof name !== "string") throw new TypeError("Expected first argument to be a string");
-      if (typeof options !== "object" || options === null) throw new TypeError("Expected second argument to be an options object");
-      if (!name) throw new TypeError("User-defined function name cannot be an empty string");
-      const start = "start" in options ? options.start : null;
-      const step = getFunctionOption(options, "step", true);
-      const inverse = getFunctionOption(options, "inverse", false);
-      const result = getFunctionOption(options, "result", false);
-      const safeIntegers = "safeIntegers" in options ? +getBooleanOption(options, "safeIntegers") : 2;
-      const deterministic = getBooleanOption(options, "deterministic");
-      const directOnly = getBooleanOption(options, "directOnly");
-      const varargs = getBooleanOption(options, "varargs");
-      let argCount = -1;
-      if (!varargs) {
-        argCount = Math.max(getLength(step), inverse ? getLength(inverse) : 0);
-        if (argCount > 0) argCount -= 1;
-        if (argCount > 100) throw new RangeError("User-defined functions cannot have more than 100 arguments");
-      }
-      this[cppdb].aggregate(start, step, inverse, result, name, argCount, safeIntegers, deterministic, directOnly);
-      return this;
-    };
-    var getFunctionOption = (options, key, required) => {
-      const value = key in options ? options[key] : null;
-      if (typeof value === "function") return value;
-      if (value != null) throw new TypeError(`Expected the "${key}" option to be a function`);
-      if (required) throw new TypeError(`Missing required option "${key}"`);
-      return null;
-    };
-    var getLength = ({ length }) => {
-      if (Number.isInteger(length) && length >= 0) return length;
-      throw new TypeError("Expected function.length to be a positive integer");
-    };
-  }
-});
-
-// node_modules/better-sqlite3/lib/methods/table.js
-var require_table = __commonJS({
-  "node_modules/better-sqlite3/lib/methods/table.js"(exports2, module2) {
-    "use strict";
-    var { cppdb } = require_util();
-    module2.exports = function defineTable(name, factory) {
-      if (typeof name !== "string") throw new TypeError("Expected first argument to be a string");
-      if (!name) throw new TypeError("Virtual table module name cannot be an empty string");
-      let eponymous = false;
-      if (typeof factory === "object" && factory !== null) {
-        eponymous = true;
-        factory = defer(parseTableDefinition(factory, "used", name));
-      } else {
-        if (typeof factory !== "function") throw new TypeError("Expected second argument to be a function or a table definition object");
-        factory = wrapFactory(factory);
-      }
-      this[cppdb].table(factory, name, eponymous);
-      return this;
-    };
-    function wrapFactory(factory) {
-      return function virtualTableFactory(moduleName, databaseName, tableName, ...args) {
-        const thisObject = {
-          module: moduleName,
-          database: databaseName,
-          table: tableName
-        };
-        const def = apply.call(factory, thisObject, args);
-        if (typeof def !== "object" || def === null) {
-          throw new TypeError(`Virtual table module "${moduleName}" did not return a table definition object`);
-        }
-        return parseTableDefinition(def, "returned", moduleName);
-      };
-    }
-    function parseTableDefinition(def, verb, moduleName) {
-      if (!hasOwnProperty.call(def, "rows")) {
-        throw new TypeError(`Virtual table module "${moduleName}" ${verb} a table definition without a "rows" property`);
-      }
-      if (!hasOwnProperty.call(def, "columns")) {
-        throw new TypeError(`Virtual table module "${moduleName}" ${verb} a table definition without a "columns" property`);
-      }
-      const rows = def.rows;
-      if (typeof rows !== "function" || Object.getPrototypeOf(rows) !== GeneratorFunctionPrototype) {
-        throw new TypeError(`Virtual table module "${moduleName}" ${verb} a table definition with an invalid "rows" property (should be a generator function)`);
-      }
-      let columns = def.columns;
-      if (!Array.isArray(columns) || !(columns = [...columns]).every((x) => typeof x === "string")) {
-        throw new TypeError(`Virtual table module "${moduleName}" ${verb} a table definition with an invalid "columns" property (should be an array of strings)`);
-      }
-      if (columns.length !== new Set(columns).size) {
-        throw new TypeError(`Virtual table module "${moduleName}" ${verb} a table definition with duplicate column names`);
-      }
-      if (!columns.length) {
-        throw new RangeError(`Virtual table module "${moduleName}" ${verb} a table definition with zero columns`);
-      }
-      let parameters;
-      if (hasOwnProperty.call(def, "parameters")) {
-        parameters = def.parameters;
-        if (!Array.isArray(parameters) || !(parameters = [...parameters]).every((x) => typeof x === "string")) {
-          throw new TypeError(`Virtual table module "${moduleName}" ${verb} a table definition with an invalid "parameters" property (should be an array of strings)`);
-        }
-      } else {
-        parameters = inferParameters(rows);
-      }
-      if (parameters.length !== new Set(parameters).size) {
-        throw new TypeError(`Virtual table module "${moduleName}" ${verb} a table definition with duplicate parameter names`);
-      }
-      if (parameters.length > 32) {
-        throw new RangeError(`Virtual table module "${moduleName}" ${verb} a table definition with more than the maximum number of 32 parameters`);
-      }
-      for (const parameter of parameters) {
-        if (columns.includes(parameter)) {
-          throw new TypeError(`Virtual table module "${moduleName}" ${verb} a table definition with column "${parameter}" which was ambiguously defined as both a column and parameter`);
-        }
-      }
-      let safeIntegers = 2;
-      if (hasOwnProperty.call(def, "safeIntegers")) {
-        const bool = def.safeIntegers;
-        if (typeof bool !== "boolean") {
-          throw new TypeError(`Virtual table module "${moduleName}" ${verb} a table definition with an invalid "safeIntegers" property (should be a boolean)`);
-        }
-        safeIntegers = +bool;
-      }
-      let directOnly = false;
-      if (hasOwnProperty.call(def, "directOnly")) {
-        directOnly = def.directOnly;
-        if (typeof directOnly !== "boolean") {
-          throw new TypeError(`Virtual table module "${moduleName}" ${verb} a table definition with an invalid "directOnly" property (should be a boolean)`);
-        }
-      }
-      const columnDefinitions = [
-        ...parameters.map(identifier).map((str) => `${str} HIDDEN`),
-        ...columns.map(identifier)
-      ];
-      return [
-        `CREATE TABLE x(${columnDefinitions.join(", ")});`,
-        wrapGenerator(rows, new Map(columns.map((x, i) => [x, parameters.length + i])), moduleName),
-        parameters,
-        safeIntegers,
-        directOnly
-      ];
-    }
-    function wrapGenerator(generator, columnMap, moduleName) {
-      return function* virtualTable(...args) {
-        const output = args.map((x) => Buffer.isBuffer(x) ? Buffer.from(x) : x);
-        for (let i = 0; i < columnMap.size; ++i) {
-          output.push(null);
-        }
-        for (const row of generator(...args)) {
-          if (Array.isArray(row)) {
-            extractRowArray(row, output, columnMap.size, moduleName);
-            yield output;
-          } else if (typeof row === "object" && row !== null) {
-            extractRowObject(row, output, columnMap, moduleName);
-            yield output;
-          } else {
-            throw new TypeError(`Virtual table module "${moduleName}" yielded something that isn't a valid row object`);
-          }
-        }
-      };
-    }
-    function extractRowArray(row, output, columnCount, moduleName) {
-      if (row.length !== columnCount) {
-        throw new TypeError(`Virtual table module "${moduleName}" yielded a row with an incorrect number of columns`);
-      }
-      const offset = output.length - columnCount;
-      for (let i = 0; i < columnCount; ++i) {
-        output[i + offset] = row[i];
-      }
-    }
-    function extractRowObject(row, output, columnMap, moduleName) {
-      let count = 0;
-      for (const key of Object.keys(row)) {
-        const index = columnMap.get(key);
-        if (index === void 0) {
-          throw new TypeError(`Virtual table module "${moduleName}" yielded a row with an undeclared column "${key}"`);
-        }
-        output[index] = row[key];
-        count += 1;
-      }
-      if (count !== columnMap.size) {
-        throw new TypeError(`Virtual table module "${moduleName}" yielded a row with missing columns`);
-      }
-    }
-    function inferParameters({ length }) {
-      if (!Number.isInteger(length) || length < 0) {
-        throw new TypeError("Expected function.length to be a positive integer");
-      }
-      const params = [];
-      for (let i = 0; i < length; ++i) {
-        params.push(`$${i + 1}`);
-      }
-      return params;
-    }
-    var { hasOwnProperty } = Object.prototype;
-    var { apply } = Function.prototype;
-    var GeneratorFunctionPrototype = Object.getPrototypeOf(function* () {
-    });
-    var identifier = (str) => `"${str.replace(/"/g, '""')}"`;
-    var defer = (x) => () => x;
-  }
-});
-
-// node_modules/better-sqlite3/lib/methods/inspect.js
-var require_inspect = __commonJS({
-  "node_modules/better-sqlite3/lib/methods/inspect.js"(exports2, module2) {
-    "use strict";
-    var DatabaseInspection = function Database2() {
-    };
-    module2.exports = function inspect(depth, opts) {
-      return Object.assign(new DatabaseInspection(), this);
-    };
-  }
-});
-
-// node_modules/better-sqlite3/lib/database.js
-var require_database = __commonJS({
-  "node_modules/better-sqlite3/lib/database.js"(exports2, module2) {
-    "use strict";
-    var fs = require("fs");
-    var path = require("path");
-    var util = require_util();
-    var SqliteError = require_sqlite_error();
-    var DEFAULT_ADDON;
-    function Database2(filenameGiven, options) {
-      if (new.target == null) {
-        return new Database2(filenameGiven, options);
-      }
-      let buffer;
-      if (Buffer.isBuffer(filenameGiven)) {
-        buffer = filenameGiven;
-        filenameGiven = ":memory:";
-      }
-      if (filenameGiven == null) filenameGiven = "";
-      if (options == null) options = {};
-      if (typeof filenameGiven !== "string") throw new TypeError("Expected first argument to be a string");
-      if (typeof options !== "object") throw new TypeError("Expected second argument to be an options object");
-      if ("readOnly" in options) throw new TypeError('Misspelled option "readOnly" should be "readonly"');
-      if ("memory" in options) throw new TypeError('Option "memory" was removed in v7.0.0 (use ":memory:" filename instead)');
-      const filename = filenameGiven.trim();
-      const anonymous = filename === "" || filename === ":memory:";
-      const readonly = util.getBooleanOption(options, "readonly");
-      const fileMustExist = util.getBooleanOption(options, "fileMustExist");
-      const timeout = "timeout" in options ? options.timeout : 5e3;
-      const verbose = "verbose" in options ? options.verbose : null;
-      const nativeBinding = "nativeBinding" in options ? options.nativeBinding : null;
-      if (readonly && anonymous && !buffer) throw new TypeError("In-memory/temporary databases cannot be readonly");
-      if (!Number.isInteger(timeout) || timeout < 0) throw new TypeError('Expected the "timeout" option to be a positive integer');
-      if (timeout > 2147483647) throw new RangeError('Option "timeout" cannot be greater than 2147483647');
-      if (verbose != null && typeof verbose !== "function") throw new TypeError('Expected the "verbose" option to be a function');
-      if (nativeBinding != null && typeof nativeBinding !== "string" && typeof nativeBinding !== "object") throw new TypeError('Expected the "nativeBinding" option to be a string or addon object');
-      let addon;
-      if (nativeBinding == null) {
-        addon = DEFAULT_ADDON || (DEFAULT_ADDON = require_bindings()("better_sqlite3.node"));
-      } else if (typeof nativeBinding === "string") {
-        const requireFunc = typeof __non_webpack_require__ === "function" ? __non_webpack_require__ : require;
-        addon = requireFunc(path.resolve(nativeBinding).replace(/(\.node)?$/, ".node"));
-      } else {
-        addon = nativeBinding;
-      }
-      if (!addon.isInitialized) {
-        addon.setErrorConstructor(SqliteError);
-        addon.isInitialized = true;
-      }
-      if (!anonymous && !filename.startsWith("file:") && !fs.existsSync(path.dirname(filename))) {
-        throw new TypeError("Cannot open database because the directory does not exist");
-      }
-      Object.defineProperties(this, {
-        [util.cppdb]: { value: new addon.Database(filename, filenameGiven, anonymous, readonly, fileMustExist, timeout, verbose || null, buffer || null) },
-        ...wrappers.getters
-      });
-    }
-    var wrappers = require_wrappers();
-    Database2.prototype.prepare = wrappers.prepare;
-    Database2.prototype.transaction = require_transaction();
-    Database2.prototype.pragma = require_pragma();
-    Database2.prototype.backup = require_backup();
-    Database2.prototype.serialize = require_serialize();
-    Database2.prototype.function = require_function();
-    Database2.prototype.aggregate = require_aggregate();
-    Database2.prototype.table = require_table();
-    Database2.prototype.loadExtension = wrappers.loadExtension;
-    Database2.prototype.exec = wrappers.exec;
-    Database2.prototype.close = wrappers.close;
-    Database2.prototype.defaultSafeIntegers = wrappers.defaultSafeIntegers;
-    Database2.prototype.unsafeMode = wrappers.unsafeMode;
-    Database2.prototype[util.inspect] = require_inspect();
-    module2.exports = Database2;
-  }
-});
-
-// node_modules/better-sqlite3/lib/index.js
-var require_lib = __commonJS({
-  "node_modules/better-sqlite3/lib/index.js"(exports2, module2) {
-    "use strict";
-    module2.exports = require_database();
-    module2.exports.SqliteError = require_sqlite_error();
-  }
-});
-
-// main.ts
-var main_exports = {};
-__export(main_exports, {
-  default: () => TranscriptMemoryVaultPlugin
-});
-module.exports = __toCommonJS(main_exports);
-
-// src/obsidian/Plugin.ts
-var import_obsidian5 = require("obsidian");
-var import_node_fs3 = require("node:fs");
-var import_node_path4 = require("node:path");
+// src/mcp/server.ts
+var import_node_readline = require("node:readline");
+var import_node_path3 = require("node:path");
 
 // src/db/connection.ts
-var import_better_sqlite3 = __toESM(require_lib(), 1);
+var import_better_sqlite3 = __toESM(require("better-sqlite3"), 1);
 
 // src/db/migrations/index.ts
 var import_node_fs = require("node:fs");
 var import_node_path = require("node:path");
 var import_node_url = require("node:url");
-var defaultMigrationDirectory = () => (0, import_node_path.dirname)((0, import_node_url.fileURLToPath)("file:///__TRANSCRIPT_MEMORY_BUNDLE__/index.js"));
+var import_meta = {};
+var defaultMigrationDirectory = () => (0, import_node_path.dirname)((0, import_node_url.fileURLToPath)(import_meta.url));
 var PACKAGED_MIGRATIONS = [
   { id: "001", name: "initial_schema", filename: "001_initial_schema.sql" },
   { id: "002", name: "tighten_transcript_immutability", filename: "002_tighten_transcript_immutability.sql" },
@@ -1417,396 +627,7 @@ function createRepositories(db) {
   };
 }
 
-// src/obsidian/pluginTypes.ts
-var OBSIDIAN_VIEW_TYPES = {
-  dashboard: "transcript-memory-dashboard",
-  upload: "transcript-memory-upload",
-  transcript: "transcript-memory-transcript",
-  ask: "transcript-memory-ask",
-  answer: "transcript-memory-answer",
-  evidence: "transcript-memory-evidence",
-  memory: "transcript-memory-memory-object",
-  graph: "transcript-memory-graph",
-  search: "transcript-memory-search",
-  review: "transcript-memory-review"
-};
-var OBSIDIAN_COMMANDS = [
-  { id: "open-dashboard", name: "Open Transcript Memory Dashboard", viewType: OBSIDIAN_VIEW_TYPES.dashboard },
-  { id: "upload-transcript", name: "Upload Transcript", viewType: OBSIDIAN_VIEW_TYPES.upload },
-  { id: "ask-ai", name: "Ask AI About Transcripts", viewType: OBSIDIAN_VIEW_TYPES.ask },
-  { id: "search-vault", name: "Search Transcript Memory Vault", viewType: OBSIDIAN_VIEW_TYPES.search },
-  { id: "open-graph", name: "Open Memory Graph", viewType: OBSIDIAN_VIEW_TYPES.graph },
-  { id: "open-review", name: "Open Review Queue", viewType: OBSIDIAN_VIEW_TYPES.review }
-];
-var OBSIDIAN_RIBBON = { icon: "database", title: "Open Transcript Memory Dashboard" };
-var OBSIDIAN_REINDEX_COMMAND = { id: "rebuild-embedding-index", name: "Rebuild Embedding Index" };
-var viewTitle = (type) => ({
-  [OBSIDIAN_VIEW_TYPES.dashboard]: "Transcript Memory Dashboard",
-  [OBSIDIAN_VIEW_TYPES.upload]: "Upload Transcript",
-  [OBSIDIAN_VIEW_TYPES.transcript]: "Transcript Source",
-  [OBSIDIAN_VIEW_TYPES.ask]: "Ask AI",
-  [OBSIDIAN_VIEW_TYPES.answer]: "AI Answer",
-  [OBSIDIAN_VIEW_TYPES.evidence]: "Evidence",
-  [OBSIDIAN_VIEW_TYPES.memory]: "Memory Object",
-  [OBSIDIAN_VIEW_TYPES.graph]: "Memory Graph",
-  [OBSIDIAN_VIEW_TYPES.search]: "Search Transcript Memory",
-  [OBSIDIAN_VIEW_TYPES.review]: "Review Queue"
-})[type];
-var defaultTarget = (type) => ({
-  [OBSIDIAN_VIEW_TYPES.dashboard]: "mv://dashboard",
-  [OBSIDIAN_VIEW_TYPES.upload]: "mv://upload",
-  [OBSIDIAN_VIEW_TYPES.transcript]: "mv://transcripts/missing",
-  [OBSIDIAN_VIEW_TYPES.ask]: "mv://ask",
-  [OBSIDIAN_VIEW_TYPES.answer]: "mv://answers/missing",
-  [OBSIDIAN_VIEW_TYPES.evidence]: "mv://evidence/missing",
-  [OBSIDIAN_VIEW_TYPES.memory]: "mv://memory/missing",
-  [OBSIDIAN_VIEW_TYPES.graph]: "mv://graph",
-  [OBSIDIAN_VIEW_TYPES.search]: "mv://search",
-  [OBSIDIAN_VIEW_TYPES.review]: "mv://review"
-})[type];
-
-// src/obsidian/ObsidianNavigation.ts
-function createObsidianNavigation(app) {
-  const open = async (type, target) => {
-    const leaf = app.workspace.getLeaf("tab");
-    await leaf.setViewState({ type, active: true, state: { target } });
-    app.workspace.revealLeaf(leaf);
-  };
-  return {
-    openDashboard: () => open(OBSIDIAN_VIEW_TYPES.dashboard, "mv://dashboard"),
-    openUpload: () => open(OBSIDIAN_VIEW_TYPES.upload, "mv://upload"),
-    openTranscript: (id, options) => open(OBSIDIAN_VIEW_TYPES.transcript, `mv://transcripts/${encodeURIComponent(id)}${options?.spanId ? `?span=${encodeURIComponent(options.spanId)}` : ""}`),
-    openAskAI: (options) => open(OBSIDIAN_VIEW_TYPES.ask, `mv://ask${options?.transcriptIds?.length ? `?transcriptIds=${options.transcriptIds.map(encodeURIComponent).join(",")}` : ""}`),
-    openAnswer: (id) => open(OBSIDIAN_VIEW_TYPES.answer, `mv://answers/${encodeURIComponent(id)}`),
-    openEvidence: (id) => open(OBSIDIAN_VIEW_TYPES.evidence, `mv://evidence/${encodeURIComponent(id)}`),
-    openMemoryObject: (id) => open(OBSIDIAN_VIEW_TYPES.memory, `mv://memory/${encodeURIComponent(id)}`),
-    openGraph: (options) => {
-      const params = new URLSearchParams();
-      if (options?.selectedNodeId) params.set("selectedNode", options.selectedNodeId);
-      if (options?.selectedEdgeId) params.set("selectedEdge", options.selectedEdgeId);
-      if (options?.query) params.set("q", options.query);
-      return open(OBSIDIAN_VIEW_TYPES.graph, `mv://graph${params.size ? `?${params}` : ""}`);
-    },
-    openSearch: (query) => open(OBSIDIAN_VIEW_TYPES.search, `mv://search${query ? `?q=${encodeURIComponent(query)}` : ""}`),
-    openReviewQueue: (options) => open(OBSIDIAN_VIEW_TYPES.review, options?.reviewItemId ? `mv://review/${encodeURIComponent(options.reviewItemId)}` : "mv://review")
-  };
-}
-
-// src/obsidian/nativeBindings.ts
-var import_node_fs2 = require("node:fs");
-var import_node_path2 = require("node:path");
-var nativeBindingTarget = (runtime) => `${runtime.platform}-${runtime.arch}-abi${runtime.modules ?? "unknown"}`;
-function currentNativeRuntime() {
-  return {
-    platform: process.platform,
-    arch: process.arch,
-    modules: process.versions.modules,
-    electron: process.versions.electron
-  };
-}
-function listPackagedNativeTargets(pluginDirectory) {
-  const nativeDirectory = (0, import_node_path2.join)(pluginDirectory, "native");
-  try {
-    return (0, import_node_fs2.readdirSync)(nativeDirectory, { withFileTypes: true }).filter((entry) => entry.isDirectory() && (0, import_node_fs2.existsSync)((0, import_node_path2.join)(nativeDirectory, entry.name, "better_sqlite3.node"))).map((entry) => entry.name).sort();
-  } catch {
-    return [];
-  }
-}
-function resolveNativeBinding(pluginDirectory, runtime = currentNativeRuntime()) {
-  const target = nativeBindingTarget(runtime);
-  const packagedTargets = listPackagedNativeTargets(pluginDirectory);
-  const bindingPath = (0, import_node_path2.join)(pluginDirectory, "native", target, "better_sqlite3.node");
-  if ((0, import_node_fs2.existsSync)(bindingPath)) return { ok: true, target, bindingPath, packagedTargets, error: null };
-  const electron = runtime.electron ? ` Electron ${runtime.electron}` : "";
-  return {
-    ok: false,
-    target,
-    bindingPath: null,
-    packagedTargets,
-    error: `SQLite native binding unavailable for ${target}.${electron} Packaged targets: ${packagedTargets.join(", ") || "none"}.`
-  };
-}
-function nativeBindingLoadError(resolution, error) {
-  const detail = error instanceof Error ? error.message : String(error);
-  return new Error(`SQLite native binding ${resolution.target} is unavailable or incompatible: ${detail}`);
-}
-
-// src/obsidian/SettingsTab.ts
-var import_obsidian = require("obsidian");
-
-// src/obsidian/settings.ts
-var LLM_PROVIDER_OPTIONS = ["none", "openai"];
-var EMBEDDING_PROVIDER_OPTIONS = ["deterministic-test", "noop", "openai"];
-var EXTERNAL_LLM_PROVIDERS = ["openai"];
-var isExternalLlmProvider = (providerId) => EXTERNAL_LLM_PROVIDERS.includes(providerId);
-var EXTERNAL_EMBEDDING_PROVIDERS = ["openai"];
-var isExternalEmbeddingProvider = (providerId) => EXTERNAL_EMBEDDING_PROVIDERS.includes(providerId);
-function isLlmConfigured(settings) {
-  return settings.mode === "external" && isExternalLlmProvider(settings.llm.provider) && settings.llm.model.trim().length > 0 && (settings.apiKeys[settings.llm.provider]?.trim().length ?? 0) > 0;
-}
-var DEFAULT_SETTINGS = {
-  schemaVersion: 1,
-  mode: "local",
-  llm: { provider: "none", model: "" },
-  embedding: { provider: "deterministic-test", model: "token-hash-v1" },
-  apiKeys: {}
-};
-var isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
-var asString = (value, fallback) => typeof value === "string" ? value : fallback;
-var normalizeMode = (value) => value === "external" ? "external" : "local";
-var positiveInt = (value) => {
-  const n = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
-  return Number.isInteger(n) && n > 0 ? n : void 0;
-};
-var positiveNumber = (value) => {
-  const n = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
-  return Number.isFinite(n) && n > 0 ? n : void 0;
-};
-var normalizeBaseUrl = (value) => typeof value === "string" && value.trim().length > 0 ? value.trim() : void 0;
-var normalizeLlmSelection = (value, fallback) => {
-  const record = isRecord(value) ? value : {};
-  const result = {
-    provider: asString(record.provider, fallback.provider),
-    model: asString(record.model, fallback.model)
-  };
-  const baseUrl = normalizeBaseUrl(record.baseUrl);
-  if (baseUrl !== void 0) result.baseUrl = baseUrl;
-  const timeoutMs = positiveNumber(record.timeoutMs);
-  if (timeoutMs !== void 0) result.timeoutMs = timeoutMs;
-  return result;
-};
-var normalizeEmbeddingSelection = (value, fallback) => {
-  const record = isRecord(value) ? value : {};
-  const result = {
-    provider: asString(record.provider, fallback.provider),
-    model: asString(record.model, fallback.model)
-  };
-  const dimensions = positiveInt(record.dimensions);
-  if (dimensions !== void 0) result.dimensions = dimensions;
-  const baseUrl = normalizeBaseUrl(record.baseUrl);
-  if (baseUrl !== void 0) result.baseUrl = baseUrl;
-  const timeoutMs = positiveNumber(record.timeoutMs);
-  if (timeoutMs !== void 0) result.timeoutMs = timeoutMs;
-  return result;
-};
-var normalizeApiKeys = (value) => {
-  if (!isRecord(value)) return {};
-  const result = {};
-  for (const [key, raw] of Object.entries(value)) {
-    if (typeof raw === "string" && raw.trim().length > 0) result[key] = raw;
-  }
-  return result;
-};
-function normalizeSettings(raw) {
-  const record = isRecord(raw) ? raw : {};
-  return {
-    schemaVersion: 1,
-    mode: normalizeMode(record.mode),
-    llm: normalizeLlmSelection(record.llm, DEFAULT_SETTINGS.llm),
-    embedding: normalizeEmbeddingSelection(record.embedding, DEFAULT_SETTINGS.embedding),
-    apiKeys: normalizeApiKeys(record.apiKeys)
-  };
-}
-function setApiKey(settings, providerId, key) {
-  const apiKeys = { ...settings.apiKeys };
-  const trimmed = key.trim();
-  if (trimmed) apiKeys[providerId] = trimmed;
-  else delete apiKeys[providerId];
-  return { ...settings, apiKeys };
-}
-function redactApiKey(key) {
-  return key && key.trim().length > 0 ? "configured" : "not set";
-}
-function settingsHealthSummary(settings) {
-  return {
-    providerMode: settings.mode,
-    llmProvider: settings.llm.provider,
-    llmModel: settings.llm.model,
-    embeddingProvider: settings.embedding.provider,
-    embeddingModel: settings.embedding.model,
-    apiKeyConfigured: Object.values(settings.apiKeys).some((value) => value.trim().length > 0),
-    llmReady: isLlmConfigured(settings)
-  };
-}
-
-// src/obsidian/SettingsTab.ts
-var TranscriptMemorySettingsTab = class extends import_obsidian.PluginSettingTab {
-  constructor(app, plugin, getHealth, navigation, getSettings, onSave) {
-    super(app, plugin);
-    this.getHealth = getHealth;
-    this.navigation = navigation;
-    this.getSettings = getSettings;
-    this.onSave = onSave;
-  }
-  getHealth;
-  navigation;
-  getSettings;
-  onSave;
-  display() {
-    const health = this.getHealth();
-    const settings = this.getSettings();
-    this.containerEl.empty();
-    this.containerEl.createEl("h2", { text: "Transcript Memory Vault" });
-    this.containerEl.createEl("h3", { text: "AI providers" });
-    const warning = this.containerEl.createEl("p", {
-      text: `API keys are stored in this plugin's local data file (data.json) as plain text. If your vault is synced, the key may sync with it. Run the "Rebuild Embedding Index" command to (re)build the index with the configured provider \u2014 that command is the only action that may make a network call.`
-    });
-    warning.addClass("setting-item-description");
-    const required = this.containerEl.createEl("p", {
-      text: isLlmConfigured(settings) ? `AI is configured: ${settings.llm.provider} / ${settings.llm.model}. Ask AI and AI memory extraction are enabled.` : "AI is NOT configured. Ask AI and AI memory extraction require an external LLM provider, model, and API key. Configure one below to enable AI features."
-    });
-    required.addClass("setting-item-description");
-    new import_obsidian.Setting(this.containerEl).setName("LLM provider").setDesc('Required. Ask AI and AI memory extraction use this external provider. Select "none" to disable AI features.').addDropdown((dropdown) => {
-      for (const option of LLM_PROVIDER_OPTIONS) dropdown.addOption(option, option);
-      dropdown.setValue(settings.llm.provider).onChange(async (value) => {
-        const mode = value !== "none" ? "external" : "local";
-        await this.onSave({ ...this.getSettings(), mode, llm: { ...this.getSettings().llm, provider: value } });
-        this.display();
-      });
-    });
-    new import_obsidian.Setting(this.containerEl).setName("LLM model").setDesc("Model identifier. Required for an external provider.").addText(
-      (text) => text.setPlaceholder("e.g. gpt-4o-mini").setValue(settings.llm.model).onChange(async (value) => {
-        await this.onSave({ ...this.getSettings(), llm: { ...this.getSettings().llm, model: value } });
-      })
-    );
-    new import_obsidian.Setting(this.containerEl).setName("LLM base URL").setDesc("Optional. Override the OpenAI-compatible endpoint for the external LLM provider.").addText(
-      (text) => text.setPlaceholder("https://api.openai.com/v1").setValue(settings.llm.baseUrl ?? "").onChange(async (value) => {
-        const baseUrl = value.trim().length > 0 ? value.trim() : void 0;
-        await this.onSave({ ...this.getSettings(), llm: { ...this.getSettings().llm, baseUrl } });
-      })
-    );
-    new import_obsidian.Setting(this.containerEl).setName("LLM request timeout (ms)").setDesc("Optional. Applied to the external LLM provider; the local provider ignores it.").addText(
-      (text) => text.setPlaceholder("e.g. 30000").setValue(settings.llm.timeoutMs != null ? String(settings.llm.timeoutMs) : "").onChange(async (value) => {
-        const parsed = Number(value.trim());
-        const timeoutMs = Number.isFinite(parsed) && parsed > 0 ? parsed : void 0;
-        await this.onSave({ ...this.getSettings(), llm: { ...this.getSettings().llm, timeoutMs } });
-      })
-    );
-    new import_obsidian.Setting(this.containerEl).setName("Embedding provider").setDesc("For future semantic retrieval. The deterministic test provider is the default.").addDropdown((dropdown) => {
-      for (const option of EMBEDDING_PROVIDER_OPTIONS) dropdown.addOption(option, option);
-      dropdown.setValue(settings.embedding.provider).onChange(async (value) => {
-        await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, provider: value } });
-        this.display();
-      });
-    });
-    new import_obsidian.Setting(this.containerEl).setName("Embedding model").setDesc("Model identifier placeholder.").addText(
-      (text) => text.setPlaceholder("token-hash-v1").setValue(settings.embedding.model).onChange(async (value) => {
-        await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, model: value } });
-      })
-    );
-    const embeddingProviderId = settings.embedding.provider;
-    const embeddingIsExternal = isExternalEmbeddingProvider(embeddingProviderId);
-    new import_obsidian.Setting(this.containerEl).setName("Embedding dimensions").setDesc("Required for an external embedding provider: the vector length the model returns.").addText(
-      (text) => text.setPlaceholder("e.g. 1536").setValue(settings.embedding.dimensions != null ? String(settings.embedding.dimensions) : "").onChange(async (value) => {
-        const parsed = Number(value.trim());
-        const dimensions = Number.isInteger(parsed) && parsed > 0 ? parsed : void 0;
-        await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, dimensions } });
-      })
-    );
-    new import_obsidian.Setting(this.containerEl).setName("Embedding base URL").setDesc("Optional. Override the OpenAI-compatible endpoint for the external embedding provider.").addText(
-      (text) => text.setPlaceholder("https://api.openai.com/v1").setValue(settings.embedding.baseUrl ?? "").onChange(async (value) => {
-        const baseUrl = value.trim().length > 0 ? value.trim() : void 0;
-        await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, baseUrl } });
-      })
-    );
-    new import_obsidian.Setting(this.containerEl).setName("Embedding request timeout (ms)").setDesc("Optional. Applied only to the external embedding HTTP transport.").addText(
-      (text) => text.setPlaceholder("e.g. 30000").setValue(settings.embedding.timeoutMs != null ? String(settings.embedding.timeoutMs) : "").onChange(async (value) => {
-        const parsed = Number(value.trim());
-        const timeoutMs = Number.isFinite(parsed) && parsed > 0 ? parsed : void 0;
-        await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, timeoutMs } });
-      })
-    );
-    new import_obsidian.Setting(this.containerEl).setName("Embedding API key").setDesc(
-      embeddingIsExternal ? `Stored for "${embeddingProviderId}": ${redactApiKey(settings.apiKeys[embeddingProviderId])}. Type a new key to replace it; leave blank to keep the existing one.` : "The selected embedding provider runs locally and needs no API key."
-    ).addText((text) => {
-      text.inputEl.type = "password";
-      text.setPlaceholder("Enter API key").onChange(async (value) => {
-        if (!embeddingIsExternal) return;
-        const trimmed = value.trim();
-        if (!trimmed) return;
-        await this.onSave(setApiKey(this.getSettings(), embeddingProviderId, trimmed));
-      });
-    }).addButton(
-      (button) => button.setButtonText("Clear").onClick(async () => {
-        if (!embeddingIsExternal) return;
-        await this.onSave(setApiKey(this.getSettings(), embeddingProviderId, ""));
-        this.display();
-      })
-    );
-    const llmProviderId = settings.llm.provider;
-    const llmKeyStatus = redactApiKey(settings.apiKeys[llmProviderId]);
-    new import_obsidian.Setting(this.containerEl).setName("LLM API key").setDesc(
-      llmProviderId === "none" ? "Select an LLM provider to set its API key." : `Stored for "${llmProviderId}": ${llmKeyStatus}. Type a new key to replace it; leave blank to keep the existing one.`
-    ).addText((text) => {
-      text.inputEl.type = "password";
-      text.setPlaceholder("Enter API key").onChange(async (value) => {
-        if (llmProviderId === "none") return;
-        const trimmed = value.trim();
-        if (!trimmed) return;
-        await this.onSave(setApiKey(this.getSettings(), llmProviderId, trimmed));
-      });
-    }).addButton(
-      (button) => button.setButtonText("Clear").onClick(async () => {
-        if (llmProviderId === "none") return;
-        await this.onSave(setApiKey(this.getSettings(), llmProviderId, ""));
-        this.display();
-      })
-    );
-    this.containerEl.createEl("h3", { text: "Status" });
-    new import_obsidian.Setting(this.containerEl).setName("Plugin status").setDesc(health.status);
-    new import_obsidian.Setting(this.containerEl).setName("API key").setDesc(health.apiKeyConfigured ? "configured" : "not configured");
-    new import_obsidian.Setting(this.containerEl).setName("AI (LLM)").setDesc(
-      isLlmConfigured(settings) ? `Configured: ${settings.llm.provider}${settings.llm.model ? ` / ${settings.llm.model}` : ""} (external).` : "Not configured. Ask AI and AI memory extraction are disabled until you set an LLM provider, model, and API key."
-    );
-    new import_obsidian.Setting(this.containerEl).setName("Embedding index").setDesc(
-      health.reindexNeeded === void 0 ? "Status unavailable until the database is ready." : health.reindexNeeded ? `Reindex needed \u2014 run the "Rebuild Embedding Index" command. ${health.reindexSummary ?? ""}`.trim() : `Up to date. ${health.reindexSummary ?? ""}`.trim()
-    );
-    if (health.embeddingUsedFallback) {
-      new import_obsidian.Setting(this.containerEl).setName("Embedding fallback").setDesc("The configured external embedding provider is not fully set up; using local token-hash-v1.");
-    }
-    new import_obsidian.Setting(this.containerEl).setName("Database location").setDesc(health.databasePath ?? "Unavailable");
-    new import_obsidian.Setting(this.containerEl).setName("SQLite storage").setDesc(health.realSqliteStorage ? "Connected to real local SQLite storage" : "Not connected");
-    new import_obsidian.Setting(this.containerEl).setName("Migration status").setDesc(`${health.migrationStatus}: ${health.appliedMigrationCount}/${health.packagedMigrationCount} applied`);
-    new import_obsidian.Setting(this.containerEl).setName("Last initialization error").setDesc(health.lastInitializationError ?? "None");
-    new import_obsidian.Setting(this.containerEl).setName("Native binding target").setDesc(health.nativeBindingTarget ?? "Unresolved");
-    new import_obsidian.Setting(this.containerEl).setName("Packaged native targets").setDesc(health.packagedNativeTargets.join(", ") || "None");
-    new import_obsidian.Setting(this.containerEl).setName("Dashboard").addButton((button) => button.setButtonText("Open dashboard").onClick(() => void this.navigation.openDashboard()));
-  }
-};
-
-// src/obsidian/TranscriptMemoryItemView.ts
-var import_obsidian2 = require("obsidian");
-
 // src/frontend/router.ts
-var patterns = [
-  { id: "dashboard", pattern: /^\/(?:dashboard\/?)?$/ },
-  { id: "upload", pattern: /^\/upload\/?$/ },
-  { id: "transcript", pattern: /^\/transcripts\/([^/]+)\/?$/, names: ["id"] },
-  { id: "ask", pattern: /^\/ask\/?$/ },
-  { id: "answer", pattern: /^\/answers\/([^/]+)\/?$/, names: ["id"] },
-  { id: "evidence", pattern: /^\/evidence\/([^/]+)\/?$/, names: ["id"] },
-  { id: "memory", pattern: /^\/memory\/([^/]+)\/?$/, names: ["id"] },
-  { id: "graph", pattern: /^\/graph\/?$/ },
-  { id: "search", pattern: /^\/search\/?$/ },
-  { id: "review", pattern: /^\/review\/?$/ },
-  { id: "review_detail", pattern: /^\/review\/([^/]+)\/?$/, names: ["id"] }
-];
-function matchRoute(input) {
-  const internal = input.startsWith("mv://") ? new URL(input) : null;
-  const inputPath = internal ? `/${internal.host}${internal.pathname}${internal.search}` : input;
-  const url = new URL(inputPath, "http://vault.local");
-  for (const route of patterns) {
-    const match = route.pattern.exec(url.pathname);
-    if (!match) continue;
-    return {
-      id: route.id,
-      path: url.pathname,
-      params: Object.fromEntries((route.names ?? []).map((name, index) => [name, decodeURIComponent(match[index + 1])])),
-      query: url.searchParams
-    };
-  }
-  return { id: "not_found", path: url.pathname, params: {}, query: url.searchParams };
-}
 var routeHref = {
   dashboard: () => "mv://dashboard",
   upload: () => "mv://upload",
@@ -1820,72 +641,6 @@ var routeHref = {
   memory: (id) => `mv://memory/${encodeURIComponent(id)}`,
   review: (id) => `mv://review/${encodeURIComponent(id)}`
 };
-
-// src/frontend/navigation.ts
-async function navigateInternal(navigation, target) {
-  const route = matchRoute(target);
-  switch (route.id) {
-    case "dashboard":
-      return navigation.openDashboard();
-    case "upload":
-      return navigation.openUpload();
-    case "transcript":
-      return navigation.openTranscript(route.params.id, { spanId: route.query.get("span") ?? void 0 });
-    case "ask":
-      return navigation.openAskAI();
-    case "answer":
-      return navigation.openAnswer(route.params.id);
-    case "evidence":
-      return navigation.openEvidence(route.params.id);
-    case "memory":
-      return navigation.openMemoryObject(route.params.id);
-    case "graph":
-      return navigation.openGraph({
-        selectedNodeId: route.query.get("selectedNode") ?? void 0,
-        selectedEdgeId: route.query.get("selectedEdge") ?? void 0,
-        query: route.query.get("q") ?? void 0
-      });
-    case "search":
-      return navigation.openSearch(route.query.get("q") ?? void 0);
-    case "review_detail":
-      return navigation.openReviewQueue({ reviewItemId: route.params.id });
-    case "review":
-      return navigation.openReviewQueue();
-    default:
-      throw new Error(`Unsupported internal navigation target: ${target}`);
-  }
-}
-
-// src/frontend/html.ts
-function escapeHtml(value) {
-  return String(value ?? "").replace(/[&<>"']/g, (character) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;"
-  })[character]);
-}
-function trustBadge(state, label = state.replaceAll("_", " ")) {
-  return `<span class="trust-badge trust-${escapeHtml(state)}" data-trust-state="${escapeHtml(state)}">${escapeHtml(label)}</span>`;
-}
-function score(value) {
-  return value == null ? "not scored" : `${Math.round(value * 100)}%`;
-}
-function emptyState(title, detail, action) {
-  return `<div class="empty-state"><h3>${escapeHtml(title)}</h3><p>${escapeHtml(detail)}</p>${action ? routeButton(action.href, action.label) : ""}</div>`;
-}
-function routeButton(target, label, className = "route-action") {
-  return `<button type="button" class="${escapeHtml(className)}" data-route="${escapeHtml(target)}">${escapeHtml(label)}</button>`;
-}
-function appShell(title, body) {
-  return `<div class="transcript-memory-vault vault-app">
-    <header class="app-header">${routeButton("mv://dashboard", "Interview Intelligence Vault", "route-action brand")}<nav aria-label="Primary">
-      ${routeButton("mv://upload", "Upload")}${routeButton("mv://ask", "Ask AI")}${routeButton("mv://search", "Search")}${routeButton("mv://graph", "Graph")}${routeButton("mv://review", "Review")}
-    </nav></header>
-    <main><header class="page-header"><h1>${escapeHtml(title)}</h1></header>${body}</main>
-  </div>`;
-}
 
 // src/ask-ai/errors.ts
 var SynthesisSetupRequiredError = class extends Error {
@@ -2160,10 +915,10 @@ function renderAnswer(input) {
   if (input.confidence === "no_evidence" || !input.claims.length) return "I don't have enough transcript-backed evidence to answer that.";
   const citations = new Map(input.citations.map((item) => [item.id, item]));
   const lines = input.claims.map((claim) => {
-    const links2 = claim.citationIds.map((id) => citations.get(id)).filter((item) => item != null).map(renderCitation);
-    if (!links2.length) throw new ValidationError(`Ask AI claim has no selected citation: ${claim.id}`);
+    const links = claim.citationIds.map((id) => citations.get(id)).filter((item) => item != null).map(renderCitation);
+    if (!links.length) throw new ValidationError(`Ask AI claim has no selected citation: ${claim.id}`);
     const label = claim.kind === "fact" ? "" : `**${claim.kind[0].toUpperCase()}${claim.kind.slice(1)}:** `;
-    return `${label}${claim.text} ${links2.join(" ")}`;
+    return `${label}${claim.text} ${links.join(" ")}`;
   });
   const intro = input.confidence === "weak" ? "The evidence I found is weak, so this should be treated cautiously." : input.confidence === "conflicting" ? "The evidence conflicts, so I can't give one clean answer. Both sides are shown below." : input.confidence === "mixed" ? "The transcript evidence supports a qualified answer." : "Based on the transcript evidence:";
   return `${intro}
@@ -2533,7 +1288,7 @@ function parseLink(row) {
   };
 }
 function parseAssessment(db, row) {
-  const links2 = db.prepare(`SELECT l.*,p.transcript_id,p.span_id,p.source_pointer_uri,p.quote_preview,p.evidence_strength,p.confidence FROM conflict_evidence_links l
+  const links = db.prepare(`SELECT l.*,p.transcript_id,p.span_id,p.source_pointer_uri,p.quote_preview,p.evidence_strength,p.confidence FROM conflict_evidence_links l
     JOIN evidence_pointers p ON p.evidence_pointer_id=l.evidence_pointer_id
     WHERE l.conflict_assessment_id=? ORDER BY l.side,l.created_at,l.id`).all(row.id);
   return {
@@ -2553,8 +1308,8 @@ function parseAssessment(db, row) {
     olderTargetId: row.older_target_id == null ? null : String(row.older_target_id),
     winningTargetId: row.winning_target_id == null ? null : String(row.winning_target_id),
     resolutionNote: row.resolution_note == null ? null : String(row.resolution_note),
-    evidence: links2.map(parseLink),
-    evidenceLinks: links2.map(parseLink),
+    evidence: links.map(parseLink),
+    evidenceLinks: links.map(parseLink),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at)
   };
@@ -3376,322 +2131,8 @@ function saveEvidenceScoreRun(db, assessment, options) {
   return id;
 }
 
-// src/retrieval/embeddingProvider.ts
-var import_node_crypto5 = require("node:crypto");
-var DeterministicTestEmbeddingProvider = class {
-  constructor(dimensions = 32) {
-    this.dimensions = dimensions;
-  }
-  dimensions;
-  name = "deterministic-test";
-  model = "token-hash-v1";
-  async embedTexts(texts) {
-    return texts.map((text) => {
-      const vector = Array(this.dimensions).fill(0);
-      for (const token of text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []) {
-        const hash = (0, import_node_crypto5.createHash)("sha256").update(token).digest();
-        vector[hash[0] % this.dimensions] += hash[1] % 2 ? 1 : -1;
-      }
-      return vector;
-    });
-  }
-};
-var NoopEmbeddingProvider = class {
-  name = "noop";
-  model = "disabled";
-  dimensions = 0;
-  async embedTexts(texts) {
-    return texts.map(() => []);
-  }
-};
-
-// src/retrieval/externalEmbeddingProvider.ts
-var EmbeddingError = class extends Error {
-  context;
-  constructor(message, context, options) {
-    super(message, options);
-    this.name = new.target.name;
-    this.context = context;
-  }
-};
-var EmbeddingAuthError = class extends EmbeddingError {
-};
-var EmbeddingRateLimitError = class extends EmbeddingError {
-};
-var EmbeddingProviderError = class extends EmbeddingError {
-};
-var EmbeddingResponseError = class extends EmbeddingError {
-};
-var REDACTED = "[redacted]";
-function redactSecret(text, secret) {
-  if (!secret || !secret.trim()) return text;
-  return text.split(secret).join(REDACTED);
-}
-var DEFAULT_BASE_URL = "https://api.openai.com/v1";
-function createHttpEmbeddingTransport(fetchImpl = globalThis.fetch) {
-  return async (request) => {
-    const controller = new AbortController();
-    const onExternalAbort = () => controller.abort();
-    request.signal?.addEventListener("abort", onExternalAbort, { once: true });
-    let timer;
-    if (request.timeoutMs != null) timer = setTimeout(() => controller.abort(), request.timeoutMs);
-    try {
-      const response = await fetchImpl(request.url, {
-        method: request.method,
-        headers: request.headers,
-        body: request.body,
-        signal: controller.signal
-      });
-      let body = null;
-      try {
-        body = await response.json();
-      } catch {
-        try {
-          body = await response.text();
-        } catch {
-          body = null;
-        }
-      }
-      return { status: response.status, body };
-    } finally {
-      if (timer) clearTimeout(timer);
-      request.signal?.removeEventListener("abort", onExternalAbort);
-    }
-  };
-}
-var ExternalEmbeddingProvider = class {
-  // Only name/model/dimensions are public. The secret-bearing internals are true ECMAScript
-  // private fields (#), which are not reflectable: they never appear in JSON.stringify, object
-  // spread, Object.keys/getOwnPropertyNames, Reflect.ownKeys, or util.inspect.
-  name;
-  model;
-  dimensions;
-  #apiKey;
-  #baseUrl;
-  #transport;
-  #timeoutMs;
-  constructor(config) {
-    if (!config.apiKey || !config.apiKey.trim()) {
-      throw new EmbeddingAuthError("External embedding provider requires a non-blank API key", { provider: config.provider, model: config.model });
-    }
-    if (!Number.isInteger(config.dimensions) || config.dimensions <= 0) {
-      throw new EmbeddingResponseError("External embedding provider requires positive integer dimensions", { provider: config.provider, model: config.model });
-    }
-    this.name = config.provider;
-    this.model = config.model;
-    this.dimensions = config.dimensions;
-    this.#apiKey = config.apiKey.trim();
-    this.#baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
-    this.#transport = config.transport ?? createHttpEmbeddingTransport();
-    this.#timeoutMs = config.timeoutMs;
-  }
-  context(status) {
-    return { provider: this.name, model: this.model, status };
-  }
-  async embedTexts(texts) {
-    if (!texts.length) return [];
-    let response;
-    try {
-      response = await this.#transport({
-        url: `${this.#baseUrl}/embeddings`,
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.#apiKey}` },
-        body: JSON.stringify({ model: this.model, input: texts }),
-        timeoutMs: this.#timeoutMs
-      });
-    } catch (error) {
-      const detail = redactSecret(error instanceof Error ? error.message : String(error), this.#apiKey);
-      throw new EmbeddingProviderError(`Embedding request failed: ${detail}`, this.context());
-    }
-    if (response.status === 401 || response.status === 403) {
-      throw new EmbeddingAuthError("Embedding provider rejected the API key", this.context(response.status));
-    }
-    if (response.status === 429) {
-      throw new EmbeddingRateLimitError("Embedding provider rate limit exceeded", this.context(response.status));
-    }
-    if (response.status < 200 || response.status >= 300) {
-      throw new EmbeddingProviderError(`Embedding provider returned status ${response.status}`, this.context(response.status));
-    }
-    const data = response.body?.data;
-    if (!Array.isArray(data) || data.length !== texts.length) {
-      throw new EmbeddingResponseError("Embedding response did not contain one vector per input", this.context(response.status));
-    }
-    const ordered = [...data].sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
-    return ordered.map((item) => {
-      const vector = item.embedding;
-      if (!Array.isArray(vector) || vector.length !== this.dimensions || vector.some((value) => typeof value !== "number" || !Number.isFinite(value))) {
-        throw new EmbeddingResponseError(`Embedding response vector did not match expected ${this.dimensions} finite dimensions`, this.context(response.status));
-      }
-      return vector;
-    });
-  }
-};
-var createExternalEmbeddingProvider = (config) => new ExternalEmbeddingProvider(config);
-
-// src/retrieval/embeddingSpace.ts
-var embeddingSpaceOf = (provider) => ({
-  provider: provider.name,
-  model: provider.model,
-  dimensions: provider.dimensions
-});
-var sameEmbeddingSpace = (a, b) => a.provider === b.provider && a.model === b.model && a.dimensions === b.dimensions;
-var isVectorCapable = (space) => space.dimensions > 0;
-var DEFAULT_EMBEDDING_PROVIDER_ID = "deterministic-test";
-var TOKEN_HASH_MODEL = "token-hash-v1";
-function resolveEmbeddingProvider(id = DEFAULT_EMBEDDING_PROVIDER_ID, options) {
-  if (options?.external) {
-    const external = options.external;
-    if (external.apiKey && external.apiKey.trim().length > 0) {
-      return { provider: createExternalEmbeddingProvider(external), requestedId: external.provider, usedFallback: false };
-    }
-    return {
-      provider: new DeterministicTestEmbeddingProvider(options?.dimensions),
-      requestedId: external.provider,
-      usedFallback: true,
-      reason: `Embedding provider "${external.provider}" has no API key configured; using local deterministic ${TOKEN_HASH_MODEL}.`
-    };
-  }
-  if (id === "noop" || id === "disabled") {
-    return { provider: new NoopEmbeddingProvider(), requestedId: id, usedFallback: false };
-  }
-  if (id === DEFAULT_EMBEDDING_PROVIDER_ID || id === TOKEN_HASH_MODEL) {
-    return { provider: new DeterministicTestEmbeddingProvider(options?.dimensions), requestedId: id, usedFallback: false };
-  }
-  return {
-    provider: new DeterministicTestEmbeddingProvider(options?.dimensions),
-    requestedId: id,
-    usedFallback: true,
-    reason: `Embedding provider "${id}" is not available yet; using local deterministic ${TOKEN_HASH_MODEL}.`
-  };
-}
-
-// src/retrieval/reindexStatus.ts
-var isProvider = (value) => typeof value.embedTexts === "function";
-function detectReindexNeeded(db, active, options = {}) {
-  const activeSpace = isProvider(active) ? embeddingSpaceOf(active) : active;
-  const vectorCapable = isVectorCapable(activeSpace);
-  const types = options.targetTypes;
-  const typeClause = types && types.length ? ` WHERE target_type IN (${types.map(() => "?").join(",")})` : "";
-  const typeArgs = types && types.length ? types : [];
-  const documentCount = db.prepare(`SELECT COUNT(*) c FROM retrieval_documents${typeClause}`).get(...typeArgs).c;
-  const joinTypeClause = types && types.length ? ` AND d.target_type IN (${types.map(() => "?").join(",")})` : "";
-  const embeddedUnderActive = db.prepare(
-    `SELECT COUNT(*) c FROM retrieval_documents d
-     JOIN search_embeddings e ON e.target_type=d.target_type AND e.target_id=d.target_id
-     WHERE e.embedding_provider=? AND e.embedding_model=? AND e.embedding_dim=?${joinTypeClause}`
-  ).get(activeSpace.provider, activeSpace.model, activeSpace.dimensions, ...typeArgs).c;
-  const missingUnderActive = Math.max(0, documentCount - embeddedUnderActive);
-  const indexedSpaces = db.prepare(
-    `SELECT embedding_provider provider, embedding_model model, embedding_dim dimensions, COUNT(*) count
-     FROM search_embeddings${typeClause}
-     GROUP BY embedding_provider, embedding_model, embedding_dim
-     ORDER BY embedding_provider, embedding_model, embedding_dim`
-  ).all(...typeArgs);
-  const foreignSpaces = indexedSpaces.filter((space) => !sameEmbeddingSpace(space, activeSpace));
-  const reasons = [];
-  if (!vectorCapable) reasons.push("Embeddings are disabled for the active provider (0 dimensions).");
-  if (documentCount === 0) reasons.push("No indexed documents to embed.");
-  if (vectorCapable && documentCount > 0 && missingUnderActive > 0) {
-    reasons.push(`${missingUnderActive} of ${documentCount} document(s) are not embedded under the active space (${activeSpace.provider}/${activeSpace.model}@${activeSpace.dimensions}).`);
-  }
-  if (foreignSpaces.length) {
-    const total = foreignSpaces.reduce((sum, space) => sum + space.count, 0);
-    reasons.push(`${total} embedding(s) are indexed under a different provider/model and are ignored by vector search.`);
-  }
-  const needsReindex = vectorCapable && documentCount > 0 && missingUnderActive > 0;
-  return { activeSpace, vectorCapable, documentCount, embeddedUnderActive, missingUnderActive, indexedSpaces, foreignSpaces, needsReindex, reasons };
-}
-
 // src/memory/extraction/prompt.ts
 var MEMORY_EXTRACTION_PROMPT_VERSION = "mvp-memory-extraction-v1";
-var MEMORY_EXTRACTION_LLM_PROMPT_VERSION = "mvp-memory-extraction-llm-v1";
-var MEMORY_EXTRACTION_LLM_SYSTEM = "You extract source-backed memory objects strictly from the transcript spans provided. Use ONLY the listed spans; never invent facts or cite span_ids that are not listed. Every object must include a supportingQuote copied verbatim from one of the spans it cites. Prefer fewer high-quality objects. Respond with JSON only.";
-function buildLlmMemoryExtractionPrompt(window) {
-  return [
-    'Extract memory objects as JSON: {"objects":[{"type":"topic|quote|question|decision|action_item|objection|advice_idea","title":"...","body":"...","evidenceSpanIds":["<span_id>"],"supportingQuote":"<verbatim substring of a cited span>"}]}',
-    'Cite only the span_ids below. Each object must include a supportingQuote copied verbatim from one cited span. If nothing is well supported, return {"objects":[]}.',
-    "",
-    "Spans:",
-    window.text
-  ].join("\n");
-}
-
-// src/memory/extraction/llmExtractor.ts
-var MemoryExtractionError = class extends Error {
-  constructor(message, options) {
-    super(message, options);
-    this.name = "MemoryExtractionError";
-  }
-};
-var VALID_TYPES = ["topic", "quote", "question", "decision", "action_item", "objection", "advice_idea"];
-var normalizeForMatch2 = (value) => value.toLowerCase().replace(/\s+/g, " ").trim();
-function parseAndGroundMemoryCandidates(rawText, window) {
-  let parsed;
-  try {
-    parsed = JSON.parse(rawText);
-  } catch {
-    throw new MemoryExtractionError("LLM memory extraction output was not valid JSON");
-  }
-  if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.objects)) {
-    throw new MemoryExtractionError("LLM memory extraction output did not contain an objects array");
-  }
-  const spanTextById = new Map(window.spans.map((span) => [span.spanId, normalizeForMatch2(span.text)]));
-  const grounded = [];
-  for (const raw of parsed.objects) {
-    if (!raw || typeof raw !== "object") continue;
-    const candidate = raw;
-    if (typeof candidate.type !== "string" || !VALID_TYPES.includes(candidate.type)) continue;
-    if (typeof candidate.title !== "string" || !candidate.title.trim()) continue;
-    if (typeof candidate.body !== "string" || !candidate.body.trim()) continue;
-    const ids = candidate.evidenceSpanIds;
-    if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string")) continue;
-    const evidenceSpanIds = [...new Set(ids)].filter((id) => spanTextById.has(id));
-    if (!evidenceSpanIds.length) continue;
-    const quote = candidate.supportingQuote;
-    if (typeof quote !== "string" || !quote.trim()) continue;
-    const needle = normalizeForMatch2(quote);
-    const anchored = needle.length > 0 && evidenceSpanIds.some((id) => spanTextById.get(id)?.includes(needle));
-    if (!anchored) continue;
-    grounded.push({
-      type: candidate.type,
-      title: candidate.title.trim(),
-      body: candidate.body.trim(),
-      evidenceSpanIds,
-      confidence: 0,
-      // LLM self-reported confidence is NOT trusted; the pipeline caps LLM candidates to needs_review
-      reason: quote.trim()
-      // grounded supportingQuote -> persisted in metadata_json.extraction_reason for audit
-    });
-  }
-  return grounded;
-}
-function createLlmMemoryExtractor(provider, options = {}) {
-  const fallback = options.fallback;
-  return {
-    kind: "llm",
-    model: provider.model,
-    promptVersion: MEMORY_EXTRACTION_LLM_PROMPT_VERSION,
-    async extract(window) {
-      const requestOptions = {};
-      if (options.timeoutMs != null) requestOptions.timeoutMs = options.timeoutMs;
-      let text;
-      try {
-        text = (await provider.complete({ system: MEMORY_EXTRACTION_LLM_SYSTEM, prompt: buildLlmMemoryExtractionPrompt(window), responseFormat: "json" }, requestOptions)).text;
-      } catch {
-        if (fallback) return fallback.extract(window);
-        throw new MemoryExtractionError("LLM memory extraction request failed");
-      }
-      let grounded;
-      try {
-        grounded = parseAndGroundMemoryCandidates(text, window);
-      } catch {
-        if (fallback) return fallback.extract(window);
-        throw new MemoryExtractionError("LLM memory extraction output was not valid");
-      }
-      return grounded.length ? grounded : fallback ? fallback.extract(window) : grounded;
-    }
-  };
-}
 
 // src/memory/extraction/normalize.ts
 function normalizeMemoryText(title, body) {
@@ -4416,10 +2857,10 @@ function computeRawSha256(rawText) {
 }
 
 // src/ingest/detectTranscriptFormat.ts
-var import_node_path3 = require("node:path");
+var import_node_path2 = require("node:path");
 var supported = /* @__PURE__ */ new Set(["txt", "md", "srt", "vtt"]);
 function detectTranscriptFormat(filename, _rawText) {
-  const extension = (0, import_node_path3.extname)(filename).slice(1).toLowerCase();
+  const extension = (0, import_node_path2.extname)(filename).slice(1).toLowerCase();
   if (!supported.has(extension)) {
     throw new ValidationError(`Unsupported transcript extension: ${extension || "(none)"}`);
   }
@@ -4614,9 +3055,9 @@ function createSpansFromTurns(rawText, turns) {
 }
 
 // src/ingest/importTranscript.ts
-var import_node_crypto6 = require("node:crypto");
+var import_node_crypto5 = require("node:crypto");
 function stableId3(prefix, value, length = 24) {
-  return `${prefix}${(0, import_node_crypto6.createHash)("sha256").update(value).digest("hex").slice(0, length)}`;
+  return `${prefix}${(0, import_node_crypto5.createHash)("sha256").update(value).digest("hex").slice(0, length)}`;
 }
 function sourceTypeForDatabase(sourceType) {
   if (sourceType === "paste" || sourceType === "test") return "pasted_text";
@@ -4745,7 +3186,7 @@ function importTranscript(db, input) {
 }
 
 // src/obsidian/graphBuilder.ts
-var import_node_crypto7 = require("node:crypto");
+var import_node_crypto6 = require("node:crypto");
 
 // src/obsidian/paths.ts
 function safeName(value, fallback = "Untitled") {
@@ -4762,7 +3203,7 @@ var conflictPath = (id) => `Conflicts/${safeName(id)}.md`;
 var entityPath = (kind, label, id) => `${kind === "person" ? "People" : kind === "topic" ? "Topics" : "Decisions"}/${stableNoteName(label, id)}.md`;
 
 // src/obsidian/graphBuilder.ts
-var edgeId = (source, target, type, evidence = "") => `ov_edge_${(0, import_node_crypto7.createHash)("sha256").update(`${source}:${target}:${type}:${evidence}`).digest("hex").slice(0, 24)}`;
+var edgeId = (source, target, type, evidence = "") => `ov_edge_${(0, import_node_crypto6.createHash)("sha256").update(`${source}:${target}:${type}:${evidence}`).digest("hex").slice(0, 24)}`;
 var mapEdgeType = (value) => value === "contradicts" ? "contradicts" : value === "updates" ? "updates" : value === "mentions" ? "mentions" : value === "supports" ? "supports" : value === "derived_from" ? "derived_from" : "about";
 var memoryNodeId = (id) => `memory:${id}`;
 var evidenceNodeId = (id) => `evidence:${id}`;
@@ -5295,555 +3736,19 @@ function createSqliteFrontendApi(db, options = {}) {
   };
 }
 
-// src/frontend/render.ts
-var section = (title, body, className = "") => `<section class="vault-section${className ? ` ${escapeHtml(className)}` : ""}"><h2>${escapeHtml(title)}</h2>${body}</section>`;
-var links = (items) => `<div class="route-actions">${items.map((item) => routeButton(item.href, item.label)).join("")}</div>`;
-var correctionForm = (targetType, targetId) => ["memory_object", "answer_claim", "citation", "graph_node", "graph_edge", "evidence", "speaker", "answer", "span", "transcript"].includes(targetType) ? `<form data-action="correction"><input type="hidden" name="targetType" value="${escapeHtml(targetType)}"><input type="hidden" name="targetId" value="${escapeHtml(targetId)}">
-      <label>Append-only correction <textarea name="correctionText" required></textarea></label><label>Reason <input name="reason"></label>
-      <button type="submit">Submit correction</button></form><div data-form-result></div>` : `<p class="trust-warning">This target type does not yet have a backend correction record type. Use its owning memory, answer, or graph edge.</p>`;
-function evidenceCard(evidence) {
-  const clickback = evidence.brokenReason ? `<p class="error">Pointer resolution failed: ${escapeHtml(evidence.brokenReason)}</p>` : `<a class="transcript-clickback" href="${escapeHtml(routeHref.transcript(evidence.transcriptId, evidence.spanId))}">Open exact transcript span</a>`;
-  return `<article class="evidence-card" data-evidence-id="${escapeHtml(evidence.id)}">
-    <header>${trustBadge(evidence.strength)} <strong>${escapeHtml(evidence.role)}</strong> <span>${score(evidence.finalScore ?? evidence.confidence)}</span></header>
-    <blockquote>${escapeHtml(evidence.quotePreview || evidence.spanText)}</blockquote>
-    <p>${escapeHtml(evidence.transcriptTitle)} \xB7 span ${escapeHtml(evidence.spanId)}</p><button type="button" data-copy-quote="${escapeHtml(evidence.quotePreview || evidence.spanText)}">Copy quote</button>
-    ${links([{ href: routeHref.evidence(evidence.id), label: "Evidence details" }])} ${clickback}
-  </article>`;
+// src/obsidian/settings.ts
+var EXTERNAL_LLM_PROVIDERS = ["openai"];
+var isExternalLlmProvider = (providerId) => EXTERNAL_LLM_PROVIDERS.includes(providerId);
+function isLlmConfigured(settings) {
+  return settings.mode === "external" && isExternalLlmProvider(settings.llm.provider) && settings.llm.model.trim().length > 0 && (settings.apiKeys[settings.llm.provider]?.trim().length ?? 0) > 0;
 }
-function answerView(answer) {
-  const hasTraceableAnswer = answer.claims.length > 0 && answer.citations.length > 0 && answer.evidence.length > 0;
-  const confidence = hasTraceableAnswer ? answer.evidenceConfidence : "no_evidence";
-  const brokenWarning = answer.brokenCitationIds?.length ? `<aside class="trust-warning">${trustBadge("broken")} ${answer.brokenCitationIds.length} citation pointer(s) no longer resolve.</aside>` : "";
-  const warning = confidence === "weak" || confidence === "no_evidence" ? `<aside class="trust-warning">${trustBadge(confidence)} This answer must not be treated as strong truth.</aside>` : confidence === "conflicting" ? `<aside class="trust-warning">${trustBadge("conflicting")} Supporting and opposing evidence are both preserved below.</aside>` : "";
-  const citations = new Map(answer.citations.map((citation) => [citation.id, citation]));
-  const claims = answer.claims.map((claim) => `<article class="answer-claim" data-support-status="${escapeHtml(claim.supportStatus)}">
-    <p>${escapeHtml(claim.text)}</p>
-    <footer>${trustBadge(claim.supportStatus === "supported" ? "strong" : claim.supportStatus === "conflicting" ? "conflicting" : claim.supportStatus === "weakly_supported" ? "weak" : "no_evidence")}
-      ${claim.citationIds.map((id) => {
-    const citation = citations.get(id);
-    return citation ? `<span class="citation-preview"><a class="citation-link" href="${escapeHtml(routeHref.evidence(citation.evidencePointerId))}" title="${escapeHtml(citation.quotePreview)}">${escapeHtml(citation.label)}</a><small>${escapeHtml(citation.quotePreview)}</small>${correctionForm("citation", citation.id)}</span>` : "";
-  }).join(" ")}
-    </footer>
-    ${correctionForm("answer_claim", claim.id)}
-  </article>`).join("");
-  const evidence = answer.evidence.map((item) => `<article class="evidence-card">
-    ${trustBadge(item.evidenceConfidence)} <strong>${escapeHtml(item.stance === "opposes" ? "Opposing/conflicting evidence" : item.stance === "supports" ? "Supporting evidence" : item.stance)}</strong>
-    <blockquote>${escapeHtml(item.quotePreview)}</blockquote>
-    <p>${escapeHtml(item.scoringExplanation)}</p>
-    <a href="${escapeHtml(routeHref.evidence(item.evidencePointerId))}">Inspect evidence and transcript source</a>
-    ${correctionForm("evidence", item.evidencePointerId)}
-  </article>`).join("");
-  const conflict = answer.conflicts.map((item) => `<article class="conflict-card">${trustBadge("conflicting")}<h3>${escapeHtml(item.summary)}</h3><p>${escapeHtml(item.explanation)}</p></article>`).join("");
-  return `${brokenWarning}${warning}<article class="answer"><h2>Generated answer</h2><pre>${escapeHtml(answer.answerMarkdown)}</pre></article>
-    ${section("Claims and citations", claims || emptyState("No supported claims", "The answer correctly refused to invent claims."))}
-    ${section("Evidence", evidence || emptyState("No evidence", "No transcript-backed evidence was available."))}
-    ${conflict ? section("Conflicts", conflict) : ""}${section("Submit a correction", correctionForm("answer", answer.id))}`;
-}
-function transcriptView(transcript, selectedSpanId) {
-  const selectedIndex = selectedSpanId ? transcript.spans.findIndex((span) => span.id === selectedSpanId) : -1;
-  const start = selectedIndex >= 0 ? Math.max(0, selectedIndex - 20) : 0;
-  const visibleSpans = transcript.spans.slice(start, start + 100);
-  const spans = visibleSpans.map((span) => `<article id="span-${escapeHtml(span.id)}" class="transcript-span${span.id === selectedSpanId ? " selected-span" : ""}" data-span-id="${escapeHtml(span.id)}">
-    <header><strong>${escapeHtml(span.speaker ?? "Unknown speaker")}</strong> <span>${span.startTimeMs == null ? "" : `${Math.round(span.startTimeMs / 1e3)}s`}</span></header>
-    <pre>${escapeHtml(span.text)}</pre><button type="button" data-copy-quote="${escapeHtml(span.text)}">Copy quote</button><small>Raw offsets ${span.startChar}-${span.endChar}</small>
-  </article>`).join("");
-  const missing = selectedSpanId && !transcript.spans.some((span) => span.id === selectedSpanId) ? `<aside class="trust-warning">${trustBadge("broken")} Requested span ${escapeHtml(selectedSpanId)} was not found.</aside>` : "";
-  return `<aside class="immutable-notice">Raw transcript source is immutable. Generated text and corrections are stored separately.</aside>${missing}
-    <p>${escapeHtml(transcript.status)} \xB7 ${transcript.spanCount} spans \xB7 showing ${visibleSpans.length} \xB7 imported ${escapeHtml(transcript.importedAt)}</p>
-    <div class="transcript-viewer" data-selected-span="${escapeHtml(selectedSpanId ?? "")}">${spans}</div>`;
-}
-function memoryView(view) {
-  const memory = view.memory;
-  const warning = view.trustState === "strong" ? "" : `<aside class="trust-warning">${trustBadge(view.trustState)} This memory is not independent strong truth.</aside>`;
-  const reviewable = memory.status === "needs_review" || memory.status === "weak";
-  const reviewSection = reviewable ? section("Review decision", `<p>Approve to promote this memory to active, citable evidence, or Reject to remove it from Ask AI and search. Both are append-only and never edit raw transcript text.</p>${memoryReviewControls(memory.id)}`) : "";
-  return `${warning}<article class="memory-object">
-    <p>${trustBadge(view.trustState)} ${escapeHtml(memory.type)} \xB7 confidence ${score(memory.confidence)} (${escapeHtml(memory.confidenceLabel)})</p>
-    <h2>${escapeHtml(memory.title || memory.type)}</h2><p>${escapeHtml(memory.body)}</p>
-    <dl><dt>Canonical status</dt><dd>${escapeHtml(memory.status)}</dd><dt>Evidence spans</dt><dd>${memory.evidenceSpanIds.length}</dd><dt>User corrected</dt><dd>${memory.userCorrected ? "yes" : "no"}</dd><dt>Duplicate of</dt><dd>${escapeHtml(memory.duplicateOfId ?? "none")}</dd></dl>
-  </article>${section("Evidence", view.evidence.map(evidenceCard).join("") || emptyState("No linked evidence pointers", "This memory cannot be treated as strong."))}
-  ${view.conflicts.length ? section("Conflicts", view.conflicts.map((item) => `<article>${trustBadge("conflicting")} <strong>${escapeHtml(item.summary)}</strong><p>${escapeHtml(item.explanation)}</p></article>`).join("")) : ""}
-  ${reviewSection}
-  ${section("Submit a correction", correctionForm("memory_object", memory.id))}`;
-}
-var memoryReviewControls = (memoryId) => `<form data-action="review" class="review-actions"><input type="hidden" name="memoryId" value="${escapeHtml(memoryId)}">
-      <button type="submit" name="decision" value="approve">Approve</button>
-      <button type="submit" name="decision" value="reject">Reject</button></form><div data-form-result></div>`;
-var reviewActions = (item) => {
-  if (item.targetType === "memory_object" && (item.type === "memory_needs_review" || item.type === "weak_evidence")) {
-    return memoryReviewControls(item.targetId);
-  }
-  if (item.type === "weak_evidence") {
-    return `<p class="trust-warning">This weak-evidence item is attached to a ${escapeHtml(item.targetType)}, not a memory object, so it has no direct Approve/Reject. Open the linked evidence and use the append-only correction below.</p>`;
-  }
-  return "";
+var DEFAULT_SETTINGS = {
+  schemaVersion: 1,
+  mode: "local",
+  llm: { provider: "none", model: "" },
+  embedding: { provider: "deterministic-test", model: "token-hash-v1" },
+  apiKeys: {}
 };
-function reviewCard(item) {
-  return `<article class="review-card">${trustBadge(item.trustState)}<h3><a href="${escapeHtml(item.href)}">${escapeHtml(item.title)}</a></h3>
-    <p>${escapeHtml(item.detail)}</p><small>${escapeHtml(item.severity)} severity \xB7 ${escapeHtml(item.status)} \xB7 ${escapeHtml(item.type)} \xB7 ${escapeHtml(item.targetType)}:${escapeHtml(item.targetId)}</small>
-    <a href="${escapeHtml(routeHref.review(item.id))}">Review and correct</a>${reviewActions(item)}</article>`;
-}
-function searchCard(item) {
-  return `<article class="search-result">${item.trustState ? trustBadge(item.trustState) : ""}<h3><a href="${escapeHtml(item.href)}">${escapeHtml(item.title)}</a></h3>
-    <p>${escapeHtml(item.preview)}</p><small>${escapeHtml(item.type)}</small></article>`;
-}
-function graphNodeLink(nodeId) {
-  const [kind, id] = nodeId.split(":", 2);
-  if (!id) return null;
-  return kind === "memory" ? routeHref.memory(id) : kind === "transcript" ? routeHref.transcript(id) : kind === "evidence" ? routeHref.evidence(id) : null;
-}
-function healthView(health) {
-  const status = health.status === "ready" ? trustBadge("strong", "database connected") : health.status === "unsupported" ? trustBadge("no_evidence", "desktop only") : health.status === "error" ? trustBadge("broken", "startup failed") : trustBadge("needs_review", "initializing");
-  return section("Database health", `<article class="database-health">${status}<dl>
-    <dt>SQLite storage</dt><dd>${health.realSqliteStorage ? "real local SQLite" : "not connected"}</dd>
-    <dt>Migration status</dt><dd>${escapeHtml(health.migrationStatus)}</dd>
-    <dt>Packaged migrations</dt><dd>${health.packagedMigrationCount}</dd>
-    <dt>Applied migrations</dt><dd>${health.appliedMigrationCount}</dd>
-    <dt>Database location</dt><dd>${escapeHtml(health.databasePath ?? "unavailable")}</dd>
-    <dt>Last initialization error</dt><dd>${escapeHtml(health.lastInitializationError ?? "none")}</dd>
-    <dt>Native binding target</dt><dd>${escapeHtml(health.nativeBindingTarget ?? "unresolved")}</dd>
-    <dt>Packaged native targets</dt><dd>${escapeHtml(health.packagedNativeTargets.join(", ") || "none")}</dd>
-  </dl></article>`, "database-health-section");
-}
-async function renderPage(context) {
-  const { api, route } = context;
-  switch (route.id) {
-    case "dashboard": {
-      const view = await api.getDashboard();
-      const readyStatus = view.health?.status === "ready" ? `<aside class="immutable-notice status-banner"><strong>Transcript Memory Vault is ready.</strong> ${view.health.firstRun ? "Upload a transcript to begin. " : ""}Imported raw transcript snapshots are immutable and stored in local SQLite at ${escapeHtml(view.health.databasePath)}.</aside>` : "";
-      const startupProblem = view.health && view.health.status !== "ready" ? `<aside class="trust-warning">${view.health.status === "unsupported" ? trustBadge("no_evidence", "desktop only") : trustBadge("broken", "startup unavailable")} ${escapeHtml(view.health.lastInitializationError ?? "Database initialization has not completed.")}</aside>` : "";
-      const llmBanner = view.llmRequired && view.llmReady === false ? `<aside class="trust-warning llm-setup-required">${trustBadge("no_evidence", "LLM required")} AI is not configured. Ask AI and AI memory extraction need an external LLM \u2014 open plugin Settings and add a provider, model, and API key. Transcripts still import; run the "Run AI extraction" command afterward.</aside>` : "";
-      const body = `${readyStatus}${startupProblem}${llmBanner}<div class="metric-grid"><span>${view.totalTranscriptCount} total transcripts</span>${routeButton(routeHref.reviewQueue(), `${view.reviewCount} review items`, "route-action metric-action")}<span>${view.weakCount} weak/review</span><span>${view.conflictCount} conflicts</span><span>${view.brokenCount} broken pointers</span></div>
-        ${view.health ? healthView(view.health) : ""}
-        ${section("Quick actions", links([{ href: routeHref.upload(), label: "Upload transcript" }, { href: routeHref.ask(), label: "Ask AI" }, { href: routeHref.search(), label: "Search vault" }, { href: routeHref.graph(), label: "Open graph" }, { href: routeHref.reviewQueue(), label: "Review queue" }]), "quick-actions")}
-        ${section("Transcripts", view.transcripts.map((item) => `<article><a href="${escapeHtml(routeHref.transcript(item.id))}">${escapeHtml(item.title)}</a> \xB7 ${item.spanCount} spans</article>`).join("") || emptyState("No transcripts", "Upload a transcript to begin.", { href: routeHref.upload(), label: "Upload transcript" }), "transcripts-section")}
-        ${section("Recent Ask AI answers", view.recentAnswers.map((item) => `<article>${trustBadge(item.confidence)} <a href="${escapeHtml(routeHref.answer(item.id))}">${escapeHtml(item.question)}</a></article>`).join("") || emptyState("No answers", "Ask a question after adding evidence.", { href: routeHref.ask(), label: "Ask AI" }), "recent-answers-section")}`;
-      return { title: "Dashboard", html: appShell("Dashboard", body) };
-    }
-    case "upload":
-      return { title: "Upload transcript", html: appShell("Upload transcript", `<aside class="immutable-notice">Uploads become immutable raw transcript sources. Re-uploading identical content reuses the existing transcript.</aside>
-        <form data-action="upload"><label>Transcript file (.txt, .md, .srt, .vtt) <input name="file" type="file" accept=".txt,.md,.srt,.vtt" required></label>
-        <p data-file-status>No file selected.</p><input name="filename" type="hidden"><textarea name="rawText" hidden></textarea>
-        <button type="submit">Import transcript</button></form><p data-loading-message hidden>Importing immutable transcript source...</p><div data-form-result></div>`) };
-    case "transcript": {
-      const view = await api.getTranscript(route.params.id);
-      return { title: view?.title ?? "Transcript not found", html: appShell(view?.title ?? "Transcript not found", view ? transcriptView(view, route.query.get("span") ?? void 0) : emptyState("Transcript not found", "The requested immutable source is unavailable.")) };
-    }
-    case "ask": {
-      const llm = await api.getLlmStatus();
-      if (llm.required && !llm.ready) {
-        return { title: "Ask AI", html: appShell("Ask AI", `<section class="trust-warning ask-setup-required">${trustBadge("no_evidence", "LLM required")}<h2>Set up an LLM to use Ask AI</h2>
-          <p>Ask AI answers only from your transcripts, with citations \u2014 but it needs a configured external LLM to generate the answer. Add a provider, model, and API key in the plugin Settings.</p>
-          ${links([{ href: routeHref.dashboard(), label: "Open dashboard" }])}</section>`) };
-      }
-      const transcripts = (await api.listTranscripts()).slice(0, 100);
-      return { title: "Ask AI", html: appShell("Ask AI", `<aside class="immutable-notice">Ask AI retrieves and scores evidence before answering. Weak or conflicting evidence remains visibly labeled.</aside>
-        <form data-action="ask"><label>Question <textarea name="question" required></textarea></label>
-        <label>Optional transcript filter <select name="transcriptIds" multiple>${transcripts.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.title)}</option>`).join("")}</select></label>
-        <button type="submit">Retrieve, score, and answer</button></form>
-        <p data-loading-message hidden>Retrieving and scoring evidence before answer synthesis...</p><div data-form-result></div>`) };
-    }
-    case "answer": {
-      const answer = await api.getAnswer(route.params.id);
-      return { title: answer?.question ?? "Answer not found", html: appShell(answer?.question ?? "Answer not found", answer ? answerView(answer) : emptyState("Answer not found", "The requested Ask AI run is unavailable.")) };
-    }
-    case "evidence": {
-      const evidence = await api.getEvidence(route.params.id);
-      const body = `${evidence.brokenReason ? `<aside class="trust-warning">${trustBadge("broken")} This pointer cannot be trusted until repaired.</aside>` : ""}
-        ${evidenceCard(evidence)}${section("Resolved transcript span", evidence.brokenReason ? emptyState("Resolution failed", evidence.brokenReason) : `<blockquote>${escapeHtml(evidence.spanText)}</blockquote><a href="${escapeHtml(routeHref.transcript(evidence.transcriptId, evidence.spanId))}">Open highlighted source span</a>`)}
-        ${section("Submit a correction", correctionForm("evidence", evidence.id))}`;
-      return { title: `Evidence ${evidence.id}`, html: appShell(`Evidence ${evidence.id}`, body) };
-    }
-    case "memory": {
-      const view = await api.getMemory(route.params.id);
-      return { title: view?.memory.title || "Memory object", html: appShell(view?.memory.title || "Memory object", view ? memoryView(view) : emptyState("Memory not found", "The requested canonical memory object is unavailable.")) };
-    }
-    case "graph": {
-      const { graph, warnings } = await api.getGraph();
-      const query = (route.query.get("q") ?? "").toLowerCase(), type = route.query.get("type") ?? "all";
-      const limit = Math.min(Math.max(Number(route.query.get("limit") ?? 100) || 100, 1), 100);
-      const visibleNodes = graph.nodes.filter((node) => (!query || node.label.toLowerCase().includes(query)) && (type === "all" || node.type === type)).slice(0, limit);
-      const ids = new Set(visibleNodes.map((node) => node.id));
-      const visibleEdges = graph.edges.filter((edge) => ids.has(edge.source) || ids.has(edge.target)).slice(0, limit);
-      const nodes = visibleNodes.map((node) => `<li tabindex="0"><a href="${routeHref.graph(`?selectedNode=${encodeURIComponent(node.id)}`)}"><strong>${escapeHtml(node.label)}</strong></a> <small>${escapeHtml(node.type)}</small> ${node.supportStatus ? `<span class="support-status">${escapeHtml(node.supportStatus)}</span>` : ""}</li>`).join("");
-      const edges = visibleEdges.map((edge) => `<li tabindex="0">${edge.type === "contradicts" || edge.type === "updates" ? trustBadge("conflicting", edge.type) : ""} <a href="${routeHref.graph(`?selectedEdge=${encodeURIComponent(edge.id)}`)}">${escapeHtml(edge.source)} \u2192 ${escapeHtml(edge.target)} <strong>${escapeHtml(edge.type)}</strong></a> ${edge.evidencePointerId ? `<a href="${escapeHtml(routeHref.evidence(edge.evidencePointerId))}">evidence</a>` : `<span>${trustBadge("needs_review", "inferred / no evidence link")}</span>`}</li>`).join("");
-      const selectedNode = graph.nodes.find((node) => node.id === route.query.get("selectedNode"));
-      const selectedEdge = graph.edges.find((edge) => edge.id === route.query.get("selectedEdge"));
-      const details = selectedNode ? section("Selected node", `<article><h3>${escapeHtml(selectedNode.label)}</h3><p>${escapeHtml(selectedNode.type)} \xB7 ${escapeHtml(selectedNode.supportStatus ?? "no status")} \xB7 confidence ${score(selectedNode.confidence)}</p><p>${graph.edges.filter((edge) => (edge.source === selectedNode.id || edge.target === selectedNode.id) && edge.evidencePointerId).length} evidence-linked edge(s)</p>${graphNodeLink(selectedNode.id) ? `<a href="${escapeHtml(graphNodeLink(selectedNode.id))}">Open related item</a>` : ""}</article>`) : selectedEdge ? section("Selected edge", `<article>${selectedEdge.type === "contradicts" || selectedEdge.type === "updates" ? trustBadge("conflicting", selectedEdge.type) : ""}<p>${escapeHtml(selectedEdge.source)} \u2192 ${escapeHtml(selectedEdge.target)}</p><p>${escapeHtml(selectedEdge.type)} \xB7 confidence ${score(selectedEdge.confidence)} \xB7 ${selectedEdge.evidencePointerId ? "1 evidence link" : "0 evidence links"}</p>${selectedEdge.evidencePointerId ? `<a href="${escapeHtml(routeHref.evidence(selectedEdge.evidencePointerId))}">Open linked evidence</a>` : ""}</article>`) : "";
-      return { title: "Graph", html: appShell("Graph", `<form data-action="filter" data-view="graph"><label>Filter graph <input name="q" value="${escapeHtml(query)}"></label><label>Node type <input name="type" value="${escapeHtml(type)}"></label><label>Limit (max 100) <input name="limit" type="number" min="1" max="100" value="${limit}"></label><button type="submit">Apply</button></form>
-        <p>Showing ${visibleNodes.length} of ${graph.nodes.length} nodes and ${visibleEdges.length} edges.</p>${warnings.length ? `<aside class="trust-warning">${warnings.map(escapeHtml).join("<br>")}</aside>` : ""}${details}${section("Nodes", `<ul>${nodes}</ul>`)}${section("Edges", `<ul>${edges}</ul>`)}`) };
-    }
-    case "search": {
-      const query = route.query.get("q") ?? "";
-      const results = await api.search(query);
-      const filter = route.query.get("type") ?? "all", strength = route.query.get("strength") ?? "all";
-      const filtered = results.filter((item) => (filter === "all" || filter === "evidence" && item.type === "evidence" || item.type === filter || filter === "memory" && item.type === "memory_object" || filter === "answers" && item.type === "answer" || filter === "transcripts" && (item.type === "transcript" || item.type === "span")) && (strength === "all" || item.trustState === strength));
-      const groups = [...new Set(filtered.map((item) => item.type))].map((group) => section(group.replaceAll("_", " "), filtered.filter((item) => item.type === group).map(searchCard).join(""))).join("");
-      return { title: "Search", html: appShell("Search", `<aside class="immutable-notice">Search finds candidate evidence; evidence scores decide how much to trust it.</aside><form data-action="filter" data-view="search"><label>Search transcripts, spans, memory, answers, and evidence <input name="q" value="${escapeHtml(query)}"></label><label>Type <select name="type"><option>${escapeHtml(filter)}</option><option>all</option><option>transcripts</option><option>memory</option><option>answers</option><option>evidence</option></select></label><label>Evidence strength <select name="strength"><option>${escapeHtml(strength)}</option><option>all</option><option>strong</option><option>mixed</option><option>weak</option><option>conflicting</option><option>broken</option></select></label><button type="submit">Search</button></form>
-        ${query ? section(`${filtered.length} results`, groups || emptyState("No results", "No source-backed content matched.")) : emptyState("Search the vault", "Enter a phrase to search structured SQLite content.")}`) };
-    }
-    case "review": {
-      const items = await api.listReviewItems(), type = route.query.get("type") ?? "all", status = route.query.get("status") ?? "open";
-      const filtered = items.filter((item) => (type === "all" || item.type === type) && (status === "all" || item.status === status));
-      return { title: "Review queue", html: appShell("Review queue", `<form data-action="filter" data-view="review"><label>Item type <input name="type" value="${escapeHtml(type)}"></label><label>Status <select name="status"><option>${escapeHtml(status)}</option><option>open</option><option>resolved</option><option>dismissed</option><option>all</option></select></label><button type="submit">Filter items</button></form>${filtered.map(reviewCard).join("") || emptyState("Review queue is clear", "No weak, broken, conflicting, or review-only items were found.")}`) };
-    }
-    case "review_detail": {
-      const item = await api.getReviewItem(route.params.id);
-      const form = item ? correctionForm(item.targetType, item.targetId) : "";
-      const related = item ? `${item.relatedTranscriptIds.length ? section("Linked transcripts", item.relatedTranscriptIds.map((id) => `<a href="${escapeHtml(routeHref.transcript(id))}">${escapeHtml(id)}</a>`).join(" ")) : ""}${item.relatedEvidenceIds.length ? section("Linked evidence", item.relatedEvidenceIds.map((id) => `<a href="${escapeHtml(routeHref.evidence(id))}">${escapeHtml(id)}</a>`).join(" ")) : ""}` : "";
-      return { title: item?.title ?? "Review item not found", html: appShell(item?.title ?? "Review item not found", item ? `${reviewCard(item)}${related}<aside class="immutable-notice">Resolution is read-only here. Corrections are appended as separate records; raw source text is never edited.</aside>${form}` : emptyState("Review item not found", "This item may already have been resolved.")) };
-    }
-    default:
-      return { title: "Not found", html: appShell("Not found", emptyState("Page not found", "The requested frontend route does not exist.", { href: "/", label: "Dashboard" })) };
-  }
-}
-
-// src/frontend/app.ts
-async function renderRoute(api, url) {
-  try {
-    return (await renderPage({ api, route: matchRoute(url) })).html;
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    console.error("Transcript Memory Vault UI render failed", error);
-    return appShell("Unable to load view", `<section class="trust-warning"><h2>Transcript Memory Vault could not load this view</h2><p>${escapeHtml(detail)}</p><p>The plugin did not continue as if unavailable data were trustworthy. Open the dashboard or plugin settings for database health details.</p></section>`);
-  }
-}
-var mountControllers = /* @__PURE__ */ new WeakMap();
-var MUTATING_ACTIONS = /* @__PURE__ */ new Set(["upload", "ask", "correction", "review"]);
-async function mountObsidianUi(root, api, navigation, initialTarget, onMutation) {
-  mountControllers.get(root)?.abort();
-  const controller = new AbortController();
-  mountControllers.set(root, controller);
-  const { signal } = controller;
-  let currentTarget = initialTarget;
-  const render = async (target) => {
-    currentTarget = target;
-    root.innerHTML = await renderRoute(api, target);
-    const span = new URL(target).searchParams.get("span");
-    if (span) document.getElementById(`span-${span}`)?.scrollIntoView({ block: "center" });
-  };
-  root.addEventListener("click", (event) => {
-    const copy = event.target.closest("[data-copy-quote]");
-    if (copy) {
-      void navigator.clipboard?.writeText(copy.dataset.copyQuote ?? "");
-      copy.textContent = "Quote copied";
-      return;
-    }
-    const routeControl = event.target.closest("[data-route], a[href]");
-    const target = routeControl?.dataset.route ?? routeControl?.getAttribute("href");
-    if (!isInternalNavigationTarget(target)) return;
-    event.preventDefault();
-    event.stopPropagation();
-    void navigateInternal(navigation, target);
-  }, { signal });
-  root.addEventListener("change", (event) => {
-    const input = event.target;
-    if (input.name !== "file" || !input.files?.[0]) return;
-    const file = input.files[0];
-    const form = input.form;
-    const status = form?.querySelector("[data-file-status]") ?? form?.parentElement?.querySelector("[data-file-status]");
-    if (status) status.textContent = `${file.name} \xB7 ${file.size} bytes`;
-    void file.text().then((text) => {
-      const filename = form?.elements.namedItem("filename");
-      const rawText = form?.elements.namedItem("rawText");
-      if (filename) filename.value = file.name;
-      if (rawText) rawText.value = text;
-    });
-  }, { signal });
-  root.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const form = event.target;
-    const data = new FormData(form);
-    const result = form.parentElement?.querySelector("[data-form-result]");
-    const loading = form.parentElement?.querySelector("[data-loading-message]");
-    const action = form.dataset.action;
-    void (async () => {
-      try {
-        if (loading) loading.hidden = false;
-        if (action === "upload") {
-          const imported = await api.uploadTranscript({ filename: String(data.get("filename") ?? ""), rawText: String(data.get("rawText") ?? "") });
-          if (result) {
-            result.innerHTML = `${imported.status === "duplicate" ? "<strong>Duplicate transcript:</strong> existing immutable source reused." : "<strong>Transcript imported successfully.</strong>"}
-              <a href="${escapeHtml(routeHref.transcript(imported.transcriptId))}">Open transcript</a> <a href="${routeHref.dashboard()}">Dashboard</a>${imported.warning ? `<p class="trust-warning">${escapeHtml(imported.warning)}</p>` : ""}`;
-          }
-        } else if (action === "ask") {
-          const answer = await api.ask(String(data.get("question") ?? ""), { transcriptIds: data.getAll("transcriptIds").map(String) });
-          await navigation.openAnswer(answer.id);
-        } else if (action === "correction") {
-          const correction = await api.submitCorrection({
-            targetType: String(data.get("targetType")),
-            targetId: String(data.get("targetId")),
-            correctionText: String(data.get("correctionText") ?? ""),
-            reason: String(data.get("reason") ?? "") || void 0
-          });
-          if (result) result.innerHTML = `Correction appended: <code>${escapeHtml(correction.correctionId)}</code>`;
-        } else if (action === "review") {
-          await performReviewAction(api, String(data.get("memoryId") ?? ""), data.get("decision") === "reject" ? "reject" : "approve", render, currentTarget);
-        } else if (action === "filter") {
-          const view = form.dataset.view ?? "dashboard";
-          await render(`mv://${view}?${new URLSearchParams(data)}`);
-        }
-        if (action && MUTATING_ACTIONS.has(action)) {
-          try {
-            await onMutation?.();
-          } catch (refreshError) {
-            console.error("Transcript Memory Vault cross-view refresh failed", refreshError);
-          }
-        }
-      } catch (error) {
-        if (result) result.textContent = error instanceof Error ? error.message : String(error);
-      } finally {
-        if (loading) loading.hidden = true;
-      }
-    })();
-  }, { signal });
-  await render(initialTarget);
-}
-function isInternalNavigationTarget(target) {
-  return target?.startsWith("mv://") ?? false;
-}
-function refreshTargetAfterAction(currentTarget) {
-  return matchRoute(currentTarget).id === "review_detail" ? routeHref.reviewQueue() : currentTarget;
-}
-async function performReviewAction(api, memoryId, decision, refresh, currentTarget) {
-  await api.reviewMemoryObject(memoryId, decision);
-  await refresh(refreshTargetAfterAction(currentTarget));
-}
-
-// src/obsidian/TranscriptMemoryItemView.ts
-var TranscriptMemoryItemView = class extends import_obsidian2.ItemView {
-  constructor(leaf, type, getApi, vaultNavigation, registry) {
-    super(leaf);
-    this.type = type;
-    this.getApi = getApi;
-    this.vaultNavigation = vaultNavigation;
-    this.registry = registry;
-  }
-  type;
-  getApi;
-  vaultNavigation;
-  registry;
-  state = {};
-  getViewType() {
-    return this.type;
-  }
-  getDisplayText() {
-    return viewTitle(this.type);
-  }
-  getIcon() {
-    return "database";
-  }
-  getState() {
-    return this.state;
-  }
-  async setState(state) {
-    this.state = state;
-    await this.render();
-  }
-  async onOpen() {
-    this.registry.register(this);
-    await this.render();
-  }
-  async onClose() {
-    this.registry.unregister(this);
-    this.contentEl.empty();
-  }
-  /** Re-fetch and re-render this view's current route. Invoked by the registry after a mutation elsewhere. */
-  async refresh() {
-    await this.render();
-  }
-  async render() {
-    this.contentEl.empty();
-    this.contentEl.addClass("transcript-memory-vault-host");
-    try {
-      await mountObsidianUi(this.contentEl, this.getApi(), this.vaultNavigation, this.state.target ?? defaultTarget(this.type), () => this.registry.notifyMutation(this));
-    } catch (error) {
-      console.error("Transcript Memory Vault view load failed", error);
-      this.contentEl.empty();
-      this.contentEl.createEl("h2", { text: "Transcript Memory Vault could not load this view" });
-      this.contentEl.createEl("p", { text: error instanceof Error ? error.message : String(error) });
-      this.contentEl.createEl("p", { text: "The plugin did not continue as if the database were trustworthy. Open the dashboard or plugin settings for database health details." });
-    }
-  }
-};
-
-// src/obsidian/services/ObsidianAppApi.ts
-function createObsidianAppApi(db, vault, health, getSynthesis, getMemoryExtractor, options) {
-  const api = createSqliteFrontendApi(db, { health, getSynthesis, getMemoryExtractor, llmRequired: options?.llmRequired, getLlmReady: options?.getLlmReady });
-  return {
-    ...api,
-    async uploadVaultFile(file) {
-      const rawText = await vault.read(file);
-      validateTranscriptUpload({ filename: file.name, rawText });
-      return api.uploadTranscript({ filename: file.name, rawText });
-    }
-  };
-}
-
-// src/obsidian/startup.ts
-var DESKTOP_ONLY_MESSAGE = "Transcript Memory Vault is desktop-only right now because it uses local SQLite storage.";
-var initialPluginHealth = () => ({
-  status: "initializing",
-  databaseConnected: false,
-  migrationStatus: "pending",
-  packagedMigrationCount: PACKAGED_MIGRATION_COUNT,
-  appliedMigrationCount: 0,
-  databasePath: null,
-  realSqliteStorage: false,
-  firstRun: false,
-  lastInitializationError: null,
-  nativeBindingTarget: null,
-  packagedNativeTargets: [],
-  ...settingsHealthSummary(DEFAULT_SETTINGS)
-});
-function startupSupport(input) {
-  return input.isDesktopApp && input.hasLocalFilesystem ? { supported: true } : { supported: false, message: DESKTOP_ONLY_MESSAGE };
-}
-var unavailable = (health) => {
-  throw new Error(health.lastInitializationError ?? DESKTOP_ONLY_MESSAGE);
-};
-function createUnavailableFrontendApi(getHealth) {
-  return {
-    async getDashboard() {
-      return {
-        totalTranscriptCount: 0,
-        transcripts: [],
-        recentAnswers: [],
-        reviewCount: 0,
-        weakCount: 0,
-        conflictCount: 0,
-        brokenCount: 0,
-        health: getHealth()
-      };
-    },
-    async listTranscripts() {
-      return [];
-    },
-    async uploadTranscript() {
-      return unavailable(getHealth());
-    },
-    async getTranscript() {
-      return unavailable(getHealth());
-    },
-    async ask() {
-      return unavailable(getHealth());
-    },
-    async askAI() {
-      return unavailable(getHealth());
-    },
-    async getAnswer() {
-      return unavailable(getHealth());
-    },
-    async getEvidence() {
-      return unavailable(getHealth());
-    },
-    async getMemory() {
-      return unavailable(getHealth());
-    },
-    async getMemoryObject() {
-      return unavailable(getHealth());
-    },
-    async getGraph() {
-      return unavailable(getHealth());
-    },
-    async search() {
-      return unavailable(getHealth());
-    },
-    async searchVault() {
-      return unavailable(getHealth());
-    },
-    async listReviewItems() {
-      return unavailable(getHealth());
-    },
-    async getReviewItem() {
-      return unavailable(getHealth());
-    },
-    async submitCorrection() {
-      return unavailable(getHealth());
-    },
-    async reviewMemoryObject() {
-      return unavailable(getHealth());
-    },
-    async getLlmStatus() {
-      return { required: true, ready: Boolean(getHealth().llmReady) };
-    },
-    async runExtraction() {
-      return unavailable(getHealth());
-    }
-  };
-}
-function readableStartupError(error) {
-  return error instanceof Error ? error.message : String(error);
-}
-
-// src/obsidian/embeddingSettings.ts
-function externalEmbeddingConfigFromSettings(settings) {
-  if (settings.mode !== "external") return null;
-  const { provider, model, dimensions, baseUrl, timeoutMs } = settings.embedding;
-  if (!isExternalEmbeddingProvider(provider)) return null;
-  const apiKey = settings.apiKeys[provider];
-  if (!apiKey || !apiKey.trim()) return null;
-  if (typeof dimensions !== "number" || !Number.isInteger(dimensions) || dimensions <= 0) return null;
-  const config = { provider, model, dimensions, apiKey: apiKey.trim() };
-  if (baseUrl) config.baseUrl = baseUrl;
-  if (typeof timeoutMs === "number" && timeoutMs > 0) config.timeoutMs = timeoutMs;
-  return config;
-}
-var summarizeResolution = (resolution) => ({
-  requestedId: resolution.requestedId,
-  model: resolution.provider.model,
-  usedFallback: resolution.usedFallback,
-  reason: resolution.reason
-});
-function resolveEmbeddingProviderFromSettings(settings, options = {}) {
-  const external = externalEmbeddingConfigFromSettings(settings);
-  if (external) {
-    const config = options.transport ? { ...external, transport: options.transport } : external;
-    return resolveEmbeddingProvider(void 0, { external: config });
-  }
-  if (settings.mode === "external" && isExternalEmbeddingProvider(settings.embedding.provider)) {
-    const fallback = resolveEmbeddingProvider();
-    return {
-      ...fallback,
-      requestedId: settings.embedding.provider,
-      usedFallback: true,
-      reason: `External embedding provider "${settings.embedding.provider}" is not fully configured (needs a non-blank API key and positive dimensions); using local ${TOKEN_HASH_MODEL}.`
-    };
-  }
-  return resolveEmbeddingProvider(settings.embedding.provider, { dimensions: settings.embedding.dimensions });
-}
-function embeddingReindexStatus(db, settings) {
-  const resolution = resolveEmbeddingProviderFromSettings(settings);
-  const assessment = detectReindexNeeded(db, resolution.provider);
-  return { summary: summarizeResolution(resolution), assessment };
-}
-async function runEmbeddingReindex(db, settings, options = {}) {
-  const resolution = resolveEmbeddingProviderFromSettings(settings, options);
-  const result = await rebuildRetrievalIndex(db, { embeddingProvider: resolution.provider });
-  const assessment = detectReindexNeeded(db, resolution.provider);
-  return { summary: summarizeResolution(resolution), result, assessment };
-}
-
-// src/obsidian/embeddingTransport.ts
-var import_obsidian3 = require("obsidian");
-function createObsidianEmbeddingTransport() {
-  return async (request) => {
-    const response = await (0, import_obsidian3.requestUrl)({
-      url: request.url,
-      method: request.method,
-      headers: request.headers,
-      body: request.body,
-      throw: false
-    });
-    let body = null;
-    try {
-      body = response.json;
-    } catch {
-      body = response.text ?? null;
-    }
-    return { status: response.status, body };
-  };
-}
 
 // src/llm/errors.ts
 var LlmError = class extends Error {
@@ -5868,10 +3773,10 @@ var LlmResponseFormatError = class extends LlmError {
 };
 
 // src/llm/redaction.ts
-var REDACTED2 = "[redacted]";
-function redactSecret2(text, secret) {
+var REDACTED = "[redacted]";
+function redactSecret(text, secret) {
   if (!secret || !secret.trim()) return text;
-  return text.split(secret).join(REDACTED2);
+  return text.split(secret).join(REDACTED);
 }
 
 // src/llm/timeout.ts
@@ -5903,7 +3808,7 @@ async function runWithTimeout(operation, options = {}) {
 }
 
 // src/llm/externalLlmProvider.ts
-var DEFAULT_BASE_URL2 = "https://api.openai.com/v1";
+var DEFAULT_BASE_URL = "https://api.openai.com/v1";
 function createHttpLlmTransport(fetchImpl = globalThis.fetch) {
   return async (request) => {
     const response = await fetchImpl(request.url, {
@@ -5941,7 +3846,7 @@ var ExternalLlmProvider = class {
     this.id = config.id;
     this.model = config.model;
     this.#apiKey = config.apiKey.trim();
-    this.#baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL2).replace(/\/+$/, "");
+    this.#baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
     this.#transport = config.transport ?? createHttpLlmTransport();
     this.#timeoutMs = config.timeoutMs;
   }
@@ -5967,7 +3872,7 @@ var ExternalLlmProvider = class {
       );
     } catch (error) {
       if (error instanceof LlmError) throw error;
-      const detail = redactSecret2(error instanceof Error ? error.message : String(error), this.#apiKey);
+      const detail = redactSecret(error instanceof Error ? error.message : String(error), this.#apiKey);
       throw new LlmProviderError(`LLM request failed: ${detail}`, { provider: this.id, model: this.model });
     }
     if (response.status === 401 || response.status === 403) {
@@ -6019,228 +3924,401 @@ function askAiSynthesisFromSettings(settings, options = {}) {
     info: { mode: "external_llm", provider: provider.id, model: provider.model, usedFallback: false }
   };
 }
-function memoryExtractorFromSettings(settings, options = {}) {
-  const provider = externalProviderFromSettings(settings, options);
-  if (!provider) return void 0;
-  return createLlmMemoryExtractor(provider);
-}
 
-// src/obsidian/llmTransport.ts
-var import_obsidian4 = require("obsidian");
-function createObsidianLlmTransport() {
-  return async (request) => {
-    const response = await (0, import_obsidian4.requestUrl)({
-      url: request.url,
-      method: request.method,
-      headers: request.headers,
-      body: request.body,
-      throw: false
-    });
-    let body = null;
-    try {
-      body = response.json;
-    } catch {
-      body = response.text ?? null;
-    }
-    return { status: response.status, body };
+// src/mcp/config.ts
+var McpConfigError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "McpConfigError";
+  }
+};
+var trimmed = (value) => {
+  const v = value?.trim();
+  return v && v.length > 0 ? v : void 0;
+};
+function loadMcpConfig(env = process.env) {
+  const dbPath = trimmed(env.TMV_DB_PATH);
+  if (!dbPath) throw new McpConfigError("TMV_DB_PATH is required (path to the Transcript Memory Vault SQLite database).");
+  const provider = trimmed(env.TMV_LLM_PROVIDER) ?? "openai";
+  const model = trimmed(env.TMV_LLM_MODEL) ?? "";
+  const baseUrl = trimmed(env.TMV_LLM_BASE_URL);
+  const apiKey = trimmed(env.TMV_LLM_API_KEY);
+  const settings = {
+    schemaVersion: 1,
+    mode: "external",
+    llm: { provider, model, ...baseUrl ? { baseUrl } : {} },
+    embedding: DEFAULT_SETTINGS.embedding,
+    // external embeddings are not required in Phase 1
+    apiKeys: apiKey ? { [provider]: apiKey } : {}
+  };
+  return {
+    dbPath,
+    migrationDirectory: trimmed(env.TMV_MIGRATIONS_DIR),
+    settings,
+    llmReady: isLlmConfigured(settings)
   };
 }
 
-// src/obsidian/viewRefreshRegistry.ts
-var ViewRefreshRegistry = class {
-  views = /* @__PURE__ */ new Set();
-  register(view) {
-    this.views.add(view);
-  }
-  unregister(view) {
-    this.views.delete(view);
-  }
-  size() {
-    return this.views.size;
-  }
-  /** Refresh every registered view except `origin`. Never throws; logs and continues per view. */
-  async notifyMutation(origin) {
-    for (const view of [...this.views]) {
-      if (view === origin) continue;
-      try {
-        await view.refresh();
-      } catch (error) {
-        console.error("Transcript Memory Vault view refresh failed", error);
-      }
-    }
-  }
+// src/mcp/answerBundle.ts
+var ANSWER_BUNDLE_VERSION = "mcp-answerbundle-v1";
+var QUOTE_PREVIEW_LIMIT = 280;
+var clip = (value, limit = QUOTE_PREVIEW_LIMIT) => {
+  const text = (value ?? "").replace(/\s+/g, " ").trim();
+  return text.length <= limit ? text : `${text.slice(0, limit - 1)}\u2026`;
 };
-
-// src/obsidian/Plugin.ts
-var TranscriptMemoryVaultPlugin = class extends import_obsidian5.Plugin {
-  db = null;
-  pluginSettings = DEFAULT_SETTINGS;
-  health = initialPluginHealth();
-  api = createUnavailableFrontendApi(() => this.health);
-  // Built once; reused. The transport makes no call until the synthesis adapter actually runs.
-  llmTransport = createObsidianLlmTransport();
-  // Tracks open plugin views so a mutating action in one refreshes the others (cross-view invalidation).
-  viewRegistry = new ViewRefreshRegistry();
-  async onload() {
-    await this.loadSettings();
-    const navigation = createObsidianNavigation(this.app);
-    for (const type of Object.values(OBSIDIAN_VIEW_TYPES)) {
-      this.registerView(type, (leaf) => new TranscriptMemoryItemView(leaf, type, () => this.api, navigation, this.viewRegistry));
-    }
-    for (const command of OBSIDIAN_COMMANDS) {
-      this.addCommand({ id: command.id, name: command.name, callback: () => void navigationForView(navigation, command.viewType) });
-    }
-    this.addCommand({ id: OBSIDIAN_REINDEX_COMMAND.id, name: OBSIDIAN_REINDEX_COMMAND.name, callback: () => void this.rebuildEmbeddingIndex() });
-    this.addCommand({ id: "run-ai-extraction", name: "Run AI extraction for transcripts missing it", callback: () => void this.runPendingExtraction() });
-    this.addRibbonIcon(OBSIDIAN_RIBBON.icon, OBSIDIAN_RIBBON.title, () => void navigation.openDashboard());
-    this.addSettingTab(new TranscriptMemorySettingsTab(this.app, this, () => this.health, navigation, () => this.pluginSettings, (next) => this.saveSettings(next)));
-    const adapter = this.app.vault.adapter;
-    const fileSystemAdapter = adapter instanceof import_obsidian5.FileSystemAdapter ? adapter : null;
-    const support = startupSupport({ isDesktopApp: import_obsidian5.Platform.isDesktopApp, hasLocalFilesystem: fileSystemAdapter != null });
-    if (!support.supported) {
-      this.health = { ...this.health, status: "unsupported", lastInitializationError: support.message };
-      new import_obsidian5.Notice(DESKTOP_ONLY_MESSAGE);
-      console.error("Transcript Memory Vault unsupported environment:", support.message);
-      return;
-    }
-    const pluginDirectory = (0, import_node_path4.join)(fileSystemAdapter.getBasePath(), this.app.vault.configDir, "plugins", this.manifest.id);
-    const databasePath = (0, import_node_path4.join)(pluginDirectory, "transcript-memory.sqlite");
-    const migrationDirectory = (0, import_node_path4.join)(pluginDirectory, "migrations");
-    const nativeBinding = resolveNativeBinding(pluginDirectory);
-    this.health = {
-      ...this.health,
-      databasePath,
-      nativeBindingTarget: nativeBinding.target,
-      packagedNativeTargets: nativeBinding.packagedTargets
-    };
-    if (!nativeBinding.ok) {
-      this.health = { ...this.health, status: "error", lastInitializationError: nativeBinding.error };
-      this.api = createUnavailableFrontendApi(() => this.health);
-      new import_obsidian5.Notice(nativeBinding.error);
-      console.error("Transcript Memory Vault native binding unavailable:", nativeBinding.error);
-      return;
-    }
-    try {
-      (0, import_node_fs3.mkdirSync)(pluginDirectory, { recursive: true });
-      const migrationPackage = validateMigrationPackage(migrationDirectory);
-      if (!migrationPackage.ok) throw new Error(`Missing packaged migrations: ${migrationPackage.missing.join(", ")}`);
-      const firstRun = !(0, import_node_fs3.existsSync)(databasePath);
-      try {
-        this.db = openDatabase(databasePath, { nativeBinding: nativeBinding.bindingPath, migrationDirectory });
-      } catch (error) {
-        throw nativeBindingLoadError(nativeBinding, error);
-      }
-      const appliedMigrationCount = this.db.prepare("SELECT COUNT(*) count FROM schema_migrations").get().count;
-      this.health = {
-        ...this.health,
-        status: "ready",
-        databaseConnected: true,
-        migrationStatus: "current",
-        appliedMigrationCount,
-        realSqliteStorage: true,
-        firstRun,
-        lastInitializationError: null
-      };
-      this.api = createObsidianAppApi(
-        this.db,
-        this.app.vault,
-        this.health,
-        () => askAiSynthesisFromSettings(this.pluginSettings, { transport: this.llmTransport }),
-        () => memoryExtractorFromSettings(this.pluginSettings, { transport: this.llmTransport }),
-        { llmRequired: true, getLlmReady: () => isLlmConfigured(this.pluginSettings) }
-      );
-      this.refreshReindexStatus();
-      if (firstRun) new import_obsidian5.Notice("Transcript Memory Vault is ready. Upload a transcript to begin.");
-    } catch (error) {
-      this.db?.close();
-      this.db = null;
-      const message = readableStartupError(error);
-      this.health = { ...this.health, status: "error", databaseConnected: false, migrationStatus: "failed", realSqliteStorage: false, lastInitializationError: message };
-      this.api = createUnavailableFrontendApi(() => this.health);
-      new import_obsidian5.Notice(`Transcript Memory Vault could not initialize: ${message}`);
-      console.error("Transcript Memory Vault initialization failed", error);
-    }
+var sourceSpanUri = (transcriptId, spanId) => routeHref.transcript(transcriptId, spanId);
+var evidenceUri = (evidencePointerId) => routeHref.evidence(evidencePointerId);
+var claimWarning = (support) => support === "weakly_supported" ? "Supported only by weak/indirect evidence \u2014 treat cautiously." : support === "conflicting" ? "Sources conflict; both sides are preserved below." : support === "unsupported" ? "Not supported by the cited evidence." : void 0;
+function toAnswerBundle(response, options = {}) {
+  const broken = new Set(options.brokenCitationIds ?? []);
+  const citations = response.citations.map((c) => ({
+    citation_id: c.id,
+    label: c.label,
+    evidence_pointer_id: c.evidencePointerId,
+    source_pointer_id: c.sourcePointerId,
+    quote_preview: clip(c.quotePreview),
+    source_span_uri: sourceSpanUri(c.transcriptId, c.spanId),
+    evidence_uri: evidenceUri(c.evidencePointerId),
+    obsidian_internal_uri: c.clickbackUri,
+    ...broken.has(c.id) ? { broken: true } : {}
+  }));
+  const evidence = response.evidence.map((e) => ({
+    evidence_pointer_id: e.evidencePointerId,
+    score: e.evidenceScore,
+    confidence: e.evidenceConfidence,
+    quote_preview: clip(e.quotePreview),
+    source_span_uri: sourceSpanUri(e.transcriptId, e.spanId),
+    evidence_uri: evidenceUri(e.evidencePointerId)
+  }));
+  const claims = response.claims.map((claim) => ({
+    claim_id: claim.id,
+    text: claim.text,
+    kind: claim.kind,
+    support_state: claim.supportStatus,
+    citation_ids: claim.citationIds,
+    ...claimWarning(claim.supportStatus) ? { warning: claimWarning(claim.supportStatus) } : {}
+  }));
+  const warnings = [];
+  if (response.notEnoughEvidence || response.evidenceConfidence === "no_evidence") {
+    warnings.push("No supporting transcript evidence was found; this is a refusal, not an answer.");
+  } else if (response.evidenceConfidence === "weak") {
+    warnings.push("Evidence is weak; do not treat this as strong truth.");
+  } else if (response.evidenceConfidence === "conflicting") {
+    warnings.push("Sources conflict; both sides are preserved with citations.");
   }
-  onunload() {
-    for (const type of Object.values(OBSIDIAN_VIEW_TYPES)) this.app.workspace.detachLeavesOfType(type);
-    this.db?.close();
-    this.db = null;
-    this.api = createUnavailableFrontendApi(() => this.health);
-  }
-  async loadSettings() {
-    try {
-      this.pluginSettings = normalizeSettings(await this.loadData());
-    } catch (error) {
-      this.pluginSettings = DEFAULT_SETTINGS;
-      console.error("Transcript Memory Vault settings could not be loaded; using local deterministic defaults.");
+  if (broken.size > 0) warnings.push(`${broken.size} citation pointer(s) no longer resolve.`);
+  const conflicts = response.conflicts.map((conflict) => ({
+    summary: conflict.summary,
+    explanation: conflict.explanation,
+    evidence_uris: [...new Set(conflict.evidenceLinks.map((link) => evidenceUri(link.evidencePointerId)))]
+  }));
+  const evidenceUris = [...new Set(citations.map((c) => c.evidence_uri))];
+  const sourceSpanUris = [...new Set(citations.map((c) => c.source_span_uri))];
+  return {
+    answer_id: response.id,
+    question: response.question,
+    answer_markdown: response.answerMarkdown,
+    evidence_confidence: response.evidenceConfidence,
+    not_enough_evidence: response.notEnoughEvidence,
+    claims,
+    citations,
+    evidence,
+    warnings,
+    conflicts,
+    followups: response.suggestedFollowups,
+    links: { answer_uri: routeHref.answer(response.id), evidence_uris: evidenceUris, source_span_uris: sourceSpanUris, graph_uri: routeHref.graph() },
+    created_at: response.createdAt,
+    pipeline: {
+      answer_mode: response.queryUnderstanding.answerMode,
+      requested_claim_kinds: response.queryUnderstanding.requestedClaimKinds,
+      evidence_confidence: response.evidenceConfidence,
+      version: ANSWER_BUNDLE_VERSION,
+      synthesis_mode: response.synthesis?.mode,
+      synthesis_provider: response.synthesis?.provider,
+      synthesis_model: response.synthesis?.model
     }
-    this.health = { ...this.health, ...settingsHealthSummary(this.pluginSettings) };
-  }
-  async saveSettings(next) {
-    this.pluginSettings = normalizeSettings(next);
-    await this.saveData(this.pluginSettings);
-    this.health = { ...this.health, ...settingsHealthSummary(this.pluginSettings) };
-    this.refreshReindexStatus();
-  }
-  /** Read-only, network-free. Safe to call on startup and after every settings change. */
-  refreshReindexStatus() {
-    if (!this.db) return;
-    try {
-      const { summary, assessment } = embeddingReindexStatus(this.db, this.pluginSettings);
-      this.health = {
-        ...this.health,
-        reindexNeeded: assessment.needsReindex,
-        reindexSummary: assessment.reasons.join(" ") || "Embedding index is up to date.",
-        embeddingUsedFallback: summary.usedFallback
-      };
-    } catch {
-      this.health = { ...this.health, reindexSummary: "Reindex status unavailable." };
-    }
-  }
-  /** Run AI extraction for any transcript imported before the LLM was configured. Requires a configured LLM. */
-  async runPendingExtraction() {
-    if (!this.db || this.health.status !== "ready") {
-      new import_obsidian5.Notice("Transcript Memory Vault is not ready.");
-      return;
-    }
-    if (!isLlmConfigured(this.pluginSettings)) {
-      new import_obsidian5.Notice("Configure an LLM provider, model, and API key in Settings first.");
-      return;
-    }
-    new import_obsidian5.Notice("Running AI extraction\u2026");
-    let extracted = 0, failed = 0, skipped = 0;
-    for (const transcript of await this.api.listTranscripts()) {
-      const result = await this.api.runExtraction(transcript.id);
-      if (result.status === "extracted") extracted += 1;
-      else if (result.status === "failed") failed += 1;
-      else skipped += 1;
-    }
-    new import_obsidian5.Notice(`AI extraction: ${extracted} processed, ${skipped} already done, ${failed} failed.`);
-    await this.viewRegistry.notifyMutation();
-  }
-  /** EXPLICIT manual action. The only path that may make a network call (when external is configured). */
-  async rebuildEmbeddingIndex() {
-    if (!this.db || this.health.status !== "ready") {
-      new import_obsidian5.Notice("Transcript Memory Vault is not ready; cannot rebuild the embedding index.");
-      return;
-    }
-    new import_obsidian5.Notice("Rebuilding embedding index\u2026");
-    try {
-      const { summary, result } = await runEmbeddingReindex(this.db, this.pluginSettings, { transport: createObsidianEmbeddingTransport() });
-      if (summary.usedFallback && summary.reason) new import_obsidian5.Notice(summary.reason);
-      new import_obsidian5.Notice(`Embedding index rebuilt: ${result.indexed} indexed, ${result.embedded} embedded, ${result.errors} error(s).`);
-      this.refreshReindexStatus();
-    } catch (error) {
-      new import_obsidian5.Notice(`Embedding index rebuild failed: ${readableStartupError(error)}`);
-      console.error("Transcript Memory Vault embedding reindex failed", error);
-    }
-  }
-};
-function navigationForView(navigation, viewType) {
-  if (viewType === OBSIDIAN_VIEW_TYPES.upload) return navigation.openUpload();
-  if (viewType === OBSIDIAN_VIEW_TYPES.ask) return navigation.openAskAI();
-  if (viewType === OBSIDIAN_VIEW_TYPES.search) return navigation.openSearch();
-  if (viewType === OBSIDIAN_VIEW_TYPES.graph) return navigation.openGraph();
-  if (viewType === OBSIDIAN_VIEW_TYPES.review) return navigation.openReviewQueue();
-  return navigation.openDashboard();
+  };
 }
+
+// src/mcp/tools.ts
+var McpInputError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "McpInputError";
+  }
+};
+var PREVIEW_LIMIT = 280;
+var preview2 = (value, limit = PREVIEW_LIMIT) => {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  return text.length <= limit ? text : `${text.slice(0, limit - 1)}\u2026`;
+};
+var asRecord = (args) => args && typeof args === "object" && !Array.isArray(args) ? args : {};
+var requireString = (args, key) => {
+  const value = args[key];
+  if (typeof value !== "string" || !value.trim()) throw new McpInputError(`"${key}" must be a non-empty string`);
+  return value.trim();
+};
+var clampLimit = (value, fallback, max) => {
+  const n = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(Math.max(Math.trunc(n), 1), max);
+};
+var stringArray = (value) => Array.isArray(value) && value.every((v) => typeof v === "string") && value.length ? value : void 0;
+var answerSummary = (row) => ({
+  answer_id: row.id,
+  question: preview2(row.question, 200),
+  created_at: row.created_at,
+  evidence_confidence: row.evidence_confidence,
+  not_enough_evidence: row.not_enough_evidence === 1,
+  answer_preview: preview2(row.answer_markdown),
+  answer_uri: routeHref.answer(row.id)
+});
+function createVaultTools(deps) {
+  const { db, api } = deps;
+  const definitions = [
+    {
+      name: "ask_vault",
+      description: "Primary answer tool. Ask a question and get a validated, citation-grounded AnswerBundle produced by the vault's evidence-first Ask AI pipeline (retrieve \u2192 score \u2192 select \u2192 grounded LLM synthesis \u2192 citation validation). Always use this to answer the user \u2014 do NOT synthesize your own answer from search_evidence. Returns a refusal when there is not enough evidence; returns a setup-required / llm-failed state (persisting no answer) when the LLM is unconfigured or fails.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          question: { type: "string", description: "The user's question." },
+          transcript_filter: { type: "object", properties: { transcript_ids: { type: "array", items: { type: "string" } } } },
+          max_evidence: { type: "number", description: "Optional cap on evidence items considered." }
+        },
+        required: ["question"],
+        additionalProperties: false
+      },
+      handler: async (raw) => {
+        const args = asRecord(raw);
+        const question = requireString(args, "question");
+        const transcriptIds = stringArray(asRecord(args.transcript_filter).transcript_ids);
+        const maxEvidence = args.max_evidence === void 0 ? void 0 : clampLimit(args.max_evidence, 8, 50);
+        try {
+          const answer = await api.ask(question, { transcriptIds, maxEvidence });
+          return { ok: true, answer_bundle: toAnswerBundle(answer) };
+        } catch (error) {
+          if (error instanceof SynthesisSetupRequiredError) return { ok: false, state: "setup_required", message: error.message };
+          if (error instanceof SynthesisFailedError) return { ok: false, state: "llm_failed", message: error.message };
+          throw error;
+        }
+      }
+    },
+    {
+      name: "get_answer",
+      description: "Reconstruct a previously persisted, validated answer by id. Returns the same AnswerBundle (claims, citations, evidence links, conflicts, follow-ups).",
+      inputSchema: { type: "object", properties: { answer_id: { type: "string" } }, required: ["answer_id"], additionalProperties: false },
+      handler: async (raw) => {
+        const view = await api.getAnswer(requireString(asRecord(raw), "answer_id"));
+        if (!view) return { ok: false, state: "not_found" };
+        return { ok: true, answer_bundle: toAnswerBundle(view, { brokenCitationIds: view.brokenCitationIds }) };
+      }
+    },
+    {
+      name: "list_recent_answers",
+      description: "List recent persisted Ask AI answers (most recent first) as size-limited summaries. Use get_answer for the full validated bundle.",
+      inputSchema: { type: "object", properties: { limit: { type: "number" } }, additionalProperties: false },
+      handler: async (raw) => {
+        const limit = clampLimit(asRecord(raw).limit, 20, 50);
+        const rows = db.prepare("SELECT id, question, evidence_confidence, not_enough_evidence, answer_markdown, created_at FROM ask_ai_runs ORDER BY created_at DESC, id DESC LIMIT ?").all(limit);
+        return { answers: rows.map(answerSummary) };
+      }
+    },
+    {
+      name: "search_vault_answers",
+      description: "Search PREVIOUS persisted answers/questions (not raw transcripts) for a phrase. Returns size-limited answer summaries; use get_answer for the full bundle.",
+      inputSchema: { type: "object", properties: { query: { type: "string" }, limit: { type: "number" } }, required: ["query"], additionalProperties: false },
+      handler: async (raw) => {
+        const args = asRecord(raw);
+        const like = `%${requireString(args, "query")}%`;
+        const limit = clampLimit(args.limit, 20, 50);
+        const rows = db.prepare("SELECT id, question, evidence_confidence, not_enough_evidence, answer_markdown, created_at FROM ask_ai_runs WHERE question LIKE ? OR answer_markdown LIKE ? ORDER BY created_at DESC, id DESC LIMIT ?").all(like, like, limit);
+        return { answers: rows.map(answerSummary) };
+      }
+    },
+    {
+      name: "search_evidence",
+      description: "INSPECTION/DEBUG ONLY \u2014 returns scored, provenance-backed evidence cards (not unscored raw chunks). For user-facing answers, use ask_vault instead; do not synthesize an answer from these cards.",
+      inputSchema: { type: "object", properties: { query: { type: "string" }, limit: { type: "number" } }, required: ["query"], additionalProperties: false },
+      handler: async (raw) => {
+        const args = asRecord(raw);
+        const query = requireString(args, "query");
+        const limit = clampLimit(args.limit, 10, 25);
+        const candidates = await searchEvidencePointers(db, { query, mode: "hybrid", finalLimit: limit, requireEvidencePointers: true });
+        const cards = candidates.map((candidate) => {
+          const resolved = resolveEvidencePointer(db, candidate.targetId);
+          if (!resolved.ok) {
+            return { evidence_pointer_id: candidate.targetId, score: candidate.finalScore, confidence: "broken", quote_preview: preview2(candidate.quote ?? candidate.textPreview), source_span_uri: null, evidence_uri: routeHref.evidence(candidate.targetId), warnings: [`broken: ${resolved.reason}`] };
+          }
+          const e = resolved.evidence;
+          return {
+            evidence_pointer_id: e.evidence_pointer_id,
+            source_pointer_id: e.source_pointer_uri,
+            score: candidate.finalScore,
+            confidence: e.evidence_strength,
+            quote_preview: preview2(resolved.spanText || candidate.quote),
+            source_span_uri: routeHref.transcript(e.transcript_id, e.span_id),
+            evidence_uri: routeHref.evidence(e.evidence_pointer_id),
+            warnings: e.evidence_strength === "weak" ? ["weak evidence \u2014 do not treat as strong truth"] : []
+          };
+        });
+        return { evidence: cards, note: "Inspection only. Use ask_vault for grounded, validated user-facing answers." };
+      }
+    },
+    {
+      name: "get_memory_object",
+      description: "Inspect a canonical memory object with its provenance/evidence pointers, status, and trust state. Memory object text is NOT evidence on its own \u2014 rely on the linked evidence pointers.",
+      inputSchema: { type: "object", properties: { memory_object_id: { type: "string" } }, required: ["memory_object_id"], additionalProperties: false },
+      handler: async (raw) => {
+        const id = requireString(asRecord(raw), "memory_object_id");
+        const view = await api.getMemory(id);
+        if (!view) return { ok: false, state: "not_found" };
+        return {
+          ok: true,
+          memory_object: {
+            memory_object_id: view.memory.id,
+            type: view.memory.type,
+            title: view.memory.title,
+            body: preview2(view.memory.body, 1e3),
+            status: view.memory.status,
+            trust_state: view.trustState,
+            confidence: view.memory.confidence,
+            user_corrected: view.memory.userCorrected,
+            memory_uri: routeHref.memory(view.memory.id),
+            evidence: view.evidence.map((e) => ({
+              evidence_pointer_id: e.id,
+              confidence: e.strength,
+              quote_preview: preview2(e.quotePreview || e.spanText),
+              source_span_uri: routeHref.transcript(e.transcriptId, e.spanId),
+              evidence_uri: routeHref.evidence(e.id),
+              broken: Boolean(e.brokenReason)
+            })),
+            note: "Memory object text is not evidence on its own; rely on the linked evidence pointers."
+          }
+        };
+      }
+    },
+    {
+      name: "get_conflicts",
+      description: "List active conflicts/tensions between sources, with both sides and evidence links. Optionally filter by a topic substring.",
+      inputSchema: { type: "object", properties: { topic: { type: "string" }, limit: { type: "number" } }, additionalProperties: false },
+      handler: async (raw) => {
+        const args = asRecord(raw);
+        const topic = typeof args.topic === "string" ? args.topic.trim().toLowerCase() : "";
+        const limit = clampLimit(args.limit, 10, 25);
+        const all = createConflictRepository(db).listActiveConflicts();
+        const matched = (topic ? all.filter((c) => `${c.summary} ${c.explanation}`.toLowerCase().includes(topic)) : all).slice(0, limit);
+        return {
+          conflicts: matched.map((c) => ({
+            conflict_id: c.id,
+            kind: c.kind,
+            status: c.status,
+            summary: c.summary,
+            explanation: preview2(c.explanation, 500),
+            trust_state: "conflicting",
+            sides: [
+              { target_type: c.leftTargetType, target_id: c.leftTargetId },
+              { target_type: c.rightTargetType, target_id: c.rightTargetId }
+            ],
+            evidence_uris: [...new Set(c.evidenceLinks.map((link) => routeHref.evidence(link.evidencePointerId)))]
+          }))
+        };
+      }
+    }
+  ];
+  const byName = new Map(definitions.map((definition) => [definition.name, definition]));
+  return {
+    definitions,
+    async call(name, args) {
+      const definition = byName.get(name);
+      if (!definition) throw new McpInputError(`Unknown tool: ${name}`);
+      return definition.handler(asRecord(args));
+    }
+  };
+}
+
+// src/mcp/server.ts
+var PROTOCOL_VERSION = "2024-11-05";
+var SERVER_INFO = { name: "transcript-memory-vault", version: "0.1.0" };
+var log = (message) => process.stderr.write(`[tmv-mcp] ${message}
+`);
+var send = (message) => process.stdout.write(`${JSON.stringify(message)}
+`);
+var reply = (id, result) => send({ jsonrpc: "2.0", id, result });
+var replyError = (id, code, message) => send({ jsonrpc: "2.0", id, error: { code, message } });
+function main() {
+  let config;
+  try {
+    config = loadMcpConfig(process.env);
+  } catch (error) {
+    log(error instanceof McpConfigError ? error.message : "Failed to load MCP configuration.");
+    process.exit(1);
+    return;
+  }
+  const migrationDirectory = config.migrationDirectory ?? (0, import_node_path3.join)((0, import_node_path3.dirname)(process.argv[1] ?? "."), "migrations");
+  let tools;
+  try {
+    const db = openDatabase(config.dbPath, { migrationDirectory });
+    const api = createSqliteFrontendApi(db, {
+      llmRequired: true,
+      getLlmReady: () => isLlmConfigured(config.settings),
+      // No transport injected -> ExternalLlmProvider uses its default Node fetch HTTP transport.
+      getSynthesis: () => askAiSynthesisFromSettings(config.settings)
+    });
+    tools = createVaultTools({ db, api });
+  } catch (error) {
+    log(`Failed to open database at TMV_DB_PATH: ${error instanceof Error ? error.message : "unknown error"}`);
+    process.exit(1);
+    return;
+  }
+  log(`ready (db=${config.dbPath}, llmReady=${config.llmReady})`);
+  const toolList = tools.definitions.map((d) => ({ name: d.name, description: d.description, inputSchema: d.inputSchema }));
+  const rl = (0, import_node_readline.createInterface)({ input: process.stdin, terminal: false });
+  rl.on("line", (line) => {
+    void handleLine(line);
+  });
+  async function handleLine(line) {
+    const text = line.trim();
+    if (!text) return;
+    let message;
+    try {
+      message = JSON.parse(text);
+    } catch {
+      log("ignored a non-JSON line on stdin");
+      return;
+    }
+    const { id, method, params } = message;
+    const isNotification = id === void 0 || id === null;
+    try {
+      if (method === "initialize") {
+        const requested = params?.protocolVersion;
+        reply(id, { protocolVersion: requested ?? PROTOCOL_VERSION, capabilities: { tools: { listChanged: false } }, serverInfo: SERVER_INFO });
+      } else if (method === "notifications/initialized" || method === "notifications/cancelled") {
+      } else if (method === "ping") {
+        reply(id, {});
+      } else if (method === "tools/list") {
+        reply(id, { tools: toolList });
+      } else if (method === "tools/call") {
+        const callParams = params ?? {};
+        if (typeof callParams.name !== "string") {
+          if (!isNotification) replyError(id, -32602, "tools/call requires a tool name");
+          return;
+        }
+        try {
+          const result = await tools.call(callParams.name, callParams.arguments);
+          if (!isNotification) reply(id, { content: [{ type: "text", text: JSON.stringify(result) }], isError: false });
+        } catch (error) {
+          const safe = error instanceof McpInputError ? error.message : "Tool execution failed.";
+          if (!(error instanceof McpInputError)) log(`tool "${callParams.name}" failed: ${error instanceof Error ? error.name : "error"}`);
+          if (!isNotification) reply(id, { content: [{ type: "text", text: safe }], isError: true });
+        }
+      } else if (!isNotification) {
+        replyError(id, -32601, `Method not found: ${method ?? "(none)"}`);
+      }
+    } catch (error) {
+      log(`internal error handling "${method ?? "(none)"}": ${error instanceof Error ? error.name : "error"}`);
+      if (!isNotification) replyError(id, -32603, "Internal server error.");
+    }
+  }
+}
+main();

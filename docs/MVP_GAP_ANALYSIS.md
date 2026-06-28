@@ -8,6 +8,12 @@
 
 ---
 
+## 0. Claude Desktop + MCP (Phase 1 — implemented)
+- **Stdio MCP server** (`src/mcp/`: `config.ts`, `answerBundle.ts`, `tools.ts`, `server.ts`; build `npm run mcp:build` → `dist/mcp/server.cjs`, run `npm run mcp:start`). Reuses the existing pipeline (no parallel answer path).
+- **Headless decoupling:** `sqliteApi.ts` imports `buildObsidianGraph` from `graphBuilder.js` (not the Obsidian barrel); the backend loads with no `obsidian` runtime package (proven by `tests/mcpTools.test.ts` mocking `obsidian` to throw). `busy_timeout=5000` added for two-process DB access.
+- **Tools:** `ask_vault` (primary; validated AnswerBundle via `api.ask`), `get_answer`, `list_recent_answers`, `search_vault_answers`, `search_evidence` (inspection-only), `get_memory_object`, `get_conflicts`. Config from env (`TMV_*`), never Obsidian `data.json`; secrets never logged/persisted/returned.
+- **Still planned (Phase 2+):** ask threads/`thread_id`, write tools (upload/review/correction) beyond answer persistence, `obsidian://` deep links, official MCP SDK, chat UI, business/abstract intents, query rewrite.
+
 ## 1. Implemented (verified)
 
 **Core trust spine (unchanged, still enforced)**

@@ -130,8 +130,8 @@ export interface FrontendApi {
   listTranscripts(): Promise<TranscriptListItem[]>;
   uploadTranscript(input: UploadInput): Promise<{ transcriptId: string; status: "imported" | "duplicate"; warning?: string }>;
   getTranscript(id: string): Promise<TranscriptView | null>;
-  ask(question: string, options?: { transcriptIds?: string[] }): Promise<AskAIResponse>;
-  askAI(question: string, options?: { transcriptIds?: string[] }): Promise<AskAIResponse>;
+  ask(question: string, options?: { transcriptIds?: string[]; maxEvidence?: number }): Promise<AskAIResponse>;
+  askAI(question: string, options?: { transcriptIds?: string[]; maxEvidence?: number }): Promise<AskAIResponse>;
   getAnswer(id: string): Promise<FrontendAnswerView | null>;
   getEvidence(id: string): Promise<EvidenceView>;
   getMemory(id: string): Promise<MemoryView | null>;

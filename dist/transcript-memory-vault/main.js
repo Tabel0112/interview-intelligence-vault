@@ -814,7 +814,7 @@ __export(main_exports, {
 module.exports = __toCommonJS(main_exports);
 
 // src/obsidian/Plugin.ts
-var import_obsidian6 = require("obsidian");
+var import_obsidian5 = require("obsidian");
 var import_node_fs3 = require("node:fs");
 var import_node_path4 = require("node:path");
 
@@ -892,6 +892,7 @@ function openDatabase(filename = ":memory:", options = {}) {
   if (options.nativeBinding !== void 0) sqliteOptions.nativeBinding = options.nativeBinding;
   const db = new import_better_sqlite3.default(filename, sqliteOptions);
   db.pragma("foreign_keys = ON");
+  db.pragma("busy_timeout = 5000");
   if (filename !== ":memory:" && !options.readonly) {
     db.pragma("journal_mode = WAL");
   }
@@ -1774,7 +1775,7 @@ var TranscriptMemorySettingsTab = class extends import_obsidian.PluginSettingTab
 };
 
 // src/obsidian/TranscriptMemoryItemView.ts
-var import_obsidian3 = require("obsidian");
+var import_obsidian2 = require("obsidian");
 
 // src/frontend/router.ts
 var patterns = [
@@ -1977,10 +1978,10 @@ function selectEvidenceForAnswer(assessment, options = {}) {
   const materialized = (options.materializedEvidence ?? assessment.scoredEvidence.map(scoredCandidateToEvidence).filter((item) => item != null)).filter((item) => validSpans.has(item.spanId));
   const seenSpans = /* @__PURE__ */ new Set(), seenQuotes = /* @__PURE__ */ new Set();
   const evidence = [...materialized].sort((a, b) => rank[b.evidenceConfidence] - rank[a.evidenceConfidence] || sourceRank[b.sourceKind] - sourceRank[a.sourceKind] || b.evidenceScore - a.evidenceScore || a.spanId.localeCompare(b.spanId)).filter((item) => {
-    const quote2 = item.quotePreview.toLowerCase().replace(/\s+/g, " ").trim();
-    if (!item.evidencePointerId || !item.transcriptId || !item.spanId || seenSpans.has(item.spanId) || seenQuotes.has(quote2)) return false;
+    const quote = item.quotePreview.toLowerCase().replace(/\s+/g, " ").trim();
+    if (!item.evidencePointerId || !item.transcriptId || !item.spanId || seenSpans.has(item.spanId) || seenQuotes.has(quote)) return false;
     seenSpans.add(item.spanId);
-    seenQuotes.add(quote2);
+    seenQuotes.add(quote);
     return true;
   }).slice(0, max);
   return { evidence, confidence: evidence.length ? assessment.strength : "no_evidence", assessment };
@@ -1991,11 +1992,11 @@ var import_node_crypto2 = require("node:crypto");
 var stableId = (value) => `aiclaim_${(0, import_node_crypto2.createHash)("sha256").update(value).digest("hex").slice(0, 24)}`;
 var supportStatus = (confidence) => confidence === "strong" || confidence === "mixed" ? "supported" : confidence === "conflicting" ? "conflicting" : confidence === "weak" ? "weakly_supported" : "unsupported";
 function defaultClaimText(kind, evidence) {
-  const quote2 = evidence[0]?.quotePreview.replace(/^[^:]{1,80}:\s*/, "").trim() ?? "";
-  if (kind === "inference") return `Inference: ${quote2}`;
-  if (kind === "recommendation") return `Recommendation based on the available transcript evidence: ${quote2}`;
-  if (kind === "pattern") return evidence.length > 1 ? `Pattern across the selected evidence: ${quote2}` : `Tentative pattern from limited evidence: ${quote2}`;
-  return quote2;
+  const quote = evidence[0]?.quotePreview.replace(/^[^:]{1,80}:\s*/, "").trim() ?? "";
+  if (kind === "inference") return `Inference: ${quote}`;
+  if (kind === "recommendation") return `Recommendation based on the available transcript evidence: ${quote}`;
+  if (kind === "pattern") return evidence.length > 1 ? `Pattern across the selected evidence: ${quote}` : `Tentative pattern from limited evidence: ${quote}`;
+  return quote;
 }
 async function generateClaimsFromEvidence(query, evidence, citations, options) {
   if (!evidence.length || options.confidence === "no_evidence") return [];
@@ -2105,9 +2106,9 @@ function parseAndGroundClaims(rawText, evidence) {
     if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string")) continue;
     const pointerIds = [...new Set(ids)].filter((id) => snippetByPointer.has(id));
     if (!pointerIds.length) continue;
-    const quote2 = candidate.supportingQuote;
-    if (typeof quote2 !== "string" || !quote2.trim()) continue;
-    const needle = normalizeForMatch(quote2);
+    const quote = candidate.supportingQuote;
+    if (typeof quote !== "string" || !quote.trim()) continue;
+    const needle = normalizeForMatch(quote);
     const anchored = needle.length > 0 && pointerIds.some((id) => snippetByPointer.get(id)?.includes(needle));
     if (!anchored) continue;
     const explanation = typeof candidate.explanation === "string" ? candidate.explanation : void 0;
@@ -3000,8 +3001,8 @@ var round2 = (value) => Math.round(clamp(value) * 1e4) / 1e4;
 function tokens2(text = "") {
   return [...new Set(text.toLowerCase().match(/[\p{L}\p{N}]+/gu)?.filter((token) => token.length > 1 && !stopWords.has(token)) ?? [])];
 }
-function lexicalCoverage(claimText, quote2 = "") {
-  const claim = tokens2(claimText), evidence = new Set(tokens2(quote2));
+function lexicalCoverage(claimText, quote = "") {
+  const claim = tokens2(claimText), evidence = new Set(tokens2(quote));
   return claim.length ? claim.filter((token) => evidence.has(token)).length / claim.length : 0;
 }
 function calculateRelevance(candidate, claimText, requiredTerms = []) {
@@ -3028,12 +3029,12 @@ function calculateDirectness(candidate, useType3) {
   return round2(base[candidate.sourceKind] + (useType3 === "inference" ? 0.05 : 0));
 }
 function calculateSpecificity(candidate, claimText, requiredTerms = []) {
-  const quote2 = candidate.quote ?? "";
-  const coverage = lexicalCoverage(claimText, quote2);
+  const quote = candidate.quote ?? "";
+  const coverage = lexicalCoverage(claimText, quote);
   const claimSpecifics = tokens2(claimText).filter((token) => /\d/.test(token) || token.length >= 7);
   const required = [.../* @__PURE__ */ new Set([...requiredTerms.map((term) => term.toLowerCase()), ...claimSpecifics])];
-  const specificCoverage = required.length ? required.filter((term) => quote2.toLowerCase().includes(term)).length / required.length : coverage;
-  const concrete = /\d|(?:\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|may|june|july|august|september|october|november|december)\b)/i.test(quote2) ? 0.15 : 0;
+  const specificCoverage = required.length ? required.filter((term) => quote.toLowerCase().includes(term)).length / required.length : coverage;
+  const concrete = /\d|(?:\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|may|june|july|august|september|october|november|december)\b)/i.test(quote) ? 0.15 : 0;
   return round2(0.55 * coverage + 0.45 * specificCoverage + concrete);
 }
 function calculateSourceStrength(candidate) {
@@ -3095,7 +3096,7 @@ function classifyEvidenceStrength(score2, caps = { reasons: [] }) {
 }
 
 // src/evidence/repetition.ts
-var normalizeQuote = (quote2 = "") => quote2.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+var normalizeQuote = (quote = "") => quote.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 function nearIdentical(left = "", right = "") {
   const a = new Set(normalizeQuote(left).split(" ").filter(Boolean)), b = new Set(normalizeQuote(right).split(" ").filter(Boolean));
   if (!a.size || !b.size) return false;
@@ -3646,9 +3647,9 @@ function parseAndGroundMemoryCandidates(rawText, window) {
     if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string")) continue;
     const evidenceSpanIds = [...new Set(ids)].filter((id) => spanTextById.has(id));
     if (!evidenceSpanIds.length) continue;
-    const quote2 = candidate.supportingQuote;
-    if (typeof quote2 !== "string" || !quote2.trim()) continue;
-    const needle = normalizeForMatch2(quote2);
+    const quote = candidate.supportingQuote;
+    if (typeof quote !== "string" || !quote.trim()) continue;
+    const needle = normalizeForMatch2(quote);
     const anchored = needle.length > 0 && evidenceSpanIds.some((id) => spanTextById.get(id)?.includes(needle));
     if (!anchored) continue;
     grounded.push({
@@ -3658,7 +3659,7 @@ function parseAndGroundMemoryCandidates(rawText, window) {
       evidenceSpanIds,
       confidence: 0,
       // LLM self-reported confidence is NOT trusted; the pipeline caps LLM candidates to needs_review
-      reason: quote2.trim()
+      reason: quote.trim()
       // grounded supportingQuote -> persisted in metadata_json.extraction_reason for audit
     });
   }
@@ -4743,6 +4744,9 @@ function importTranscript(db, input) {
   return { status: "imported", transcriptId, rawSha256, turnsCreated: turns.length, spansCreated: spans.length };
 }
 
+// src/obsidian/graphBuilder.ts
+var import_node_crypto7 = require("node:crypto");
+
 // src/obsidian/paths.ts
 function safeName(value, fallback = "Untitled") {
   const clean = value.replace(/[<>:"/\\|?*\u0000-\u001F]/g, " ").replace(/\s+/g, " ").trim().replace(/[. ]+$/g, "");
@@ -4758,7 +4762,6 @@ var conflictPath = (id) => `Conflicts/${safeName(id)}.md`;
 var entityPath = (kind, label, id) => `${kind === "person" ? "People" : kind === "topic" ? "Topics" : "Decisions"}/${stableNoteName(label, id)}.md`;
 
 // src/obsidian/graphBuilder.ts
-var import_node_crypto7 = require("node:crypto");
 var edgeId = (source, target, type, evidence = "") => `ov_edge_${(0, import_node_crypto7.createHash)("sha256").update(`${source}:${target}:${type}:${evidence}`).digest("hex").slice(0, 24)}`;
 var mapEdgeType = (value) => value === "contradicts" ? "contradicts" : value === "updates" ? "updates" : value === "mentions" ? "mentions" : value === "supports" ? "supports" : value === "derived_from" ? "derived_from" : "about";
 var memoryNodeId = (id) => `memory:${id}`;
@@ -4844,19 +4847,6 @@ function buildObsidianGraph(db) {
     addEdge({ source: `graph:${row.from_node_id}`, target: `graph:${row.to_node_id}`, type: mapEdgeType(String(row.edge_type)), evidencePointerId: pointerId, confidence: Number(row.confidence), metadata: { sourceType: row.source_type, status: row.status, generatedWithoutEvidence: row.source_type === "inferred" } });
   }
   return { graph: { nodes: [...nodes.values()].sort((a, b) => a.id.localeCompare(b.id)), edges: [...edges.values()].sort((a, b) => a.id.localeCompare(b.id)) }, warnings };
-}
-
-// src/obsidian/services/ObsidianAppApi.ts
-function createObsidianAppApi(db, vault, health, getSynthesis, getMemoryExtractor, options) {
-  const api = createSqliteFrontendApi(db, { health, getSynthesis, getMemoryExtractor, llmRequired: options?.llmRequired, getLlmReady: options?.getLlmReady });
-  return {
-    ...api,
-    async uploadVaultFile(file) {
-      const rawText = await vault.read(file);
-      validateTranscriptUpload({ filename: file.name, rawText });
-      return api.uploadTranscript({ filename: file.name, rawText });
-    }
-  };
 }
 
 // src/frontend/sqliteApi.ts
@@ -5162,12 +5152,12 @@ function createSqliteFrontendApi(db, options = {}) {
     async ask(question, askOptions) {
       const synth = options.getSynthesis?.();
       if (options.llmRequired && !synth?.llm) throw new SynthesisSetupRequiredError();
-      return askAI({ question, transcriptIds: askOptions?.transcriptIds }, createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, synthesisInfo: synth?.info, requireLlm: options.llmRequired }));
+      return askAI({ question, transcriptIds: askOptions?.transcriptIds, maxEvidenceItems: askOptions?.maxEvidence }, createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, synthesisInfo: synth?.info, requireLlm: options.llmRequired }));
     },
     async askAI(question, askOptions) {
       const synth = options.getSynthesis?.();
       if (options.llmRequired && !synth?.llm) throw new SynthesisSetupRequiredError();
-      return askAI({ question, transcriptIds: askOptions?.transcriptIds }, createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, synthesisInfo: synth?.info, requireLlm: options.llmRequired }));
+      return askAI({ question, transcriptIds: askOptions?.transcriptIds, maxEvidenceItems: askOptions?.maxEvidence }, createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, synthesisInfo: synth?.info, requireLlm: options.llmRequired }));
     },
     async getAnswer(id) {
       try {
@@ -5621,7 +5611,7 @@ async function performReviewAction(api, memoryId, decision, refresh, currentTarg
 }
 
 // src/obsidian/TranscriptMemoryItemView.ts
-var TranscriptMemoryItemView = class extends import_obsidian3.ItemView {
+var TranscriptMemoryItemView = class extends import_obsidian2.ItemView {
   constructor(leaf, type, getApi, vaultNavigation, registry) {
     super(leaf);
     this.type = type;
@@ -5676,6 +5666,19 @@ var TranscriptMemoryItemView = class extends import_obsidian3.ItemView {
     }
   }
 };
+
+// src/obsidian/services/ObsidianAppApi.ts
+function createObsidianAppApi(db, vault, health, getSynthesis, getMemoryExtractor, options) {
+  const api = createSqliteFrontendApi(db, { health, getSynthesis, getMemoryExtractor, llmRequired: options?.llmRequired, getLlmReady: options?.getLlmReady });
+  return {
+    ...api,
+    async uploadVaultFile(file) {
+      const rawText = await vault.read(file);
+      validateTranscriptUpload({ filename: file.name, rawText });
+      return api.uploadTranscript({ filename: file.name, rawText });
+    }
+  };
+}
 
 // src/obsidian/startup.ts
 var DESKTOP_ONLY_MESSAGE = "Transcript Memory Vault is desktop-only right now because it uses local SQLite storage.";
@@ -5822,10 +5825,10 @@ async function runEmbeddingReindex(db, settings, options = {}) {
 }
 
 // src/obsidian/embeddingTransport.ts
-var import_obsidian4 = require("obsidian");
+var import_obsidian3 = require("obsidian");
 function createObsidianEmbeddingTransport() {
   return async (request) => {
-    const response = await (0, import_obsidian4.requestUrl)({
+    const response = await (0, import_obsidian3.requestUrl)({
       url: request.url,
       method: request.method,
       headers: request.headers,
@@ -6023,10 +6026,10 @@ function memoryExtractorFromSettings(settings, options = {}) {
 }
 
 // src/obsidian/llmTransport.ts
-var import_obsidian5 = require("obsidian");
+var import_obsidian4 = require("obsidian");
 function createObsidianLlmTransport() {
   return async (request) => {
-    const response = await (0, import_obsidian5.requestUrl)({
+    const response = await (0, import_obsidian4.requestUrl)({
       url: request.url,
       method: request.method,
       headers: request.headers,
@@ -6069,7 +6072,7 @@ var ViewRefreshRegistry = class {
 };
 
 // src/obsidian/Plugin.ts
-var TranscriptMemoryVaultPlugin = class extends import_obsidian6.Plugin {
+var TranscriptMemoryVaultPlugin = class extends import_obsidian5.Plugin {
   db = null;
   pluginSettings = DEFAULT_SETTINGS;
   health = initialPluginHealth();
@@ -6092,11 +6095,11 @@ var TranscriptMemoryVaultPlugin = class extends import_obsidian6.Plugin {
     this.addRibbonIcon(OBSIDIAN_RIBBON.icon, OBSIDIAN_RIBBON.title, () => void navigation.openDashboard());
     this.addSettingTab(new TranscriptMemorySettingsTab(this.app, this, () => this.health, navigation, () => this.pluginSettings, (next) => this.saveSettings(next)));
     const adapter = this.app.vault.adapter;
-    const fileSystemAdapter = adapter instanceof import_obsidian6.FileSystemAdapter ? adapter : null;
-    const support = startupSupport({ isDesktopApp: import_obsidian6.Platform.isDesktopApp, hasLocalFilesystem: fileSystemAdapter != null });
+    const fileSystemAdapter = adapter instanceof import_obsidian5.FileSystemAdapter ? adapter : null;
+    const support = startupSupport({ isDesktopApp: import_obsidian5.Platform.isDesktopApp, hasLocalFilesystem: fileSystemAdapter != null });
     if (!support.supported) {
       this.health = { ...this.health, status: "unsupported", lastInitializationError: support.message };
-      new import_obsidian6.Notice(DESKTOP_ONLY_MESSAGE);
+      new import_obsidian5.Notice(DESKTOP_ONLY_MESSAGE);
       console.error("Transcript Memory Vault unsupported environment:", support.message);
       return;
     }
@@ -6113,7 +6116,7 @@ var TranscriptMemoryVaultPlugin = class extends import_obsidian6.Plugin {
     if (!nativeBinding.ok) {
       this.health = { ...this.health, status: "error", lastInitializationError: nativeBinding.error };
       this.api = createUnavailableFrontendApi(() => this.health);
-      new import_obsidian6.Notice(nativeBinding.error);
+      new import_obsidian5.Notice(nativeBinding.error);
       console.error("Transcript Memory Vault native binding unavailable:", nativeBinding.error);
       return;
     }
@@ -6147,14 +6150,14 @@ var TranscriptMemoryVaultPlugin = class extends import_obsidian6.Plugin {
         { llmRequired: true, getLlmReady: () => isLlmConfigured(this.pluginSettings) }
       );
       this.refreshReindexStatus();
-      if (firstRun) new import_obsidian6.Notice("Transcript Memory Vault is ready. Upload a transcript to begin.");
+      if (firstRun) new import_obsidian5.Notice("Transcript Memory Vault is ready. Upload a transcript to begin.");
     } catch (error) {
       this.db?.close();
       this.db = null;
       const message = readableStartupError(error);
       this.health = { ...this.health, status: "error", databaseConnected: false, migrationStatus: "failed", realSqliteStorage: false, lastInitializationError: message };
       this.api = createUnavailableFrontendApi(() => this.health);
-      new import_obsidian6.Notice(`Transcript Memory Vault could not initialize: ${message}`);
+      new import_obsidian5.Notice(`Transcript Memory Vault could not initialize: ${message}`);
       console.error("Transcript Memory Vault initialization failed", error);
     }
   }
@@ -6197,14 +6200,14 @@ var TranscriptMemoryVaultPlugin = class extends import_obsidian6.Plugin {
   /** Run AI extraction for any transcript imported before the LLM was configured. Requires a configured LLM. */
   async runPendingExtraction() {
     if (!this.db || this.health.status !== "ready") {
-      new import_obsidian6.Notice("Transcript Memory Vault is not ready.");
+      new import_obsidian5.Notice("Transcript Memory Vault is not ready.");
       return;
     }
     if (!isLlmConfigured(this.pluginSettings)) {
-      new import_obsidian6.Notice("Configure an LLM provider, model, and API key in Settings first.");
+      new import_obsidian5.Notice("Configure an LLM provider, model, and API key in Settings first.");
       return;
     }
-    new import_obsidian6.Notice("Running AI extraction\u2026");
+    new import_obsidian5.Notice("Running AI extraction\u2026");
     let extracted = 0, failed = 0, skipped = 0;
     for (const transcript of await this.api.listTranscripts()) {
       const result = await this.api.runExtraction(transcript.id);
@@ -6212,23 +6215,23 @@ var TranscriptMemoryVaultPlugin = class extends import_obsidian6.Plugin {
       else if (result.status === "failed") failed += 1;
       else skipped += 1;
     }
-    new import_obsidian6.Notice(`AI extraction: ${extracted} processed, ${skipped} already done, ${failed} failed.`);
+    new import_obsidian5.Notice(`AI extraction: ${extracted} processed, ${skipped} already done, ${failed} failed.`);
     await this.viewRegistry.notifyMutation();
   }
   /** EXPLICIT manual action. The only path that may make a network call (when external is configured). */
   async rebuildEmbeddingIndex() {
     if (!this.db || this.health.status !== "ready") {
-      new import_obsidian6.Notice("Transcript Memory Vault is not ready; cannot rebuild the embedding index.");
+      new import_obsidian5.Notice("Transcript Memory Vault is not ready; cannot rebuild the embedding index.");
       return;
     }
-    new import_obsidian6.Notice("Rebuilding embedding index\u2026");
+    new import_obsidian5.Notice("Rebuilding embedding index\u2026");
     try {
       const { summary, result } = await runEmbeddingReindex(this.db, this.pluginSettings, { transport: createObsidianEmbeddingTransport() });
-      if (summary.usedFallback && summary.reason) new import_obsidian6.Notice(summary.reason);
-      new import_obsidian6.Notice(`Embedding index rebuilt: ${result.indexed} indexed, ${result.embedded} embedded, ${result.errors} error(s).`);
+      if (summary.usedFallback && summary.reason) new import_obsidian5.Notice(summary.reason);
+      new import_obsidian5.Notice(`Embedding index rebuilt: ${result.indexed} indexed, ${result.embedded} embedded, ${result.errors} error(s).`);
       this.refreshReindexStatus();
     } catch (error) {
-      new import_obsidian6.Notice(`Embedding index rebuild failed: ${readableStartupError(error)}`);
+      new import_obsidian5.Notice(`Embedding index rebuild failed: ${readableStartupError(error)}`);
       console.error("Transcript Memory Vault embedding reindex failed", error);
     }
   }

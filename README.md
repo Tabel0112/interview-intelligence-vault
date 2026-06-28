@@ -21,6 +21,19 @@ The production build creates `dist/transcript-memory-vault/`, ready to copy into
 
 This plugin is desktop-only because it uses native `better-sqlite3` storage and requires a local filesystem vault.
 
+## Product direction: Claude Desktop + MCP
+
+The recommended main chat UI is **Claude Desktop**, connected to a local **MCP server** (`src/mcp/`) that bridges to this backend. SQLite/backend remain the source of truth; the Obsidian plugin is the evidence/answer/transcript/graph **viewer**. The primary tool is **`ask_vault`**, which calls the existing evidence-first Ask AI pipeline and returns a validated, citation-grounded answer bundle — Claude does not synthesize answers from raw chunks, and chat history is not evidence.
+
+```bash
+npm run mcp:build   # -> dist/mcp/server.cjs
+npm run mcp:start   # configured via TMV_DB_PATH, TMV_LLM_PROVIDER, TMV_LLM_MODEL, TMV_LLM_API_KEY, ...
+```
+
+See [docs/MCP.md](docs/MCP.md) for tools, the AnswerBundle shape, env vars, Claude Desktop setup, and Phase 1 limitations.
+
+> **Note on AI mode:** the live app is now **LLM-required** — Ask AI and AI memory extraction need a configured external LLM; deterministic/local generation is a dev/test-only injected seam, never a live fallback. The "Current MVP Gap" section below predates that change; see [docs/APP_SPEC.md](docs/APP_SPEC.md) and [docs/MVP_GAP_ANALYSIS.md](docs/MVP_GAP_ANALYSIS.md) for the current contract.
+
 ## Current MVP Gap
 
 The intended MVP includes external AI provider support.

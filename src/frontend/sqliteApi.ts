@@ -6,7 +6,10 @@ import { createMemoryObjectsRepo } from "../db/repositories/memoryObjectsRepo.js
 import { importTranscript } from "../ingest/index.js";
 import { extractMemoryObjectsForTranscript, isStrongMemoryObject, type MemoryExtractor } from "../memory/index.js";
 import { indexTranscriptForRetrieval, removeRetrievalDocument } from "../retrieval/index.js";
-import { buildObsidianGraph } from "../obsidian/index.js";
+// Import directly from the (Obsidian-runtime-free) graph builder, NOT the obsidian barrel: the barrel
+// re-exports ObsidianAppApi/ObsidianNavigation which import the "obsidian" package, which would make
+// this headless service unloadable in a plain Node process (e.g. the MCP server).
+import { buildObsidianGraph } from "../obsidian/graphBuilder.js";
 import { resolveEvidencePointer, type EvidencePointer } from "../provenance/index.js";
 import { routeHref } from "./router.js";
 import type {
@@ -255,12 +258,12 @@ export function createSqliteFrontendApi(
       const synth = options.getSynthesis?.();
       // LLM-required: with no LLM configured, refuse with setup-required before answering (no deterministic answer).
       if (options.llmRequired && !synth?.llm) throw new SynthesisSetupRequiredError();
-      return askAI({ question, transcriptIds: askOptions?.transcriptIds }, createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, synthesisInfo: synth?.info, requireLlm: options.llmRequired }));
+      return askAI({ question, transcriptIds: askOptions?.transcriptIds, maxEvidenceItems: askOptions?.maxEvidence }, createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, synthesisInfo: synth?.info, requireLlm: options.llmRequired }));
     },
     async askAI(question, askOptions) {
       const synth = options.getSynthesis?.();
       if (options.llmRequired && !synth?.llm) throw new SynthesisSetupRequiredError();
-      return askAI({ question, transcriptIds: askOptions?.transcriptIds }, createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, synthesisInfo: synth?.info, requireLlm: options.llmRequired }));
+      return askAI({ question, transcriptIds: askOptions?.transcriptIds, maxEvidenceItems: askOptions?.maxEvidence }, createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, synthesisInfo: synth?.info, requireLlm: options.llmRequired }));
     },
     async getAnswer(id) {
       try {

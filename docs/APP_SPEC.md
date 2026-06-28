@@ -109,6 +109,9 @@ Raw immutability + triggers; evidence scoring weights/caps; provenance hash vali
 
 All external providers are injected, optional, and fall back to deterministic local mode when unconfigured; none may alter scores, truth, provenance, citations, conflicts, or warnings.
 
+## 23. Claude Desktop + MCP bridge
+**[CURRENT — Phase 1]** A standalone stdio **MCP server** (`src/mcp/`, build `npm run mcp:build` → `dist/mcp/server.cjs`) bridges Claude Desktop to this backend. It opens the SQLite DB at `TMV_DB_PATH`, reuses the existing `createSqliteFrontendApi` + Ask AI pipeline (with `llmRequired: true` and an env-built LLM config; default Node fetch transport), and exposes read tools + **`ask_vault`**. `ask_vault` calls the existing pipeline and returns a validated **AnswerBundle** — Claude never synthesizes from raw chunks; chat history is never evidence. Setup-required/LLM-failure persist no answer; not-enough-evidence is the existing persisted refusal. To make the service headless, `sqliteApi.ts` imports `buildObsidianGraph` directly from `graphBuilder.js` (not the Obsidian barrel), so the backend loads with no `obsidian` runtime package. **Product role:** Claude Desktop is the main chat UI; Obsidian becomes the evidence/answer/transcript/graph **viewer** (its `mv://…` routes are returned as links). See [`docs/MCP.md`](./MCP.md). **[FUTURE]** ask threads, write tools beyond answer persistence, `obsidian://` deep links, official MCP SDK, chat/business-intent work.
+
 ---
 
 *This spec documents current behavior truthfully: real external LLM synthesis, external embeddings, settings, live wiring, grounded extraction, and review are implemented; the remaining MVP work is automatic semantic embedding, entailment-level grounding, and live Hermes/conflict decisions. It fixes the trust boundaries any implementation must respect.*

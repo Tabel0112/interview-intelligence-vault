@@ -1,0 +1,165 @@
+// Stable MCP output type: a validated AnswerBundle built from a persisted/just-produced AskAIResponse.
+//
+// Trust note: this is a 1:1 projection of the pipeline's already-validated answer (claims that survived
+// citation/grounding validation, citations that resolve to selected evidence). It NEVER adds content.
+// It is the only Ask AI output Claude Desktop should treat as an answer. Secrets are excluded: no API
+// keys, no Authorization headers, no prompts, no provider objects, no raw upstream errors. Quote
+// previews are length-limited. `pipeline` carries only non-secret synthesis metadata (mode/provider/model).
+
+import type { AskAIResponse } from "../ask-ai/index.js";
+import { routeHref } from "../frontend/router.js";
+
+export const ANSWER_BUNDLE_VERSION = "mcp-answerbundle-v1";
+const QUOTE_PREVIEW_LIMIT = 280;
+
+const clip = (value: string, limit = QUOTE_PREVIEW_LIMIT): string => {
+  const text = (value ?? "").replace(/\s+/g, " ").trim();
+  return text.length <= limit ? text : `${text.slice(0, limit - 1)}…`;
+};
+const sourceSpanUri = (transcriptId: string, spanId: string) => routeHref.transcript(transcriptId, spanId);
+const evidenceUri = (evidencePointerId: string) => routeHref.evidence(evidencePointerId);
+
+export interface AnswerBundleClaim {
+  claim_id: string;
+  text: string;
+  kind: string;
+  support_state: string;
+  citation_ids: string[];
+  warning?: string;
+}
+export interface AnswerBundleCitation {
+  citation_id: string;
+  label: string;
+  evidence_pointer_id: string;
+  source_pointer_id?: string;
+  quote_preview: string;
+  source_span_uri: string;
+  evidence_uri: string;
+  obsidian_internal_uri?: string;
+  broken?: boolean;
+}
+export interface AnswerBundleEvidence {
+  evidence_pointer_id: string;
+  score: number;
+  confidence: string;
+  quote_preview: string;
+  source_span_uri: string;
+  evidence_uri: string;
+}
+export interface AnswerBundleConflict {
+  summary: string;
+  explanation: string;
+  evidence_uris: string[];
+}
+export interface AnswerBundleLinks {
+  answer_uri: string;
+  evidence_uris: string[];
+  source_span_uris: string[];
+  graph_uri?: string;
+}
+export interface AnswerBundlePipeline {
+  answer_mode: string;
+  requested_claim_kinds: string[];
+  evidence_confidence: string;
+  version: string;
+  /** Non-secret synthesis metadata only (already redacted upstream). */
+  synthesis_mode?: string;
+  synthesis_provider?: string;
+  synthesis_model?: string;
+}
+export interface AnswerBundle {
+  answer_id: string;
+  question: string;
+  answer_markdown: string;
+  evidence_confidence: string;
+  not_enough_evidence: boolean;
+  claims: AnswerBundleClaim[];
+  citations: AnswerBundleCitation[];
+  evidence: AnswerBundleEvidence[];
+  warnings: string[];
+  conflicts: AnswerBundleConflict[];
+  followups: string[];
+  links: AnswerBundleLinks;
+  created_at: string;
+  pipeline: AnswerBundlePipeline;
+}
+
+const claimWarning = (support: string): string | undefined =>
+  support === "weakly_supported" ? "Supported only by weak/indirect evidence — treat cautiously."
+    : support === "conflicting" ? "Sources conflict; both sides are preserved below."
+      : support === "unsupported" ? "Not supported by the cited evidence." : undefined;
+
+export function toAnswerBundle(response: AskAIResponse, options: { brokenCitationIds?: string[] } = {}): AnswerBundle {
+  const broken = new Set(options.brokenCitationIds ?? []);
+  const citations: AnswerBundleCitation[] = response.citations.map((c) => ({
+    citation_id: c.id,
+    label: c.label,
+    evidence_pointer_id: c.evidencePointerId,
+    source_pointer_id: c.sourcePointerId,
+    quote_preview: clip(c.quotePreview),
+    source_span_uri: sourceSpanUri(c.transcriptId, c.spanId),
+    evidence_uri: evidenceUri(c.evidencePointerId),
+    obsidian_internal_uri: c.clickbackUri,
+    ...(broken.has(c.id) ? { broken: true } : {}),
+  }));
+  const evidence: AnswerBundleEvidence[] = response.evidence.map((e) => ({
+    evidence_pointer_id: e.evidencePointerId,
+    score: e.evidenceScore,
+    confidence: e.evidenceConfidence,
+    quote_preview: clip(e.quotePreview),
+    source_span_uri: sourceSpanUri(e.transcriptId, e.spanId),
+    evidence_uri: evidenceUri(e.evidencePointerId),
+  }));
+  const claims: AnswerBundleClaim[] = response.claims.map((claim) => ({
+    claim_id: claim.id,
+    text: claim.text,
+    kind: claim.kind,
+    support_state: claim.supportStatus,
+    citation_ids: claim.citationIds,
+    ...(claimWarning(claim.supportStatus) ? { warning: claimWarning(claim.supportStatus) } : {}),
+  }));
+
+  const warnings: string[] = [];
+  if (response.notEnoughEvidence || response.evidenceConfidence === "no_evidence") {
+    warnings.push("No supporting transcript evidence was found; this is a refusal, not an answer.");
+  } else if (response.evidenceConfidence === "weak") {
+    warnings.push("Evidence is weak; do not treat this as strong truth.");
+  } else if (response.evidenceConfidence === "conflicting") {
+    warnings.push("Sources conflict; both sides are preserved with citations.");
+  }
+  if (broken.size > 0) warnings.push(`${broken.size} citation pointer(s) no longer resolve.`);
+
+  const conflicts: AnswerBundleConflict[] = response.conflicts.map((conflict) => ({
+    summary: conflict.summary,
+    explanation: conflict.explanation,
+    evidence_uris: [...new Set(conflict.evidenceLinks.map((link) => evidenceUri(link.evidencePointerId)))],
+  }));
+
+  const evidenceUris = [...new Set(citations.map((c) => c.evidence_uri))];
+  const sourceSpanUris = [...new Set(citations.map((c) => c.source_span_uri))];
+
+  return {
+    answer_id: response.id,
+    question: response.question,
+    answer_markdown: response.answerMarkdown,
+    evidence_confidence: response.evidenceConfidence,
+    not_enough_evidence: response.notEnoughEvidence,
+    claims,
+    citations,
+    evidence,
+    warnings,
+    conflicts,
+    followups: response.suggestedFollowups,
+    links: { answer_uri: routeHref.answer(response.id), evidence_uris: evidenceUris, source_span_uris: sourceSpanUris, graph_uri: routeHref.graph() },
+    created_at: response.createdAt,
+    pipeline: {
+      answer_mode: response.queryUnderstanding.answerMode,
+      requested_claim_kinds: response.queryUnderstanding.requestedClaimKinds,
+      evidence_confidence: response.evidenceConfidence,
+      version: ANSWER_BUNDLE_VERSION,
+      synthesis_mode: response.synthesis?.mode,
+      synthesis_provider: response.synthesis?.provider,
+      synthesis_model: response.synthesis?.model,
+    },
+  };
+}
