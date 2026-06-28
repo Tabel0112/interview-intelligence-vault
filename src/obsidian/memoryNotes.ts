@@ -30,6 +30,8 @@ export function generateMemoryNotes(db: SqliteDatabase, maxQuoteLength = 300): G
     const content = `${frontmatter({ mv_entity_type: "memory", mv_entity_id: row.id, mv_generated: true, mv_source_of_truth: "sqlite", mv_support_status: strongest, mv_confidence: canonical.confidence })}
 # ${title}
 
+#tmv/memory
+
 ${generatedWarning}
 
 ${warning}

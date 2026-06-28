@@ -4513,6 +4513,8 @@ var shortId = (id, bodyChars = 6) => {
   return sep2 > 0 && sep2 < id.length - 1 ? `${id.slice(0, sep2 + 1)}${id.slice(sep2 + 1, sep2 + 1 + bodyChars)}` : id.slice(0, bodyChars + 4);
 };
 var noteBasename = (label) => safeName(labelFromText(label));
+var QUESTION_STEM = /^\s*(what|which|who|whom|whose|where|when|why|how)\b(\s+(is|are|was|were|do|does|did|should|would|will|can|could|has|have|had))?(\s+(the|a|an|this|that|these|those))?\s*/i;
+var questionLabel = (question) => labelFromText(question.replace(QUESTION_STEM, "").trim()) || labelFromText(question);
 var readableNotePath = (category, label, id) => `${category}/${shortId(id)}/${noteBasename(label)}.md`;
 var memoryFolder = (type) => type === "decision" ? "Decisions" : type === "preference" ? "Preferences" : type === "task" ? "Tasks" : type === "question" ? "Questions" : type === "claim" ? "Facts" : "Other";
 var transcriptPath = (title, id) => readableNotePath("Transcripts", title, id);
@@ -4564,7 +4566,7 @@ function buildObsidianGraph(db) {
     const target = targetType === "memory_object" || targetType === "claim" || targetType === "summary" ? memoryNodeId(targetId) : targetType === "answer" ? `answer:${targetId}` : targetType === "answer_claim" ? `claim:${targetId}` : `graph:${targetId}`;
     if (targetType === "answer") {
       const ans = db.prepare("SELECT question_text FROM ai_answers WHERE id=?").get(targetId);
-      addNode({ id: target, type: "answer", label: ans?.question_text ?? targetId, notePath: answerPath(ans?.question_text ?? targetId, targetId) });
+      addNode({ id: target, type: "answer", label: ans?.question_text ?? targetId, notePath: answerPath(questionLabel(ans?.question_text ?? targetId), targetId) });
     }
     if (targetType === "answer_claim") {
       const claim = db.prepare("SELECT claim_text,support_status FROM answer_claims WHERE answer_claim_id=?").get(targetId);
@@ -4577,7 +4579,7 @@ function buildObsidianGraph(db) {
     if (nodes.has(target)) addEdge({ source: target, target: evidenceNodeId(id), type: targetType === "answer_claim" || targetType === "answer" ? "cites" : "derived_from", evidencePointerId: id, confidence: Number(pointer.confidence) });
   }
   const answers = db.prepare("SELECT id,question_text,answer_status FROM ai_answers ORDER BY id").all();
-  answers.forEach((row) => addNode({ id: `answer:${row.id}`, type: "answer", label: row.question_text, notePath: answerPath(row.question_text, row.id), supportStatus: row.answer_status }));
+  answers.forEach((row) => addNode({ id: `answer:${row.id}`, type: "answer", label: row.question_text, notePath: answerPath(questionLabel(row.question_text), row.id), supportStatus: row.answer_status }));
   const claims = db.prepare("SELECT * FROM answer_claims ORDER BY answer_claim_id").all();
   claims.forEach((row) => {
     const pointer = db.prepare("SELECT evidence_pointer_id FROM evidence_pointers WHERE target_type='answer_claim' AND target_id=? ORDER BY evidence_pointer_id LIMIT 1").get(row.answer_claim_id);
@@ -5580,8 +5582,10 @@ ${claim.claim_text}
 ${pointers.map((pointer) => renderEvidenceCitation(db, pointer.evidence_pointer_id, maxQuoteLength).markdown).join("\n\n") || "> [!danger] Unsupported claim\n> No evidence pointers."}`;
     }).join("\n\n");
     const warning = answer.answer_status === "weak_evidence" || answer.answer_status === "refused_no_evidence" ? "> [!caution] Weak or missing evidence\n> This answer is limited by its evidence." : answer.answer_status === "conflicting_evidence" ? "> [!warning] Conflicting evidence\n> The answer must preserve both sides." : "";
-    return makeGeneratedFile("answer_note", answerPath(String(answer.question_text), String(answer.id)), `${frontmatter({ mv_entity_type: "answer", mv_entity_id: String(answer.id), mv_generated: true, mv_source_of_truth: "sqlite", mv_support_status: String(answer.answer_status), mv_confidence: String(answer.confidence) })}
+    return makeGeneratedFile("answer_note", answerPath(questionLabel(String(answer.question_text)), String(answer.id)), `${frontmatter({ mv_entity_type: "answer", mv_entity_id: String(answer.id), mv_generated: true, mv_source_of_truth: "sqlite", mv_support_status: String(answer.answer_status), mv_confidence: String(answer.confidence) })}
 # Ask AI Answer
+
+#tmv/answer
 
 ${generatedWarning}
 
@@ -5617,6 +5621,8 @@ ${links2 || "> [!danger] Missing side evidence"}`;
     };
     return makeGeneratedFile("conflict_note", conflictPath(conflict.summary, id), `${frontmatter({ mv_entity_type: "conflict", mv_entity_id: id, mv_generated: true, mv_source_of_truth: "sqlite", mv_support_status: conflict.status, mv_confidence: conflict.confidence })}
 # ${conflict.summary}
+
+#tmv/conflict
 
 ${generatedWarning}
 
@@ -5654,6 +5660,8 @@ function generateEntityNotes(db) {
     return makeGeneratedFile(kind === "person" ? "person_note" : "topic_note", entityPath(kind, String(row.label), String(row.ref_id)), `${frontmatter({ mv_entity_type: kind, mv_entity_id: String(row.ref_id), mv_generated: true, mv_source_of_truth: "sqlite" })}
 # ${row.label}
 
+#tmv/${kind}
+
 ${generatedWarning}
 
 This is a generated ${kind} view. Related source-backed relationships appear in graph views.
@@ -5672,6 +5680,8 @@ ${related2}`, kind, String(row.ref_id));
     const evidence = db.prepare("SELECT evidence_pointer_id FROM evidence_pointers WHERE target_type IN ('memory_object','claim','summary') AND target_id=? ORDER BY evidence_pointer_id").all(row.id).map((item) => renderEvidenceCitation(db, item.evidence_pointer_id).markdown).join("\n\n") || "> [!danger] Unsupported decision\n> No evidence pointers.";
     return makeGeneratedFile("decision_note", entityPath("decision", String(row.title ?? row.generated_text), String(row.id)), `${frontmatter({ mv_entity_type: "decision", mv_entity_id: String(row.id), mv_generated: true, mv_source_of_truth: "sqlite", mv_support_status: String(row.status) })}
 # ${row.title ?? "Decision"}
+
+#tmv/memory
 
 ${generatedWarning}
 
@@ -5696,22 +5706,36 @@ function generateEvidenceNotes(db, maxQuoteLength = 300) {
       return makeGeneratedFile("evidence_note", evidencePath("Broken evidence", evidence_pointer_id), `${frontmatter({ mv_entity_type: "evidence", mv_entity_id: evidence_pointer_id, mv_generated: true, mv_source_of_truth: "sqlite" })}
 # Evidence ${evidence_pointer_id}
 
+#tmv/evidence
+
 ${generatedWarning}
 
 > [!danger] Broken evidence pointer
 > ${resolved.reason}`, "evidence", evidence_pointer_id);
     }
     const title = db.prepare("SELECT title FROM transcripts WHERE id=?").get(resolved.evidence.transcript_id).title;
+    let targetLink = `\`${resolved.evidence.target_type}:${resolved.evidence.target_id}\``;
+    if (["memory_object", "claim", "summary"].includes(resolved.evidence.target_type)) {
+      const memory = db.prepare(`SELECT title, generated_text, COALESCE(extraction_type,type) AS type FROM memory_objects
+        WHERE id=? AND duplicate_of_id IS NULL AND status NOT IN ('superseded','rejected')
+          AND (extraction_status IS NULL OR extraction_status NOT IN ('superseded','rejected'))`).get(resolved.evidence.target_id);
+      if (memory) {
+        const memoryTitle = memory.title ?? memory.generated_text.slice(0, 80);
+        targetLink = wikiLink(memoryPath(memoryTitle, resolved.evidence.target_id, memory.type), memoryTitle);
+      }
+    }
     const content = `${frontmatter({ mv_entity_type: "evidence", mv_entity_id: evidence_pointer_id, mv_generated: true, mv_source_of_truth: "sqlite", mv_support_status: resolved.evidence.evidence_strength, mv_confidence: resolved.evidence.confidence })}
 # Evidence ${evidence_pointer_id}
 
+#tmv/evidence
+
 ${generatedWarning}
 
-**Target:** \`${resolved.evidence.target_type}:${resolved.evidence.target_id}\`  
-**Role:** ${resolved.evidence.evidence_role}  
-**Strength:** ${resolved.evidence.evidence_strength}  
-**Evidence URI:** \`${resolved.evidence.pointer_uri}\`  
-**Source URI:** \`${resolved.evidence.source_pointer_uri}\`  
+**Target:** ${targetLink}
+**Role:** ${resolved.evidence.evidence_role}
+**Strength:** ${resolved.evidence.evidence_strength}
+**Evidence URI:** \`${resolved.evidence.pointer_uri}\`
+**Source URI:** \`${resolved.evidence.source_pointer_uri}\`
 **Transcript span:** ${wikiLink(transcriptPath(title, resolved.evidence.transcript_id), `${title}, ${resolved.evidence.span_id}`, resolved.evidence.span_id)}
 
 ## Immutable Source Quote
@@ -5759,19 +5783,25 @@ function graphJson(graph, includedNodeTypes = [], includedEdgeTypes = []) {
 `;
 }
 function graphMarkdown(title, graph, jsonPath, brokenPointerCount) {
-  const important = graph.nodes.filter((node) => node.notePath).slice(0, 20).map((node) => `- [[${node.notePath.replace(/\.md$/, "")}|${node.label}]]`).join("\n") || "_No linked nodes._";
-  return `# ${title}
+  const important = graph.nodes.filter((node) => node.notePath).slice(0, 20).map((node) => `- ${node.label}`).join("\n") || "_No nodes yet._";
+  return `---
+tags: [tmv/system]
+---
+# ${title}
+
+#tmv/system
 
 ${generatedWarning}
 
-This graph is a generated SQLite-backed view.
+This is a generated SQLite-backed summary. For the actual graph, use Obsidian's native graph with a tag
+filter (see \`_system/graph-guide.md\`); this note intentionally does not link to content notes.
 
 - Nodes: ${graph.nodes.length}
 - Edges: ${graph.edges.length}
 - Broken evidence pointers: ${brokenPointerCount}
-- JSON: [[${jsonPath.replace(/\.json$/, "")}]]
+- JSON data: ${jsonPath} (plain path, not a link)
 
-## Important Nodes
+## Nodes (names only)
 
 ${important}`;
 }
@@ -5781,7 +5811,12 @@ var makeGraphMarkdownFile = (title, path, jsonPath, graph, broken) => makeGenera
 // src/obsidian/home.ts
 function generateHomeNote(db) {
   const count = (table, where = "") => db.prepare(`SELECT COUNT(*) count FROM ${table} ${where}`).get().count;
-  return makeGeneratedFile("home", "00 Home.md", `# Memory Vault
+  return makeGeneratedFile("home", "00 Home.md", `---
+tags: [tmv/system]
+---
+# Memory Vault
+
+#tmv/system
 
 ${generatedWarning}
 
@@ -5796,20 +5831,17 @@ ${generatedWarning}
 - Answers: ${count("ai_answers")}
 - Conflicts: ${count("conflict_assessments")}
 
-## Browse
+## Browse (folders)
 
-- [[Transcripts]]
-- [[Memories]]
-- [[People]]
-- [[Topics]]
-- [[Decisions]]
-- [[Evidence]]
-- [[Answers]]
-- [[Conflicts]]
-- [[Graphs/Topic Graph]]
-- [[Graphs/People Graph]]
-- [[Graphs/Decision Graph]]
-- [[Graphs/Source Evidence Graph]]`);
+Open these folders in the file explorer; they are plain paths, not links, so this note stays out of the graph:
+
+- Transcripts/
+- Memories/
+- People/  \xB7  Topics/  \xB7  Decisions/
+- Evidence/
+- Answers/
+- Conflicts/
+- _system/graph-guide.md (recommended Obsidian graph filters)`);
 }
 
 // src/obsidian/manifest.ts
@@ -5849,6 +5881,8 @@ function generateMemoryNotes(db, maxQuoteLength = 300) {
     const conflictLinks = conflicts.map((item) => `- ${wikiLink(conflictPath(item.summary, item.id), item.summary)}`).join("\n") || "_None._";
     const content = `${frontmatter({ mv_entity_type: "memory", mv_entity_id: row.id, mv_generated: true, mv_source_of_truth: "sqlite", mv_support_status: strongest, mv_confidence: canonical.confidence })}
 # ${title}
+
+#tmv/memory
 
 ${generatedWarning}
 
@@ -5896,18 +5930,28 @@ function generateTranscriptNotes(db, maxQuoteLength = 1e4) {
 ${quote(String(span.text ?? span.text_preview), maxQuoteLength)}
 `;
     }).join("\n");
+    const evidenceLinks = db.prepare("SELECT evidence_pointer_id FROM evidence_pointers WHERE transcript_id=? ORDER BY evidence_pointer_id").all(item.id).map(({ evidence_pointer_id }) => {
+      const resolved = resolveEvidencePointer(db, evidence_pointer_id);
+      return `- ${wikiLink(evidencePath(resolved.ok ? resolved.spanText : "Broken evidence", evidence_pointer_id), `Evidence ${evidence_pointer_id}`)}`;
+    }).join("\n") || "_No source-backed evidence drawn from this transcript yet._";
     const content = `${frontmatter({ mv_entity_type: "transcript", mv_entity_id: String(item.id), mv_generated: true, mv_source_of_truth: "sqlite", mv_raw_hash: String(item.raw_sha256 ?? item.content_hash) })}
 # ${item.title}
+
+#tmv/transcript
 
 ${generatedWarning}
 
 > [!important] Immutable source
 > Transcript text and spans are rendered from immutable SQLite source records.
 
-**Transcript ID:** \`${item.id}\`  
-**Source ID:** \`${item.source_id}\`  
-**Raw hash:** \`${item.raw_sha256 ?? item.content_hash}\`  
+**Transcript ID:** \`${item.id}\`
+**Source ID:** \`${item.source_id}\`
+**Raw hash:** \`${item.raw_sha256 ?? item.content_hash}\`
 **Imported:** ${item.imported_at}
+
+## Source-Backed Evidence
+
+${evidenceLinks}
 
 ## Transcript Spans
 
@@ -5997,11 +6041,53 @@ async function generateObsidianVault(db, config) {
   }
   const broken = warnings.filter((warning) => warning.startsWith("Broken evidence pointer")).length;
   if (options.includeGraphMarkdown) graphs.forEach(([title, path, graph]) => files.push(makeGraphMarkdownFile(title, `Graphs/${title}.md`, `Graphs/${path}`, graph, broken)));
-  files.push(makeGeneratedFile("system_manifest", "_system/generation-log.md", `# Generation Log
+  files.push(makeGeneratedFile("system_manifest", "_system/generation-log.md", `---
+tags: [tmv/system]
+---
+# Generation Log
 
-This deterministic generated view contains ${files.length + 2} files, ${built.graph.nodes.length} graph nodes, and ${built.graph.edges.length} graph edges.
+#tmv/system
 
-SQLite remains the source of truth.`));
+This deterministic generated view contains ${files.length + 3} files, ${built.graph.nodes.length} graph nodes, and ${built.graph.edges.length} graph edges.
+
+SQLite remains the source of truth. Generated Markdown is disposable and is never read back into SQLite.`));
+  files.push(makeGeneratedFile("system_manifest", "_system/graph-guide.md", `---
+tags: [tmv/system]
+---
+# Transcript Memory Vault \u2014 Graph Guide
+
+#tmv/system
+
+> [!warning] Generated view
+> SQLite is the source of truth. These Markdown notes are a disposable view layer for Obsidian's native graph and are never read back into SQLite.
+
+## How to read the graph
+
+- **Global graph** \u2014 overview of the whole memory network.
+- **Local graph** (open on a Memory, Evidence, or Answer note) \u2014 the provenance chain: Transcript -> Evidence -> Memory -> Answer / Conflict.
+
+## Tags (for graph filters)
+
+Every generated note carries one tag so you can filter the graph:
+
+- #tmv/transcript \u2014 raw transcript notes
+- #tmv/evidence \u2014 evidence pointers (scored, provenance-backed)
+- #tmv/memory \u2014 canonical memory objects
+- #tmv/answer \u2014 Ask AI answers
+- #tmv/conflict \u2014 conflicts / tensions
+- #tmv/person, #tmv/topic \u2014 entities
+- #tmv/system \u2014 index/navigation notes (this guide, 00 Home, graph summaries); usually filter these OUT
+
+## Recommended graph filters (Obsidian filter box)
+
+- Hide system hubs: \`-tag:#tmv/system\`
+- Source graph: \`tag:#tmv/transcript OR tag:#tmv/evidence\`
+- Memory graph: \`tag:#tmv/evidence OR tag:#tmv/memory\`
+- Answer graph: \`tag:#tmv/answer OR tag:#tmv/evidence\`
+- Conflict graph: \`tag:#tmv/conflict OR tag:#tmv/memory\`
+- People / topics: \`tag:#tmv/person OR tag:#tmv/topic OR tag:#tmv/memory\`
+
+If your Obsidian version does not support \`OR\` in the graph filter, filter one tag at a time (e.g. \`tag:#tmv/memory\`).`));
   const duplicates = files.map((file) => file.relativePath).filter((path, index, all) => all.indexOf(path) !== index);
   if (duplicates.length) throw new Error(`Generated path collision: ${[...new Set(duplicates)].join(", ")}`);
   const { manifest, file: manifestFile } = buildManifest(files, built.graph, warnings);

@@ -41,7 +41,55 @@ export async function generateObsidianVault(db: SqliteDatabase, config: Obsidian
   }
   const broken = warnings.filter((warning) => warning.startsWith("Broken evidence pointer")).length;
   if (options.includeGraphMarkdown) graphs.forEach(([title, path, graph]) => files.push(makeGraphMarkdownFile(title, `Graphs/${title}.md`, `Graphs/${path}`, graph, broken)));
-  files.push(makeGeneratedFile("system_manifest", "_system/generation-log.md", `# Generation Log\n\nThis deterministic generated view contains ${files.length + 2} files, ${built.graph.nodes.length} graph nodes, and ${built.graph.edges.length} graph edges.\n\nSQLite remains the source of truth.`));
+  files.push(makeGeneratedFile("system_manifest", "_system/generation-log.md", `---
+tags: [tmv/system]
+---
+# Generation Log
+
+#tmv/system
+
+This deterministic generated view contains ${files.length + 3} files, ${built.graph.nodes.length} graph nodes, and ${built.graph.edges.length} graph edges.
+
+SQLite remains the source of truth. Generated Markdown is disposable and is never read back into SQLite.`));
+  // A plain-text (link-free) graph guide so it never becomes a hub. Explains source-of-truth, the tags, and
+  // the recommended Obsidian graph filters.
+  files.push(makeGeneratedFile("system_manifest", "_system/graph-guide.md", `---
+tags: [tmv/system]
+---
+# Transcript Memory Vault — Graph Guide
+
+#tmv/system
+
+> [!warning] Generated view
+> SQLite is the source of truth. These Markdown notes are a disposable view layer for Obsidian's native graph and are never read back into SQLite.
+
+## How to read the graph
+
+- **Global graph** — overview of the whole memory network.
+- **Local graph** (open on a Memory, Evidence, or Answer note) — the provenance chain: Transcript -> Evidence -> Memory -> Answer / Conflict.
+
+## Tags (for graph filters)
+
+Every generated note carries one tag so you can filter the graph:
+
+- #tmv/transcript — raw transcript notes
+- #tmv/evidence — evidence pointers (scored, provenance-backed)
+- #tmv/memory — canonical memory objects
+- #tmv/answer — Ask AI answers
+- #tmv/conflict — conflicts / tensions
+- #tmv/person, #tmv/topic — entities
+- #tmv/system — index/navigation notes (this guide, 00 Home, graph summaries); usually filter these OUT
+
+## Recommended graph filters (Obsidian filter box)
+
+- Hide system hubs: \`-tag:#tmv/system\`
+- Source graph: \`tag:#tmv/transcript OR tag:#tmv/evidence\`
+- Memory graph: \`tag:#tmv/evidence OR tag:#tmv/memory\`
+- Answer graph: \`tag:#tmv/answer OR tag:#tmv/evidence\`
+- Conflict graph: \`tag:#tmv/conflict OR tag:#tmv/memory\`
+- People / topics: \`tag:#tmv/person OR tag:#tmv/topic OR tag:#tmv/memory\`
+
+If your Obsidian version does not support \`OR\` in the graph filter, filter one tag at a time (e.g. \`tag:#tmv/memory\`).`));
   const duplicates = files.map((file) => file.relativePath).filter((path, index, all) => all.indexOf(path) !== index);
   if (duplicates.length) throw new Error(`Generated path collision: ${[...new Set(duplicates)].join(", ")}`);
   const { manifest, file: manifestFile } = buildManifest(files, built.graph, warnings);

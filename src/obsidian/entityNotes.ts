@@ -21,6 +21,8 @@ export function generateEntityNotes(db: SqliteDatabase): GeneratedFile[] {
     return makeGeneratedFile(kind === "person" ? "person_note" : "topic_note", entityPath(kind, String(row.label), String(row.ref_id)), `${frontmatter({ mv_entity_type: kind, mv_entity_id: String(row.ref_id), mv_generated: true, mv_source_of_truth: "sqlite" })}
 # ${row.label}
 
+#tmv/${kind}
+
 ${generatedWarning}
 
 This is a generated ${kind} view. Related source-backed relationships appear in graph views.
@@ -40,6 +42,8 @@ ${related}`, kind, String(row.ref_id));
       .map((item) => renderEvidenceCitation(db, item.evidence_pointer_id).markdown).join("\n\n") || "> [!danger] Unsupported decision\n> No evidence pointers.";
     return makeGeneratedFile("decision_note", entityPath("decision", String(row.title ?? row.generated_text), String(row.id)), `${frontmatter({ mv_entity_type: "decision", mv_entity_id: String(row.id), mv_generated: true, mv_source_of_truth: "sqlite", mv_support_status: String(row.status) })}
 # ${row.title ?? "Decision"}
+
+#tmv/memory
 
 ${generatedWarning}
 

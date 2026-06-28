@@ -27,6 +27,12 @@ export const shortId = (id: string, bodyChars = 6): string => {
 // never introduce an accidental subfolder.
 export const noteBasename = (label: string): string => safeName(labelFromText(label));
 
+// Strip a leading interrogative stem from a question so the answer's graph label is short and readable
+// (e.g. "What is the source of truth for this app" -> "source of truth for this app"). Deterministic; the
+// FULL question always stays in the answer note body. Falls back to the whole question if stripping empties it.
+const QUESTION_STEM = /^\s*(what|which|who|whom|whose|where|when|why|how)\b(\s+(is|are|was|were|do|does|did|should|would|will|can|could|has|have|had))?(\s+(the|a|an|this|that|these|those))?\s*/i;
+export const questionLabel = (question: string): string => labelFromText(question.replace(QUESTION_STEM, "").trim()) || labelFromText(question);
+
 // Generated note path: "<category>/<shortId>/<clean title>.md". The short-id folder keeps distinct,
 // same-titled entities apart and is deterministic from the id; the basename is a disposable, human-readable
 // view and is never the only identifier. (A vanishingly rare shortId truncation collision with the same

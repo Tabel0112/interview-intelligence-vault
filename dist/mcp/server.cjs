@@ -3251,6 +3251,8 @@ var shortId = (id, bodyChars = 6) => {
   return sep > 0 && sep < id.length - 1 ? `${id.slice(0, sep + 1)}${id.slice(sep + 1, sep + 1 + bodyChars)}` : id.slice(0, bodyChars + 4);
 };
 var noteBasename = (label) => safeName(labelFromText(label));
+var QUESTION_STEM = /^\s*(what|which|who|whom|whose|where|when|why|how)\b(\s+(is|are|was|were|do|does|did|should|would|will|can|could|has|have|had))?(\s+(the|a|an|this|that|these|those))?\s*/i;
+var questionLabel = (question) => labelFromText(question.replace(QUESTION_STEM, "").trim()) || labelFromText(question);
 var readableNotePath = (category, label, id) => `${category}/${shortId(id)}/${noteBasename(label)}.md`;
 var memoryFolder = (type) => type === "decision" ? "Decisions" : type === "preference" ? "Preferences" : type === "task" ? "Tasks" : type === "question" ? "Questions" : type === "claim" ? "Facts" : "Other";
 var transcriptPath = (title, id) => readableNotePath("Transcripts", title, id);
@@ -3300,7 +3302,7 @@ function buildObsidianGraph(db) {
     const target = targetType === "memory_object" || targetType === "claim" || targetType === "summary" ? memoryNodeId(targetId) : targetType === "answer" ? `answer:${targetId}` : targetType === "answer_claim" ? `claim:${targetId}` : `graph:${targetId}`;
     if (targetType === "answer") {
       const ans = db.prepare("SELECT question_text FROM ai_answers WHERE id=?").get(targetId);
-      addNode({ id: target, type: "answer", label: ans?.question_text ?? targetId, notePath: answerPath(ans?.question_text ?? targetId, targetId) });
+      addNode({ id: target, type: "answer", label: ans?.question_text ?? targetId, notePath: answerPath(questionLabel(ans?.question_text ?? targetId), targetId) });
     }
     if (targetType === "answer_claim") {
       const claim = db.prepare("SELECT claim_text,support_status FROM answer_claims WHERE answer_claim_id=?").get(targetId);
@@ -3313,7 +3315,7 @@ function buildObsidianGraph(db) {
     if (nodes.has(target)) addEdge({ source: target, target: evidenceNodeId(id), type: targetType === "answer_claim" || targetType === "answer" ? "cites" : "derived_from", evidencePointerId: id, confidence: Number(pointer.confidence) });
   }
   const answers = db.prepare("SELECT id,question_text,answer_status FROM ai_answers ORDER BY id").all();
-  answers.forEach((row) => addNode({ id: `answer:${row.id}`, type: "answer", label: row.question_text, notePath: answerPath(row.question_text, row.id), supportStatus: row.answer_status }));
+  answers.forEach((row) => addNode({ id: `answer:${row.id}`, type: "answer", label: row.question_text, notePath: answerPath(questionLabel(row.question_text), row.id), supportStatus: row.answer_status }));
   const claims = db.prepare("SELECT * FROM answer_claims ORDER BY answer_claim_id").all();
   claims.forEach((row) => {
     const pointer = db.prepare("SELECT evidence_pointer_id FROM evidence_pointers WHERE target_type='answer_claim' AND target_id=? ORDER BY evidence_pointer_id LIMIT 1").get(row.answer_claim_id);

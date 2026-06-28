@@ -59,8 +59,10 @@ describe("Generated Obsidian graph sync (Phase 3 wiring)", () => {
     expect(memory).toContain("[[Transcripts/");
     // evidence -> transcript span
     expect(await read(root, find(data.strongPtr.evidence_pointer_id, "evidence_note").relativePath)).toContain("[[Transcripts/");
-    // home note links the section/graph notes together
-    expect(await read(root, "00 Home.md")).toContain("[[Graphs/Source Evidence Graph");
+    // home note is a de-hubbed system note: NO wikilinks (so it never becomes a graph hub)
+    const home = await read(root, "00 Home.md");
+    expect(home).toContain("#tmv/system");
+    expect(home).not.toContain("[[");
     // answer note exists and carries claim-level citations (links into the graph)
     expect(await read(root, find(data.answer.id, "answer_note").relativePath)).toContain("Claim-Level Citations");
   });

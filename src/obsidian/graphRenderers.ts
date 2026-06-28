@@ -5,19 +5,27 @@ export function graphJson(graph: ObsidianGraph, includedNodeTypes: string[] = []
   return `${JSON.stringify({ version: 1, generatedFrom: "sqlite", nodes: graph.nodes, edges: graph.edges, filters: { includedNodeTypes, includedEdgeTypes } }, null, 2)}\n`;
 }
 export function graphMarkdown(title: string, graph: ObsidianGraph, jsonPath: string, brokenPointerCount: number): string {
-  const important = graph.nodes.filter((node) => node.notePath).slice(0, 20).map((node) => `- [[${node.notePath!.replace(/\.md$/, "")}|${node.label}]]`).join("\n") || "_No linked nodes._";
-  return `# ${title}
+  // Plain-text node names (NOT [[wikilinks]]) so this index note never becomes a native-graph hub linking
+  // to every content note. Tagged #tmv/system. Use Obsidian's own graph + the tag filters for the real view.
+  const important = graph.nodes.filter((node) => node.notePath).slice(0, 20).map((node) => `- ${node.label}`).join("\n") || "_No nodes yet._";
+  return `---
+tags: [tmv/system]
+---
+# ${title}
+
+#tmv/system
 
 ${generatedWarning}
 
-This graph is a generated SQLite-backed view.
+This is a generated SQLite-backed summary. For the actual graph, use Obsidian's native graph with a tag
+filter (see \`_system/graph-guide.md\`); this note intentionally does not link to content notes.
 
 - Nodes: ${graph.nodes.length}
 - Edges: ${graph.edges.length}
 - Broken evidence pointers: ${brokenPointerCount}
-- JSON: [[${jsonPath.replace(/\.json$/, "")}]]
+- JSON data: ${jsonPath} (plain path, not a link)
 
-## Important Nodes
+## Nodes (names only)
 
 ${important}`;
 }
