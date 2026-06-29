@@ -106,9 +106,14 @@ describe("Generated Obsidian graph sync (Phase 3 wiring)", () => {
   it("disambiguates duplicate titles via the short id folder and sanitizes unsafe characters", async () => {
     const data = await seed();
     const repos = createRepositories(db);
-    const mk = (gen: string) => repos.memoryObjects.createMemoryObject(
-      { type: "decision", title: "A/B: choice?", generated_text: gen, confidence: 0.9, created_by: "agent" },
-      [{ span_id: data.spans[0].id, role: "supports", evidence_score: 0.9 }]);
+    const mk = (gen: string) => {
+      const memory = repos.memoryObjects.createMemoryObject(
+        { type: "decision", title: "A/B: choice?", generated_text: gen, confidence: 0.9, created_by: "agent" },
+        [{ span_id: data.spans[0].id, role: "supports", evidence_score: 0.9 }]);
+      // Bridge to a provenance pointer so it is a graph-linkable (connected) memory note.
+      linkMemoryObjectToSpan(db, { memoryObjectId: memory.id, transcriptId: data.imported.transcriptId, spanId: data.spans[0].id, evidenceStrength: "strong", confidence: 0.9 });
+      return memory;
+    };
     const a = mk("first"), b = mk("second");
     const result = await generateObsidianVault(db, { outputRoot: root, now: fixedNow });
     const pathOf = (id: string) => result.files.find((f) => f.entityId === id && f.logicalType === "memory_note")!.relativePath;

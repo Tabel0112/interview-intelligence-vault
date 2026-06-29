@@ -4,6 +4,7 @@ export * from "./markdown.js";
 export * from "./citations.js";
 export * from "./clickback.js";
 export * from "./transcriptNotes.js";
+export * from "./liveEvidence.js";
 export * from "./memoryNotes.js";
 export * from "./entityNotes.js";
 export * from "./answerNotes.js";

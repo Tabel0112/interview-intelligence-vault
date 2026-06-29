@@ -3438,6 +3438,22 @@ function importTranscript(db, input) {
 // src/obsidian/graphBuilder.ts
 var import_node_crypto6 = require("node:crypto");
 
+// src/obsidian/liveEvidence.ts
+var MEMORY_HAS_GRAPH_EVIDENCE_SQL = `EXISTS (
+  SELECT 1 FROM evidence_pointers ep WHERE ep.target_type IN ('memory_object','claim','summary') AND ep.target_id = memory_objects.id
+)`;
+function answerHasGraphEvidence(db, answerId) {
+  return db.prepare(`SELECT 1 FROM evidence_pointers
+    WHERE (target_type = 'answer' AND target_id = ?)
+       OR (target_type = 'answer_claim' AND target_id IN (SELECT answer_claim_id FROM answer_claims WHERE answer_id = ?))
+    LIMIT 1`).get(answerId, answerId) != null;
+}
+function conflictHasGraphEvidence(db, conflictId) {
+  return db.prepare(`SELECT 1 FROM conflict_evidence_links l
+    JOIN evidence_pointers p ON p.evidence_pointer_id = l.evidence_pointer_id
+    WHERE l.conflict_assessment_id = ? LIMIT 1`).get(conflictId) != null;
+}
+
 // src/obsidian/paths.ts
 function safeName(value, fallback = "Untitled") {
   const clean = value.replace(/[<>:"/\\|?*\u0000-\u001F]/g, " ").replace(/\s+/g, " ").trim().replace(/[. ]+$/g, "");
@@ -3484,6 +3500,7 @@ function buildObsidianGraph(db) {
   const memories = db.prepare(`SELECT id,type,title,generated_text,confidence,status FROM memory_objects
     WHERE duplicate_of_id IS NULL AND status NOT IN ('superseded','rejected')
       AND (extraction_status IS NULL OR extraction_status NOT IN ('superseded','rejected'))
+      AND ${MEMORY_HAS_GRAPH_EVIDENCE_SQL}
     ORDER BY id`).all();
   const canonicalMemoryIds = new Set(memories.map((row) => row.id));
   memories.forEach((row) => addNode({ id: memoryNodeId(row.id), type: row.type === "decision" ? "decision" : row.type === "person" ? "person" : row.type === "topic" ? "topic" : "memory", label: row.title ?? row.generated_text.slice(0, 80), notePath: row.type === "decision" ? entityPath("decision", row.title ?? row.generated_text.slice(0, 80), row.id) : memoryPath(row.title ?? row.generated_text.slice(0, 80), row.id, row.type), confidence: row.confidence, supportStatus: row.status }));
@@ -3517,15 +3534,15 @@ function buildObsidianGraph(db) {
     }
     if (nodes.has(target)) addEdge({ source: target, target: evidenceNodeId(id), type: targetType === "answer_claim" || targetType === "answer" ? "cites" : "derived_from", evidencePointerId: id, confidence: Number(pointer.confidence) });
   }
-  const answers = db.prepare("SELECT id,question_text,answer_status FROM ai_answers ORDER BY id").all();
+  const answers = db.prepare("SELECT id,question_text,answer_status FROM ai_answers ORDER BY id").all().filter((row) => answerHasGraphEvidence(db, row.id));
   answers.forEach((row) => addNode({ id: `answer:${row.id}`, type: "answer", label: row.question_text, notePath: answerPath(questionLabel(row.question_text), row.id), supportStatus: row.answer_status }));
-  const claims = db.prepare("SELECT * FROM answer_claims ORDER BY answer_claim_id").all();
+  const claims = db.prepare("SELECT * FROM answer_claims ORDER BY answer_claim_id").all().filter((row) => answerHasGraphEvidence(db, String(row.answer_id)));
   claims.forEach((row) => {
     const pointer = db.prepare("SELECT evidence_pointer_id FROM evidence_pointers WHERE target_type='answer_claim' AND target_id=? ORDER BY evidence_pointer_id LIMIT 1").get(row.answer_claim_id);
     addNode({ id: `claim:${row.answer_claim_id}`, type: "claim", label: String(row.claim_text), supportStatus: String(row.support_status) });
     addEdge({ source: `claim:${row.answer_claim_id}`, target: `answer:${row.answer_id}`, type: "answered_by", evidencePointerId: pointer?.evidence_pointer_id });
   });
-  const conflicts = db.prepare("SELECT * FROM conflict_assessments ORDER BY id").all();
+  const conflicts = db.prepare("SELECT * FROM conflict_assessments ORDER BY id").all().filter((row) => conflictHasGraphEvidence(db, String(row.id)));
   conflicts.forEach((row) => {
     const id = String(row.id), conflictNode = `conflict:${id}`;
     addNode({ id: conflictNode, type: "conflict", label: String(row.summary), notePath: conflictPath(String(row.summary), id), confidence: Number(row.confidence), supportStatus: String(row.status) });

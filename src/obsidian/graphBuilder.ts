@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { SqliteDatabase } from "../db/connection.js";
 import { resolveEvidencePointer } from "../provenance/index.js";
+import { MEMORY_HAS_GRAPH_EVIDENCE_SQL, answerHasGraphEvidence, conflictHasGraphEvidence } from "./liveEvidence.js";
 import { answerPath, conflictPath, entityPath, evidencePath, labelFromText, memoryPath, questionLabel, transcriptPath } from "./paths.js";
 import type { ObsidianGraph, ObsidianGraphEdge, ObsidianGraphEdgeType, ObsidianGraphNode } from "./types.js";
 
@@ -17,11 +18,15 @@ export function buildObsidianGraph(db: SqliteDatabase): { graph: ObsidianGraph; 
   const addEdge = (edge: Omit<ObsidianGraphEdge, "id">) => { const id = edgeId(edge.source, edge.target, edge.type, edge.evidencePointerId); edges.set(id, { id, ...edge }); };
   const transcripts = db.prepare("SELECT id,title FROM transcripts ORDER BY id").all() as Array<{ id: string; title: string }>;
   transcripts.forEach((row) => addNode({ id: transcriptNodeId(row.id), type: "transcript", label: row.title, notePath: transcriptPath(row.title, row.id), transcriptId: row.id }));
-  // Only CANONICAL memories become active graph nodes: duplicates (duplicate_of_id set) and
-  // superseded/rejected rows are excluded so the same claim shows once, not many times.
+  // Only CANONICAL memories with a GRAPH-LINKABLE evidence pointer become graph nodes: duplicates
+  // (duplicate_of_id set) and superseded/rejected rows are excluded so the same claim shows once; rows with
+  // no graph-linkable pointer (an unbridged needs_review/weak memory, or one downgraded after its only
+  // transcript was deleted) are excluded so the graph never carries a disconnected island — they remain in
+  // SQLite/Review. Every emitted memory node therefore connects via Memory -> Evidence -> Span -> Transcript.
   const memories = db.prepare(`SELECT id,type,title,generated_text,confidence,status FROM memory_objects
     WHERE duplicate_of_id IS NULL AND status NOT IN ('superseded','rejected')
       AND (extraction_status IS NULL OR extraction_status NOT IN ('superseded','rejected'))
+      AND ${MEMORY_HAS_GRAPH_EVIDENCE_SQL}
     ORDER BY id`).all() as Array<{ id: string; type: string; title: string | null; generated_text: string; confidence: number; status: string }>;
   const canonicalMemoryIds = new Set(memories.map((row) => row.id));
   memories.forEach((row) => addNode({ id: memoryNodeId(row.id), type: row.type === "decision" ? "decision" : row.type === "person" ? "person" : row.type === "topic" ? "topic" : "memory", label: row.title ?? row.generated_text.slice(0, 80), notePath: row.type === "decision" ? entityPath("decision", row.title ?? row.generated_text.slice(0, 80), row.id) : memoryPath(row.title ?? row.generated_text.slice(0, 80), row.id, row.type), confidence: row.confidence, supportStatus: row.status }));
@@ -58,15 +63,21 @@ export function buildObsidianGraph(db: SqliteDatabase): { graph: ObsidianGraph; 
     }
     if (nodes.has(target)) addEdge({ source: target, target: evidenceNodeId(id), type: targetType === "answer_claim" || targetType === "answer" ? "cites" : "derived_from", evidencePointerId: id, confidence: Number(pointer.confidence) });
   }
-  const answers = db.prepare("SELECT id,question_text,answer_status FROM ai_answers ORDER BY id").all() as Array<{ id: string; question_text: string; answer_status: string }>;
+  // Only answers/claims/conflicts that still trace to live evidence become graph nodes — an answer or
+  // conflict whose evidence was deleted survives in SQLite as degraded history but must not float in the
+  // graph or create broken links.
+  const answers = (db.prepare("SELECT id,question_text,answer_status FROM ai_answers ORDER BY id").all() as Array<{ id: string; question_text: string; answer_status: string }>)
+    .filter((row) => answerHasGraphEvidence(db, row.id));
   answers.forEach((row) => addNode({ id: `answer:${row.id}`, type: "answer", label: row.question_text, notePath: answerPath(questionLabel(row.question_text), row.id), supportStatus: row.answer_status }));
-  const claims = db.prepare("SELECT * FROM answer_claims ORDER BY answer_claim_id").all() as Array<Record<string, unknown>>;
+  const claims = (db.prepare("SELECT * FROM answer_claims ORDER BY answer_claim_id").all() as Array<Record<string, unknown>>)
+    .filter((row) => answerHasGraphEvidence(db, String(row.answer_id)));
   claims.forEach((row) => {
     const pointer = db.prepare("SELECT evidence_pointer_id FROM evidence_pointers WHERE target_type='answer_claim' AND target_id=? ORDER BY evidence_pointer_id LIMIT 1").get(row.answer_claim_id) as { evidence_pointer_id: string } | undefined;
     addNode({ id: `claim:${row.answer_claim_id}`, type: "claim", label: String(row.claim_text), supportStatus: String(row.support_status) });
     addEdge({ source: `claim:${row.answer_claim_id}`, target: `answer:${row.answer_id}`, type: "answered_by", evidencePointerId: pointer?.evidence_pointer_id });
   });
-  const conflicts = db.prepare("SELECT * FROM conflict_assessments ORDER BY id").all() as Array<Record<string, unknown>>;
+  const conflicts = (db.prepare("SELECT * FROM conflict_assessments ORDER BY id").all() as Array<Record<string, unknown>>)
+    .filter((row) => conflictHasGraphEvidence(db, String(row.id)));
   conflicts.forEach((row) => {
     const id = String(row.id), conflictNode = `conflict:${id}`;
     addNode({ id: conflictNode, type: "conflict", label: String(row.summary), notePath: conflictPath(String(row.summary), id), confidence: Number(row.confidence), supportStatus: String(row.status) });

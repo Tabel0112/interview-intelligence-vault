@@ -1,12 +1,17 @@
 import type { SqliteDatabase } from "../db/connection.js";
 import { createConflictRepository } from "../conflicts/index.js";
 import { renderEvidenceCitation } from "./citations.js";
+import { conflictHasGraphEvidence } from "./liveEvidence.js";
 import { frontmatter, generatedWarning, makeGeneratedFile } from "./markdown.js";
 import { conflictPath, memoryPath, wikiLink } from "./paths.js";
 import type { GeneratedFile } from "./types.js";
 
 export function generateConflictNotes(db: SqliteDatabase, maxQuoteLength = 300): GeneratedFile[] {
-  return (db.prepare("SELECT id FROM conflict_assessments ORDER BY id").all() as Array<{ id: string }>).map(({ id }) => {
+  // Only conflicts that still trace to live evidence get a generated note — a conflict whose evidence was
+  // deleted downgrades and survives in SQLite/Review, but must not create a broken graph chain.
+  return (db.prepare("SELECT id FROM conflict_assessments ORDER BY id").all() as Array<{ id: string }>)
+    .filter(({ id }) => conflictHasGraphEvidence(db, id))
+    .map(({ id }) => {
     const conflict = createConflictRepository(db).getConflictAssessment(id)!;
     const side = (targetType: string, targetId: string, name: string) => {
       const memory = targetType === "memory_object" || targetType === "claim" || targetType === "summary"

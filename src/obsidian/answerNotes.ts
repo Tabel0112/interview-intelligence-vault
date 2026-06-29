@@ -1,11 +1,16 @@
 import type { SqliteDatabase } from "../db/connection.js";
 import { renderEvidenceCitation } from "./citations.js";
+import { answerHasGraphEvidence } from "./liveEvidence.js";
 import { frontmatter, generatedWarning, makeGeneratedFile } from "./markdown.js";
 import { answerPath, questionLabel } from "./paths.js";
 import type { GeneratedFile } from "./types.js";
 
 export function generateAnswerNotes(db: SqliteDatabase, maxQuoteLength = 300): GeneratedFile[] {
-  const answers = db.prepare("SELECT * FROM ai_answers ORDER BY id").all() as Array<Record<string, unknown>>;
+  // Only answers that still trace to live evidence get a generated note — an answer whose evidence was
+  // deleted survives in SQLite as degraded history and stays viewable in detail views, but must not appear
+  // as a clean graph chain.
+  const answers = (db.prepare("SELECT * FROM ai_answers ORDER BY id").all() as Array<Record<string, unknown>>)
+    .filter((answer) => answerHasGraphEvidence(db, String(answer.id)));
   return answers.map((answer) => {
     const claims = db.prepare("SELECT * FROM answer_claims WHERE answer_id=? ORDER BY claim_order").all(answer.id) as Array<Record<string, unknown>>;
     const claimSections = claims.map((claim) => {
