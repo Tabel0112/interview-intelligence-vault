@@ -46,19 +46,19 @@ describe("automatic extraction after upload", () => {
     expect(dashboard.reviewCount + dashboard.weakCount).toBeGreaterThanOrEqual(0); // needs_review memory surfaces in review
   });
 
-  it("auto-runs grounded LLM extraction (mock) and stores needs_review with the LLM prompt version", async () => {
+  it("auto-runs grounded LLM extraction (mock) and auto-activates a clear decision with the LLM prompt version", async () => {
     const provider = new MockLlmProvider({
       completion: (req: LlmRequest): LlmCompletion => {
         const { spanId, text } = firstSpan(req.prompt);
-        return { provider: "mock", model: "mock", text: objectsJson([{ type: "decision", title: "Use SQLite as source of truth", body: "The team chose SQLite.", evidenceSpanIds: [spanId], supportingQuote: text, confidence: 0.99 }]), finishReason: "stop" };
+        return { provider: "mock", model: "mock", text: objectsJson([{ type: "decision", title: "Use SQLite as the source of truth", body: "We decided to use SQLite as the source of truth.", evidenceSpanIds: [spanId], supportingQuote: text, confidence: 0.99 }]), finishReason: "stop" };
       },
     });
     const extractor = createLlmMemoryExtractor(provider, { fallback: new DeterministicRuleExtractor() });
     const api = createSqliteFrontendApi(db, { getMemoryExtractor: () => extractor });
     await api.uploadTranscript({ filename: "m.txt", rawText: RAW });
     const row = db.prepare("SELECT extraction_status, generated_text FROM memory_objects LIMIT 1").get() as { extraction_status: string; generated_text: string };
-    expect(row.extraction_status).toBe("needs_review"); // LLM never auto-promoted to active
-    expect(row.generated_text).toBe("The team chose SQLite.");
+    expect(row.extraction_status).toBe("active"); // clear, direct, grounded decision -> active automatically
+    expect(row.generated_text).toBe("We decided to use SQLite as the source of truth.");
     expect((db.prepare("SELECT prompt_version FROM extraction_runs LIMIT 1").get() as { prompt_version: string }).prompt_version).toBe("mvp-memory-extraction-llm-v1");
   });
 

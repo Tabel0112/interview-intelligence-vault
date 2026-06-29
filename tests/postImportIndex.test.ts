@@ -46,7 +46,8 @@ describe("post-import provenance bridge + local indexing", () => {
     const provider = new MockLlmProvider({
       completion: (req: LlmRequest): LlmCompletion => {
         const { spanId, text } = firstSpan(req.prompt);
-        return { provider: "mock", model: "mock", text: objectsJson([{ type: "decision", title: "Use SQLite as source of truth", body: "The team chose SQLite.", evidenceSpanIds: [spanId], supportingQuote: text, confidence: 0.99 }]), finishReason: "stop" };
+        // Tentative phrasing -> the calibrated policy keeps this in review (Policy A applies to it).
+        return { provider: "mock", model: "mock", text: objectsJson([{ type: "decision", title: "Use SQLite as source of truth", body: "The team might use SQLite as the source of truth.", evidenceSpanIds: [spanId], supportingQuote: text, confidence: 0.99 }]), finishReason: "stop" };
       },
     });
     const extractor = createLlmMemoryExtractor(provider, { fallback: new DeterministicRuleExtractor() });

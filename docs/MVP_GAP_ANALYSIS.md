@@ -45,7 +45,7 @@
 **Memory extraction**
 - **Grounded LLM extraction** (`src/memory/extraction/llmExtractor.ts`): quote-anchored, span-membership-checked; in the live app a failure throws a key-free `MemoryExtractionError` (the per-window deterministic `fallback` is optional, injected only by dev/test seams).
 - **Automatic LLM extraction after import** (`uploadTranscript`), **only when an LLM is configured** (`memoryExtractorFromSettings` returns `undefined` otherwise → import succeeds, raw kept, no memory + a setup-required warning). The **"Run AI extraction"** command (`api.runExtraction`) processes transcripts imported before LLM setup. Idempotent.
-- **LLM-extracted memory is capped to `needs_review`** (never auto-`active`).
+- **Calibrated extraction status** (`scoreCandidateConfidence` + pipeline gates): the LLM's self-reported confidence is ignored; a grounded candidate earns the pipeline's grounding confidence and is auto-`active` **only** when it is direct, specific, non-tentative, high-confidence, not a near-duplicate, not contradicting an existing active memory, **and its body is strongly supported by its quoted span** (`assessBodyQuoteSupport` — deterministic negation/commitment/entity/coverage guard; `uncertain`/`unsupported` → review). Tentative/medium → `needs_review`; low → `needs_review` (decisions/tasks) or `weak`. Near-duplicates and active-conflicting statements are routed to review, never auto-merged/auto-activated. (Replaces the earlier blanket `needs_review` cap.)
 - **Prompt-version metadata** recorded per extractor on the run + objects.
 
 **Post-import discovery + review**

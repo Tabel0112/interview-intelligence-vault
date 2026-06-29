@@ -9,8 +9,12 @@
 //
 // Trust rules upheld here:
 //   - LLM output cannot create source spans or cite spans outside the window.
-//   - The LLM's self-reported confidence is IGNORED (set to 0); the pipeline additionally caps every
-//     LLM candidate to needs_review, so LLM output can never auto-promote to trusted/active memory.
+//   - The LLM's SELF-REPORTED confidence number is IGNORED. A surviving candidate instead earns a fixed
+//     grounding-based confidence (GROUNDED_CONFIDENCE) assessed by the PIPELINE — it is awarded only
+//     because the candidate anchored to an exact substring of a cited in-window span, not because the
+//     model claimed to be confident. The calibrated status policy (scoreCandidateConfidence) then
+//     decides active vs needs_review from deterministic signals (specificity, type, tentative phrasing),
+//     and the pipeline still routes near-duplicates and active-conflicting statements to review.
 //   - On malformed JSON, provider/transport/timeout failure, empty output, or all-discarded output,
 //     extraction falls back to the deterministic extractor FOR THAT WINDOW.
 //   - The grounded supportingQuote (a substring of immutable transcript text) is carried in `reason`
@@ -32,6 +36,11 @@ export class MemoryExtractionError extends Error {
 const VALID_TYPES: readonly ExtractionMemoryObjectType[] = ["topic", "quote", "question", "decision", "action_item", "objection", "advice_idea"];
 const normalizeForMatch = (value: string): string => value.toLowerCase().replace(/\s+/g, " ").trim();
 
+// Pipeline-assessed confidence for a candidate that survived grounding (anchored to an exact substring
+// of a cited in-window span). This is NOT the LLM's self-report — it is the trust the pipeline assigns
+// to a grounded candidate. The calibrated status policy still gates active vs review from there.
+const GROUNDED_CONFIDENCE = 0.9;
+
 interface RawObject {
   type?: unknown; title?: unknown; body?: unknown; evidenceSpanIds?: unknown; supportingQuote?: unknown;
 }
@@ -40,8 +49,8 @@ interface RawObject {
  * Parse the LLM JSON and return only grounded candidates. Throws MemoryExtractionError on malformed
  * output. A candidate survives only if: valid type, non-empty title/body, it cites at least one span
  * INSIDE the window, it includes a supportingQuote, and that quote normalize-matches a substring of a
- * cited span's text. The LLM-reported confidence is not used (set to 0); the grounded supportingQuote
- * is stored in `reason` for audit.
+ * cited span's text. The LLM-reported confidence is not used; a surviving candidate gets the pipeline's
+ * grounding confidence (GROUNDED_CONFIDENCE). The grounded supportingQuote is stored in `reason` for audit.
  */
 export function parseAndGroundMemoryCandidates(rawText: string, window: ExtractionWindow): ExtractedMemoryCandidate[] {
   let parsed: unknown;
@@ -80,7 +89,7 @@ export function parseAndGroundMemoryCandidates(rawText: string, window: Extracti
       title: candidate.title.trim(),
       body: candidate.body.trim(),
       evidenceSpanIds,
-      confidence: 0, // LLM self-reported confidence is NOT trusted; the pipeline caps LLM candidates to needs_review
+      confidence: GROUNDED_CONFIDENCE, // pipeline-assessed grounding confidence, NOT the LLM's self-report (see header)
       reason: quote.trim(), // grounded supportingQuote -> persisted in metadata_json.extraction_reason for audit
     });
   }

@@ -4,6 +4,7 @@ export * from "./extractor.js";
 export * from "./llmExtractor.js";
 export * from "./normalize.js";
 export * from "./confidence.js";
+export * from "./bodyQuoteSupport.js";
 export * from "./validator.js";
 export * from "./duplicateDetection.js";
 export * from "./repository.js";

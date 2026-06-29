@@ -2213,16 +2213,159 @@ function tokenJaccard(a, b) {
 
 // src/memory/extraction/confidence.ts
 var vague = /* @__PURE__ */ new Set(["ai", "transcript", "discussion", "project", "thing", "something"]);
+var TENTATIVE = /\b(maybe|perhaps|possibly|probably|might|tentative\w*|i think|i guess|i'?m not sure|not sure|unsure|consider(?:ing)?|may want|proposed|proposal|instead\?)\b/i;
+function isTentativeStatement(...texts) {
+  return texts.some((text) => typeof text === "string" && TENTATIVE.test(text));
+}
+var clamp2 = (value) => Math.max(0, Math.min(1, value));
 function scoreCandidateConfidence(candidate, spans) {
-  const extractor = Math.max(0, Math.min(1, candidate.confidence));
-  const coverage = Math.min(1, 0.55 + Math.max(0, spans.length - 1) * 0.2);
+  const extractor = clamp2(candidate.confidence);
+  const coverage = Math.min(1, 0.8 + Math.max(0, spans.length - 1) * 0.1);
   const normalizedTitle = candidate.title.toLowerCase().trim();
-  const specificity = vague.has(normalizedTitle) || normalizedTitle.split(/\s+/).length < 2 ? 0.25 : Math.min(1, 0.55 + normalizedTitle.split(/\s+/).length * 0.06);
-  const typeRule = candidate.type === "quote" ? 1 : candidate.type === "decision" || candidate.type === "action_item" ? 0.9 : 0.8;
-  const finalConfidence = Math.max(0, Math.min(1, 0.45 * extractor + 0.25 * coverage + 0.15 * specificity + 0.15 * typeRule));
-  const confidenceLabel2 = finalConfidence >= 0.8 ? "high" : finalConfidence >= 0.6 ? "medium" : "low";
-  const status = confidenceLabel2 === "low" ? candidate.type === "decision" || candidate.type === "action_item" ? "needs_review" : "weak" : candidate.type === "decision" || candidate.type === "action_item" ? confidenceLabel2 === "high" ? "active" : "needs_review" : "active";
+  const titleWords = normalizedTitle.split(/\s+/).filter(Boolean).length;
+  const specificity = vague.has(normalizedTitle) || titleWords < 2 ? 0.3 : Math.min(1, 0.6 + titleWords * 0.07);
+  const typeRule = candidate.type === "quote" ? 1 : candidate.type === "decision" || candidate.type === "action_item" ? 0.95 : candidate.type === "objection" || candidate.type === "question" ? 0.85 : 0.8;
+  const finalConfidence = clamp2(0.5 * extractor + 0.2 * coverage + 0.15 * specificity + 0.15 * typeRule);
+  const confidenceLabel2 = finalConfidence >= 0.85 ? "high" : finalConfidence >= 0.6 ? "medium" : "low";
+  const tentative = isTentativeStatement(candidate.title, candidate.body);
+  const decisionLike = candidate.type === "decision" || candidate.type === "action_item";
+  const status = tentative ? "needs_review" : confidenceLabel2 === "high" ? "active" : confidenceLabel2 === "medium" ? "needs_review" : decisionLike ? "needs_review" : "weak";
   return { finalConfidence, confidenceLabel: confidenceLabel2, status };
+}
+
+// src/memory/extraction/bodyQuoteSupport.ts
+var STOPWORDS = /* @__PURE__ */ new Set([
+  "a",
+  "an",
+  "and",
+  "the",
+  "to",
+  "of",
+  "in",
+  "on",
+  "for",
+  "is",
+  "are",
+  "be",
+  "was",
+  "were",
+  "been",
+  "it",
+  "its",
+  "this",
+  "that",
+  "these",
+  "those",
+  "as",
+  "at",
+  "by",
+  "with",
+  "from",
+  "into",
+  "after",
+  "before",
+  "we",
+  "i",
+  "you",
+  "they",
+  "he",
+  "she",
+  "our",
+  "their",
+  "your",
+  "his",
+  "her",
+  "them",
+  "us",
+  "me",
+  "but",
+  "or",
+  "so",
+  "then",
+  "up",
+  "out",
+  "about",
+  "over",
+  "back",
+  "also",
+  "just",
+  "there",
+  "here"
+]);
+var NEGATIONS = /* @__PURE__ */ new Set(["not", "no", "never", "cannot", "without"]);
+var TENTATIVE2 = /* @__PURE__ */ new Set(["maybe", "might", "could", "consider", "considered", "considering", "discuss", "discussed", "discussing", "proposed", "propose", "possibly", "thinking"]);
+var COMMITMENT = /* @__PURE__ */ new Set(["decided", "decide", "agreed", "agree", "confirmed", "confirm", "will", "must", "needs", "need", "final"]);
+var KNOWN_TECH = /* @__PURE__ */ new Set(["sqlite", "sql", "postgresql", "postgres", "mysql", "mongodb", "markdown", "mcp", "obsidian", "claude", "redis", "duckdb"]);
+var SAFE_EQUIVALENCES = [
+  [/\bcannot be edited\b/g, "immutable"],
+  [/\bcan ?not be edited\b/g, "immutable"],
+  [/\bshould be immutable\b/g, "immutable"],
+  [/\bmust be immutable\b/g, "immutable"],
+  [/\b(?:is|are) immutable\b/g, "immutable"],
+  [/\bonly a disposable view\b/g, "disposable"],
+  [/\bdisposable view\b/g, "disposable"]
+];
+var NEG_CONTRACTIONS = [
+  [/\bcan't\b/g, "cannot"],
+  [/\bcannot\b/g, "cannot"],
+  [/\bwon't\b/g, "will not"],
+  [/\bdon't\b/g, "do not"],
+  [/\bdoesn't\b/g, "does not"],
+  [/\bdidn't\b/g, "did not"],
+  [/\bshouldn't\b/g, "should not"],
+  [/\bisn't\b/g, "is not"],
+  [/\baren't\b/g, "are not"],
+  [/\bwasn't\b/g, "was not"],
+  [/\bweren't\b/g, "were not"]
+];
+function normalize(text) {
+  let value = text.toLowerCase();
+  for (const [pattern, replacement] of NEG_CONTRACTIONS) value = value.replace(pattern, replacement);
+  for (const [pattern, replacement] of SAFE_EQUIVALENCES) value = value.replace(pattern, replacement);
+  return value;
+}
+var tokenize = (normalizedText) => normalizedText.split(/[^a-z0-9]+/).filter(Boolean);
+function entityTokens(originalText) {
+  const set = /* @__PURE__ */ new Set();
+  for (const raw of originalText.split(/[^A-Za-z0-9]+/).filter(Boolean)) {
+    const lower = raw.toLowerCase();
+    const isAcronym = /[A-Z]/.test(raw) && /^[A-Z0-9]{2,}$/.test(raw);
+    const isCapitalized = /^[A-Z][a-zA-Z0-9]+$/.test(raw) && raw.length > 1;
+    if (KNOWN_TECH.has(lower) || isAcronym || isCapitalized) set.add(lower);
+  }
+  return set;
+}
+function assessBodyQuoteSupport(body, quote) {
+  const reasons = [];
+  const bodyNorm = normalize(body);
+  const quoteNorm = normalize(quote);
+  const bodyTokens = tokenize(bodyNorm);
+  const quoteTokens = tokenize(quoteNorm);
+  const bodySet = new Set(bodyTokens);
+  const quoteSet = new Set(quoteTokens);
+  if (!bodyTokens.length || !quoteTokens.length) {
+    return { status: "unsupported", reasons: ["empty body or quote"] };
+  }
+  const bodyHasNeg = [...NEGATIONS].some((token) => bodySet.has(token));
+  const quoteHasNeg = [...NEGATIONS].some((token) => quoteSet.has(token));
+  if (bodyHasNeg !== quoteHasNeg) reasons.push("negation mismatch between body and quote");
+  const quoteTentative = [...TENTATIVE2].some((token) => quoteSet.has(token));
+  const quoteCommitment = [...COMMITMENT].some((token) => quoteSet.has(token));
+  const bodyCommitment = [...COMMITMENT].some((token) => bodySet.has(token));
+  if (quoteTentative && !quoteCommitment && bodyCommitment) reasons.push("body asserts a commitment the quote only discusses tentatively");
+  const bodyEntities = entityTokens(body);
+  const missingEntities = [...bodyEntities].filter((token) => !quoteSet.has(token));
+  if (missingEntities.length) reasons.push(`body introduces entities absent from the quote: ${missingEntities.join(", ")}`);
+  const bodyKeyTokens = bodyTokens.filter((token) => !STOPWORDS.has(token));
+  const keyTokens = bodyKeyTokens.length ? bodyKeyTokens : bodyTokens;
+  const covered = keyTokens.filter((token) => quoteSet.has(token)).length;
+  const coverage = covered / keyTokens.length;
+  if (reasons.length || coverage < 0.5) {
+    if (coverage < 0.5) reasons.push(`body-key-token coverage ${coverage.toFixed(2)} below 0.50`);
+    return { status: "unsupported", reasons };
+  }
+  if (coverage >= 0.75) return { status: "strong", reasons: [] };
+  return { status: "uncertain", reasons: [`body-key-token coverage ${coverage.toFixed(2)} between 0.50 and 0.75`] };
 }
 
 // src/memory/extraction/validator.ts
@@ -2370,6 +2513,30 @@ function attachEvidenceToMemory(db, memoryId, candidate) {
 }
 
 // src/memory/extraction/pipeline.ts
+function bodyIsStronglySupported(candidate) {
+  const quote = candidate.evidenceSpans.map((span) => span.text).join(" ");
+  return assessBodyQuoteSupport(candidate.body, quote).status === "strong";
+}
+function conflictsWithActiveMemory(db, candidate) {
+  const candidateText = `${candidate.title}. ${candidate.body}`;
+  const candidateEvidenceIds = candidate.evidenceSpans.map((span) => span.spanId);
+  const actives = db.prepare(`SELECT id, title, generated_text FROM memory_objects
+    WHERE duplicate_of_id IS NULL AND (extraction_status='active' OR (extraction_status IS NULL AND status='active'))`).all();
+  for (const active of actives) {
+    const classification = classifyConflictCandidate({
+      leftTargetId: "candidate",
+      leftTargetType: "memory_object",
+      leftText: candidateText,
+      leftEvidenceIds: candidateEvidenceIds,
+      rightTargetId: active.id,
+      rightTargetType: "memory_object",
+      rightText: `${active.title ?? ""}. ${active.generated_text}`,
+      rightEvidenceIds: [active.id]
+    });
+    if (classification.kind !== "weak_or_ambiguous" && classification.confidence >= 0.6) return true;
+  }
+  return false;
+}
 async function extractMemoryObjectsForTranscript(db, options) {
   const promptVersion = options.extractor.promptVersion ?? MEMORY_EXTRACTION_PROMPT_VERSION;
   const runId = createExtractionRun(db, {
@@ -2410,7 +2577,7 @@ async function extractMemoryObjectsForTranscript(db, options) {
           result.errors.push(validation.problem);
           continue;
         }
-        const candidate = options.extractor.kind === "llm" ? { ...validation.candidate, status: "needs_review" } : validation.candidate;
+        const candidate = validation.candidate;
         const duplicate = findDuplicateMemoryObject(db, candidate);
         if (duplicate) {
           const canonical = duplicate.object;
@@ -2431,9 +2598,10 @@ async function extractMemoryObjectsForTranscript(db, options) {
           continue;
         }
         try {
-          storeMemoryObjectWithEvidence(db, runId, promptVersion, candidate);
+          const toStore = candidate.status === "active" && bodyIsStronglySupported(candidate) && !conflictsWithActiveMemory(db, candidate) ? candidate : candidate.status === "active" ? { ...candidate, status: "needs_review" } : candidate;
+          storeMemoryObjectWithEvidence(db, runId, promptVersion, toStore);
           result.objectsInserted++;
-          if (candidate.status !== "active") result.weakObjectsInserted++;
+          if (toStore.status !== "active") result.weakObjectsInserted++;
         } catch (error) {
           result.rejectedCandidates++;
           result.errors.push(`Store candidate "${candidate.title}": ${error instanceof Error ? error.message : String(error)}`);
@@ -2765,20 +2933,20 @@ async function vectorSearch(db, query) {
 }
 
 // src/retrieval/ranking.ts
-var clamp2 = (value) => Math.max(0, Math.min(1, value));
+var clamp3 = (value) => Math.max(0, Math.min(1, value));
 function recencyScore(timestamp, now2) {
   if (!timestamp) return 0.5;
   const time = Date.parse(timestamp), current = now2 == null ? Date.now() : Date.parse(now2);
   if (!Number.isFinite(time) || !Number.isFinite(current)) return 0.5;
   const ageDays = Math.max(0, (current - time) / 864e5);
-  return clamp2(1 / (1 + ageDays / 365));
+  return clamp3(1 / (1 + ageDays / 365));
 }
 function rankCandidate(candidate, vectorAvailable, recencyBoost = false, now2) {
   const vector = candidate.vectorScore ?? 0, keyword = candidate.keywordScore ?? 0;
   const evidence = candidate.evidenceScore ?? 0.5, metadata = candidate.metadataScore ?? 0.5;
   const recency = recencyBoost ? recencyScore(candidate.updatedAt ?? candidate.createdAt, now2) : 0.5;
   const score2 = vectorAvailable ? 0.4 * vector + 0.3 * keyword + 0.15 * evidence + 0.1 * metadata + 0.05 * recency : 0.55 * keyword + 0.25 * evidence + 0.15 * metadata + 0.05 * recency;
-  return { ...candidate, recencyScore: recency, finalScore: clamp2(score2) };
+  return { ...candidate, recencyScore: recency, finalScore: clamp3(score2) };
 }
 function mergeCandidates(candidates) {
   const merged = /* @__PURE__ */ new Map();

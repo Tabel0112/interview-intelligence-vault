@@ -22,12 +22,14 @@ let db: SqliteDatabase;
 beforeEach(() => { db = openDatabase(":memory:"); });
 afterEach(() => db.close());
 
-// Seed a needs_review LLM memory via the live upload path and return the api + memory id.
+// Seed a needs_review LLM memory via the live upload path and return the api + memory id. The candidate
+// uses tentative phrasing ("might"), so the calibrated policy routes it to review (the case a human then
+// approves) rather than auto-activating it.
 async function seedNeedsReview(): Promise<{ api: FrontendApi; memoryId: string }> {
   const provider = new MockLlmProvider({
     completion: (req: LlmRequest): LlmCompletion => {
       const { spanId, text } = firstSpan(req.prompt);
-      return { provider: "mock", model: "mock", text: objectsJson([{ type: "decision", title: "Use SQLite as the source of truth", body: "The team chose SQLite.", evidenceSpanIds: [spanId], supportingQuote: text, confidence: 0.99 }]), finishReason: "stop" };
+      return { provider: "mock", model: "mock", text: objectsJson([{ type: "decision", title: "Use SQLite as the source of truth", body: "The team might use SQLite as the source of truth.", evidenceSpanIds: [spanId], supportingQuote: text, confidence: 0.99 }]), finishReason: "stop" };
     },
   }, { id: "openai", model: "gpt", isLocal: false });
   const api = createSqliteFrontendApi(db, { getMemoryExtractor: () => createLlmMemoryExtractor(provider, { fallback: new DeterministicRuleExtractor() }) });

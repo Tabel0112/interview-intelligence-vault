@@ -21,7 +21,8 @@ const lastUserMessage = (body: string): string => {
 const extractionTransport: LlmTransport = async (req) => {
   const m = lastUserMessage(req.body).match(/\[span_id=(\S+) speaker=[^\]]*\]\n([^\n]+)/);
   const spanId = m?.[1] ?? "unknown", text = (m?.[2] ?? "").trim();
-  const content = JSON.stringify({ objects: [{ type: "decision", title: "Use SQLite as the source of truth", body: "The team chose SQLite.", evidenceSpanIds: [spanId], supportingQuote: text }] });
+  // Tentative phrasing keeps this in needs_review so the lifecycle exercises the human review->approve step.
+  const content = JSON.stringify({ objects: [{ type: "decision", title: "Use SQLite as the source of truth", body: "The team might use SQLite as the source of truth.", evidenceSpanIds: [spanId], supportingQuote: text }] });
   return { status: 200, body: { choices: [{ message: { content }, finish_reason: "stop" }] } };
 };
 

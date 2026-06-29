@@ -29,11 +29,12 @@ const firstSpan = (prompt: string) => {
 describe("parseAndGroundMemoryCandidates", () => {
   const w = window();
 
-  it("keeps a grounded candidate and ignores the LLM confidence", () => {
+  it("keeps a grounded candidate and ignores the LLM's self-reported confidence", () => {
     const grounded = parseAndGroundMemoryCandidates(objectsJson([
       { type: "decision", title: "Use SQLite", body: "The team chose SQLite.", evidenceSpanIds: ["sp_1"], supportingQuote: "source of truth", confidence: 0.99 },
     ]), w);
-    expect(grounded).toEqual([{ type: "decision", title: "Use SQLite", body: "The team chose SQLite.", evidenceSpanIds: ["sp_1"], confidence: 0, reason: "source of truth" }]);
+    // The LLM's reported 0.99 is discarded; a grounded candidate gets the pipeline's grounding confidence.
+    expect(grounded).toEqual([{ type: "decision", title: "Use SQLite", body: "The team chose SQLite.", evidenceSpanIds: ["sp_1"], confidence: 0.9, reason: "source of truth" }]);
   });
 
   it("discards unanchored, out-of-window, and missing-quote candidates", () => {
@@ -60,7 +61,7 @@ describe("createLlmMemoryExtractor falls back to deterministic for that window",
   it("returns the grounded LLM candidate when valid", async () => {
     const provider = fixedMock(objectsJson([{ type: "decision", title: "Use SQLite", body: "Chose SQLite.", evidenceSpanIds: ["sp_1"], supportingQuote: "source of truth" }]));
     const out = await createLlmMemoryExtractor(provider, { fallback: fallback() }).extract(w);
-    expect(out).toEqual([{ type: "decision", title: "Use SQLite", body: "Chose SQLite.", evidenceSpanIds: ["sp_1"], confidence: 0, reason: "source of truth" }]);
+    expect(out).toEqual([{ type: "decision", title: "Use SQLite", body: "Chose SQLite.", evidenceSpanIds: ["sp_1"], confidence: 0.9, reason: "source of truth" }]);
   });
 
   it("falls back on malformed JSON, empty output, and all-discarded output", async () => {
@@ -104,25 +105,31 @@ describe("full pipeline: LLM extraction stores needs_review with audit metadata"
       },
     }), { fallback: fallback() });
 
-  it("stores a grounded LLM candidate as needs_review and records the supportingQuote", async () => {
+  it("auto-activates a grounded, clear LLM decision and records the supportingQuote", async () => {
     const transcriptId = seed();
-    const extractor = llmExtractor((id, text) => [{ type: "decision", title: "Use SQLite as source of truth", body: "The team chose SQLite.", evidenceSpanIds: [id], supportingQuote: text }]);
+    // Body faithful to the span (strongly supported) -> auto-active.
+    const extractor = llmExtractor((id, text) => [{ type: "decision", title: "Use SQLite as source of truth", body: "We decided to use SQLite as the source of truth.", evidenceSpanIds: [id], supportingQuote: text }]);
     const result = await extractMemoryObjectsForTranscript(db, { transcriptId, extractor });
     expect(result.objectsInserted).toBe(1);
     const row = db.prepare("SELECT extraction_status, generated_text, metadata_json FROM memory_objects WHERE extraction_run_id=?").get(result.extractionRunId) as { extraction_status: string; generated_text: string; metadata_json: string };
-    expect(row.extraction_status).toBe("needs_review");
-    expect(row.generated_text).toBe("The team chose SQLite.");
+    // Clear, direct, well-grounded decision -> active automatically (no review needed).
+    expect(row.extraction_status).toBe("active");
+    expect(row.generated_text).toBe("We decided to use SQLite as the source of truth.");
     expect(JSON.parse(row.metadata_json).extraction_reason).toContain("SQLite as the source of truth");
   });
 
-  it("never promotes an LLM candidate to active even with high reported confidence", async () => {
+  it("decides status by grounding, not the LLM's self-reported confidence", async () => {
     const transcriptId = seed();
-    const extractor = llmExtractor((id, text) => [{ type: "decision", title: "Use SQLite as source of truth", body: "Chose SQLite.", evidenceSpanIds: [id], supportingQuote: text, confidence: 0.99 }]);
+    // The clear decision reports LOW confidence; the tentative proposal reports HIGH confidence. The
+    // self-reported numbers are ignored: grounding+phrasing decide. Both supportingQuotes anchor to the span.
+    const extractor = llmExtractor((id, text) => [
+      { type: "decision", title: "Use SQLite as source of truth", body: "We decided to use SQLite as the source of truth.", evidenceSpanIds: [id], supportingQuote: text, confidence: 0.01 },
+      { type: "decision", title: "Maybe switch the store later", body: "Maybe we should use PostgreSQL instead.", evidenceSpanIds: [id], supportingQuote: "source of truth", confidence: 0.99 },
+    ]);
     const result = await extractMemoryObjectsForTranscript(db, { transcriptId, extractor });
-    const statuses = db.prepare("SELECT extraction_status FROM memory_objects WHERE extraction_run_id=?").all(result.extractionRunId) as Array<{ extraction_status: string }>;
-    expect(statuses.length).toBeGreaterThan(0);
-    expect(statuses.every((s) => s.extraction_status === "needs_review")).toBe(true);
-    expect(statuses.some((s) => s.extraction_status === "active")).toBe(false);
+    const byBody = (needle: string) => db.prepare("SELECT extraction_status FROM memory_objects WHERE extraction_run_id=? AND generated_text LIKE ?").get(result.extractionRunId, `%${needle}%`) as { extraction_status: string };
+    expect(byBody("decided to use SQLite").extraction_status).toBe("active"); // low self-confidence, but clear+grounded
+    expect(byBody("PostgreSQL").extraction_status).toBe("needs_review"); // high self-confidence, but tentative
   });
 
   it("leaves deterministic extraction unchanged (can still auto-promote to active)", async () => {
