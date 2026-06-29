@@ -101,7 +101,7 @@ describe("post-delete generated graph cleanup", () => {
     createTranscriptsRepo(db).deleteTranscript(a.transcriptId);
     createTranscriptsRepo(db).deleteTranscript(b.transcriptId);
     const result = await generateObsidianVault(db, { outputRoot: root, cleanBeforeWrite: true, now: fixedNow });
-    const knowledge = result.files.filter((f) => ["transcript_note", "evidence_note", "memory_note", "answer_note", "conflict_note"].includes(f.logicalType));
+    const knowledge = result.files.filter((f) => ["transcript_note", "evidence_note", "memory_note", "decision_note", "answer_note", "conflict_note"].includes(f.logicalType));
     expect(knowledge).toHaveLength(0);
     expect(buildObsidianGraph(db).graph.nodes).toHaveLength(0);
   });
@@ -116,6 +116,7 @@ describe("post-delete generated graph cleanup", () => {
     expect(graphNodeIds()).not.toContain(`memory:${seed.memoryId}`);
     const result = await generateObsidianVault(db, { outputRoot: root, cleanBeforeWrite: true, now: fixedNow });
     expect(result.files.some((f) => f.logicalType === "memory_note" && f.entityId === seed.memoryId)).toBe(false);
+    expect(result.files.some((f) => f.logicalType === "decision_note" && f.entityId === seed.memoryId)).toBe(false);
   });
 
   it("5. a memory backed by a surviving transcript stays active and connected in the graph", () => {

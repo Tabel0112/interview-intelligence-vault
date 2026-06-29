@@ -1,6 +1,7 @@
 import type { SqliteDatabase } from "../db/connection.js";
 import { renderEvidenceCitation } from "./citations.js";
 import { frontmatter, generatedWarning, makeGeneratedFile } from "./markdown.js";
+import { MEMORY_HAS_GRAPH_EVIDENCE_SQL } from "./liveEvidence.js";
 import { entityPath, wikiLink } from "./paths.js";
 import type { GeneratedFile } from "./types.js";
 
@@ -9,6 +10,7 @@ export function generateEntityNotes(db: SqliteDatabase): GeneratedFile[] {
   const decisions = db.prepare(`SELECT id,title,generated_text,status FROM memory_objects
     WHERE COALESCE(extraction_type,type)='decision' AND duplicate_of_id IS NULL AND status NOT IN ('superseded','rejected')
       AND (extraction_status IS NULL OR extraction_status NOT IN ('superseded','rejected'))
+      AND ${MEMORY_HAS_GRAPH_EVIDENCE_SQL}
     ORDER BY id`).all() as Array<Record<string, unknown>>;
   const graphNotes = graphRows.map((row) => {
     const kind = row.node_type === "entity" ? "person" : "topic";

@@ -5887,6 +5887,7 @@ function generateEntityNotes(db) {
   const decisions = db.prepare(`SELECT id,title,generated_text,status FROM memory_objects
     WHERE COALESCE(extraction_type,type)='decision' AND duplicate_of_id IS NULL AND status NOT IN ('superseded','rejected')
       AND (extraction_status IS NULL OR extraction_status NOT IN ('superseded','rejected'))
+      AND ${MEMORY_HAS_GRAPH_EVIDENCE_SQL}
     ORDER BY id`).all();
   const graphNotes = graphRows.map((row) => {
     const kind = row.node_type === "entity" ? "person" : "topic";
