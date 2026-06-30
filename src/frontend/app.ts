@@ -71,7 +71,10 @@ export async function mountObsidianUi(root: HTMLElement, api: FrontendApi, navig
   root.addEventListener("submit", (event) => {
     event.preventDefault();
     const form = event.target as HTMLFormElement;
-    const data = new FormData(form);
+    // Build FormData WITH the submitter so a clicked submit button's name/value (e.g. the review form's
+    // decision=approve|reject, where Dismiss is the reject button) is captured. Plain `new FormData(form)`
+    // omits submit-button entries, which previously made `decision` always read as approve.
+    const data = new FormData(form, (event as SubmitEvent).submitter);
     const result = form.parentElement?.querySelector<HTMLElement>("[data-form-result]");
     const loading = form.parentElement?.querySelector<HTMLElement>("[data-loading-message]");
     const action = form.dataset.action;

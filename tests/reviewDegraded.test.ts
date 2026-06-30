@@ -1,6 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRepositories, createTranscriptsRepo, openDatabase, type SqliteDatabase } from "../src/db/index.js";
-import { createSqliteFrontendApi, renderRoute, routeHref, type FrontendApi } from "../src/frontend/index.js";
+import { createSqliteFrontendApi, mountObsidianUi, renderRoute, routeHref, type FrontendApi, type ObsidianNavigation } from "../src/frontend/index.js";
 import { importTranscript } from "../src/ingest/index.js";
 import { linkMemoryObjectToSpan } from "../src/provenance/index.js";
 
@@ -107,5 +107,65 @@ describe("Review rendering for degraded memories", () => {
     const html = await renderRoute(api, routeHref.memory(m.memoryId));
     expect(html).toContain('value="approve"');
     expect(html).toContain('value="reject"');
+  });
+});
+
+// The submit handler must read the clicked submit button's value (the Dismiss button is the reject button).
+// A minimal form-shaped host (no jsdom): the dispatched submit event carries a `submitter`, and a FormData
+// stub honoring the submitter mirrors `new FormData(form, submitter)`.
+class FormHost extends EventTarget {
+  innerHTML = "";
+  dataset: { action?: string } = {};
+  fields: Record<string, string> = {};
+  parentElement = { querySelector: () => ({ textContent: "", innerHTML: "", hidden: true }) };
+  closest() { return null; }
+}
+class SubmitterFormData {
+  constructor(private form: FormHost, private submitter?: { value?: string } | null) {}
+  get(name: string) { return name === "decision" ? (this.submitter?.value ?? null) : (this.form.fields[name] ?? null); }
+  getAll() { return []; }
+}
+const navStub = (): ObsidianNavigation => ({
+  openDashboard: vi.fn(async () => undefined), openUpload: vi.fn(async () => undefined), openTranscript: vi.fn(async () => undefined),
+  openAskAI: vi.fn(async () => undefined), openAnswer: vi.fn(async () => undefined), openEvidence: vi.fn(async () => undefined),
+  openMemoryObject: vi.fn(async () => undefined), openGraph: vi.fn(async () => undefined), openSearch: vi.fn(async () => undefined), openReviewQueue: vi.fn(async () => undefined),
+});
+
+async function clickDecision(memoryId: string, decision: "approve" | "reject") {
+  const spy = vi.spyOn(api, "reviewMemoryObject");
+  const prev = globalThis.FormData;
+  (globalThis as unknown as { FormData: unknown }).FormData = SubmitterFormData;
+  try {
+    const host = new FormHost();
+    await mountObsidianUi(host as unknown as HTMLElement, api, navStub(), routeHref.reviewQueue());
+    host.dataset.action = "review";
+    host.fields = { memoryId };
+    const event = new Event("submit");
+    Object.defineProperty(event, "submitter", { value: { value: decision } });
+    host.dispatchEvent(event);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  } finally {
+    (globalThis as unknown as { FormData: unknown }).FormData = prev;
+  }
+  return spy;
+}
+
+describe("Review Dismiss button submits reject (FormData submitter)", () => {
+  it("2/3/4/5/6. Dismiss on a degraded memory calls reviewMemoryObject(id, 'reject'), rejecting + removing it", async () => {
+    const c = seedReviewMemory("C.txt", "Pat: Maybe avoid SQLite.", "Avoid SQLite");
+    createTranscriptsRepo(db).deleteTranscript(c.transcriptId);
+    const spy = await clickDecision(c.memoryId, "reject"); // the Dismiss button's value is "reject"
+    expect(spy).toHaveBeenCalledWith(c.memoryId, "reject");
+    expect((db.prepare("SELECT status FROM memory_objects WHERE id=?").get(c.memoryId) as { status: string }).status).toBe("rejected");
+    expect(await memItem(c.memoryId)).toBeUndefined(); // gone from Review
+    const html = await renderRoute(api, routeHref.reviewQueue());
+    expect(html).not.toContain(c.memoryId);
+  });
+
+  it("7. normal Reject still routes to reject (decision read from the submitter, not defaulted to approve)", async () => {
+    const m = seedReviewMemory("A.txt", "Alex: Use SQLite.", "Use SQLite");
+    const spy = await clickDecision(m.memoryId, "reject");
+    expect(spy).toHaveBeenCalledWith(m.memoryId, "reject");
+    expect((db.prepare("SELECT status FROM memory_objects WHERE id=?").get(m.memoryId) as { status: string }).status).toBe("rejected");
   });
 });

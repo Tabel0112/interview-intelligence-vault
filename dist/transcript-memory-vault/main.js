@@ -5806,7 +5806,7 @@ async function mountObsidianUi(root, api, navigation, initialTarget, onMutation,
   root.addEventListener("submit", (event) => {
     event.preventDefault();
     const form = event.target;
-    const data = new FormData(form);
+    const data = new FormData(form, event.submitter);
     const result = form.parentElement?.querySelector("[data-form-result]");
     const loading = form.parentElement?.querySelector("[data-loading-message]");
     const action = form.dataset.action;
