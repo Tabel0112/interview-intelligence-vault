@@ -191,6 +191,7 @@ export function toAnswerBundle(response: AskAIResponse, options: { brokenCitatio
     warnings.push("Sources conflict; both sides are preserved with citations.");
   }
   if (broken.size > 0) warnings.push(`${broken.size} citation pointer(s) no longer resolve.`);
+  if (response.analysisUnavailable) warnings.push("AI analysis could not be generated for this answer; the transcript-backed evidence above is unaffected.");
   if (analysis.length) warnings.push("This answer includes AI analysis that is not from your transcripts and is not cited evidence.");
   if (unconfirmed.length) warnings.push("This answer includes unconfirmed/review-only/tentative/conflict context that is NOT confirmed transcript-backed fact.");
 

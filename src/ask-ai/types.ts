@@ -224,6 +224,11 @@ export interface AskAIResponse {
   /** True when live AI analysis was produced for this response (live-only; not reconstructed). */
   hasAnalysis?: boolean;
   /**
+   * LIVE-ONLY: true when optional AI analysis was permitted but failed to generate and was skipped, so
+   * the evidence-driven answer was returned without it. Surfaces a non-secret warning; never persisted.
+   */
+  analysisUnavailable?: boolean;
+  /**
    * LIVE-ONLY unconfirmed/tentative/conflict context (sub-step A). Surfaced only when the answer contract
    * allows; never a supported claim or normal citation. NOT persisted yet, so a reconstructed answer omits
    * it (the rendered markdown still carries the sections) until sub-step B adds a separate table.

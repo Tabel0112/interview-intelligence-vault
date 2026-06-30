@@ -43,7 +43,16 @@ export async function generateClaimsFromEvidence(
     try {
       const llmClaims = await options.llm.generateClaims({ query, evidence });
       if (llmClaims.length) { options.onSynthesis?.("llm"); proposed = llmClaims; }
-      else if (options.requireLlm) { throw new SynthesisFailedError(); }
+      else if (options.requireLlm) {
+        // The LLM CALL SUCCEEDED but produced no grounded claims — it declined because the selected
+        // evidence does not actually support a confident answer, or every proposed claim failed the
+        // grounding gate (e.g. fabricated/ungrounded quotes were discarded). That is a legitimate,
+        // evidence-driven NO-EVIDENCE refusal, NOT a synthesis failure: return no claims so the pipeline
+        // renders a safe refusal (never a fabricated answer). Only an ACTUAL call failure — a thrown
+        // LlmSynthesisError from a malformed response/HTTP error/timeout, caught below — is `llm_failed`.
+        options.onSynthesis?.("llm");
+        return [];
+      }
       else { options.onSynthesis?.("deterministic"); proposed = deterministicClaims(); }
     } catch (error) {
       if (error instanceof SynthesisFailedError) throw error;

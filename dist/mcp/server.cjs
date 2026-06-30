@@ -895,7 +895,8 @@ async function generateClaimsFromEvidence(query, evidence, citations, options) {
         options.onSynthesis?.("llm");
         proposed = llmClaims;
       } else if (options.requireLlm) {
-        throw new SynthesisFailedError();
+        options.onSynthesis?.("llm");
+        return [];
       } else {
         options.onSynthesis?.("deterministic");
         proposed = deterministicClaims();
@@ -3631,13 +3632,22 @@ async function askAI(request, deps) {
   const contract = query.answerContract;
   const allowAnalysis = (contract.allowGeneralReasoning || contract.allowRecommendations || contract.allowDrafting) && !contract.refuseIfNoEvidence;
   let analysis = [];
+  let analysisUnavailable = false;
   if (allowAnalysis && deps.analysis) {
-    analysis = (await deps.analysis.analyze({ query, evidence: selectedEvidence })).map((item, index) => buildAnalysisClaim(index, item));
+    try {
+      analysis = (await deps.analysis.analyze({ query, evidence: selectedEvidence })).map((item, index) => buildAnalysisClaim(index, item));
+    } catch {
+      analysisUnavailable = true;
+    }
   }
   let unconfirmed = [];
   if ((contract.includeReviewOnlyItems || contract.includeConflicts) && deps.retrieveUnconfirmed) {
-    const selectedConflictIds = new Set(conflicts.map((conflict) => conflict.id));
-    unconfirmed = (await deps.retrieveUnconfirmed(query)).filter((item) => !(item.conflictId && selectedConflictIds.has(item.conflictId)));
+    try {
+      const selectedConflictIds = new Set(conflicts.map((conflict) => conflict.id));
+      unconfirmed = (await deps.retrieveUnconfirmed(query)).filter((item) => !(item.conflictId && selectedConflictIds.has(item.conflictId)));
+    } catch {
+      unconfirmed = [];
+    }
   }
   const response = {
     id: createId("ask_"),
@@ -3654,6 +3664,7 @@ async function askAI(request, deps) {
     conflicts,
     synthesis: resolveAnswerSynthesis(deps, actualMode),
     ...analysis.length ? { analysis, hasAnalysis: true } : {},
+    ...analysisUnavailable ? { analysisUnavailable: true } : {},
     // Always present (array + boolean) so live and reconstructed answers share one contract.
     unconfirmed,
     hasUnconfirmed: unconfirmed.length > 0
@@ -5085,6 +5096,7 @@ function toAnswerBundle(response, options = {}) {
     warnings.push("Sources conflict; both sides are preserved with citations.");
   }
   if (broken.size > 0) warnings.push(`${broken.size} citation pointer(s) no longer resolve.`);
+  if (response.analysisUnavailable) warnings.push("AI analysis could not be generated for this answer; the transcript-backed evidence above is unaffected.");
   if (analysis.length) warnings.push("This answer includes AI analysis that is not from your transcripts and is not cited evidence.");
   if (unconfirmed.length) warnings.push("This answer includes unconfirmed/review-only/tentative/conflict context that is NOT confirmed transcript-backed fact.");
   const conflicts = response.conflicts.map((conflict) => ({

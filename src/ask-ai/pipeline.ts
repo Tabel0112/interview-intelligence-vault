@@ -60,8 +60,17 @@ export async function askAI(request: AskAIRequest, deps: AskAIDependencies): Pro
   const contract = query.answerContract;
   const allowAnalysis = (contract.allowGeneralReasoning || contract.allowRecommendations || contract.allowDrafting) && !contract.refuseIfNoEvidence;
   let analysis: AskAIAnalysisClaim[] = [];
+  let analysisUnavailable = false;
   if (allowAnalysis && deps.analysis) {
-    analysis = (await deps.analysis.analyze({ query, evidence: selectedEvidence })).map((item, index) => buildAnalysisClaim(index, item));
+    try {
+      analysis = (await deps.analysis.analyze({ query, evidence: selectedEvidence })).map((item, index) => buildAnalysisClaim(index, item));
+    } catch {
+      // AI analysis is OPTIONAL, non-transcript enrichment. If it fails (provider error/timeout/bad
+      // shape), degrade gracefully: keep the evidence-driven answer (cited claims or refusal) plus any
+      // unconfirmed context, and flag that analysis was unavailable — never fail the whole answer for it.
+      // No secrets are surfaced (the error is swallowed; only a boolean flag remains).
+      analysisUnavailable = true;
+    }
   }
   // LIVE-ONLY unconfirmed/tentative/conflict surfacing (sub-step A). Gated on the contract — factual_lookup
   // and strict summary have neither flag, so they never enter here and their refusal is unchanged. Conflicts
@@ -69,8 +78,12 @@ export async function askAI(request: AskAIRequest, deps: AskAIDependencies): Pro
   // added to `claims`; never persisted in sub-step A.
   let unconfirmed: AskAIUnconfirmedItem[] = [];
   if ((contract.includeReviewOnlyItems || contract.includeConflicts) && deps.retrieveUnconfirmed) {
-    const selectedConflictIds = new Set(conflicts.map((conflict) => conflict.id));
-    unconfirmed = (await deps.retrieveUnconfirmed(query)).filter((item) => !(item.conflictId && selectedConflictIds.has(item.conflictId)));
+    try {
+      const selectedConflictIds = new Set(conflicts.map((conflict) => conflict.id));
+      unconfirmed = (await deps.retrieveUnconfirmed(query)).filter((item) => !(item.conflictId && selectedConflictIds.has(item.conflictId)));
+    } catch {
+      unconfirmed = []; // optional supplemental context; never fail the answer because this retrieval failed
+    }
   }
   const response: AskAIResponse = {
     id: createId("ask_"), question: request.question,
@@ -80,6 +93,7 @@ export async function askAI(request: AskAIRequest, deps: AskAIDependencies): Pro
     notEnoughEvidence: confidence === "no_evidence", createdAt: timestamp.toISOString(), queryUnderstanding: query, conflicts,
     synthesis: resolveAnswerSynthesis(deps, actualMode),
     ...(analysis.length ? { analysis, hasAnalysis: true } : {}),
+    ...(analysisUnavailable ? { analysisUnavailable: true } : {}),
     // Always present (array + boolean) so live and reconstructed answers share one contract.
     unconfirmed, hasUnconfirmed: unconfirmed.length > 0,
   };

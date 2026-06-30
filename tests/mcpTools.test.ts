@@ -118,13 +118,19 @@ describe("MCP tools", () => {
     expect(await tools(groundedTransport).call("get_answer", { answer_id: "missing" })).toMatchObject({ ok: false, state: "not_found" });
   });
 
-  it("discards unsupported LLM claims and persists NO fake answer (grounding gate -> llm_failed)", async () => {
+  it("discards unsupported LLM claims and returns a safe refusal (grounding gate -> no-evidence, NOT llm_failed)", async () => {
     await seedEvidence();
     const before = count("ask_ai_runs");
-    const result = await tools(ungroundedTransport).call("ask_vault", { question: QUESTION }) as { ok: boolean; state: string };
-    expect(result).toMatchObject({ ok: false, state: "llm_failed" });
-    expect(JSON.stringify(result)).not.toContain("FABRICATED");
-    expect(count("ask_ai_runs")).toBe(before); // no fake answer persisted
+    // The LLM call SUCCEEDS but its only claim is ungrounded; the grounding gate discards it, leaving no
+    // grounded claims. That is a legitimate evidence-driven refusal (no fabricated answer), not a synthesis
+    // FAILURE — so ask_vault returns a refusal bundle, not `llm_failed`. (A real LLM call failure, exercised
+    // by failingTransport below, still maps to `llm_failed`.)
+    const result = await tools(ungroundedTransport).call("ask_vault", { question: QUESTION }) as { ok: boolean; answer_bundle: { not_enough_evidence: boolean; evidence_confidence: string; claims: unknown[] } };
+    expect(result.ok).toBe(true);
+    expect(result.answer_bundle).toMatchObject({ not_enough_evidence: true, evidence_confidence: "no_evidence" });
+    expect(result.answer_bundle.claims).toHaveLength(0); // the fabricated claim was discarded, none survived
+    expect(JSON.stringify(result)).not.toContain("FABRICATED"); // never surfaces the ungrounded text
+    expect(count("ask_ai_runs")).toBe(before + 1); // a refusal IS persisted (it is not a fake answer)
   });
 
   it("setup-required persists no answer when no LLM is configured", async () => {
