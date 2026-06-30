@@ -15,7 +15,7 @@ import { createObsidianAppApi } from "./services/ObsidianAppApi.js";
 import { GENERATED_VAULT_FOLDER, OBSIDIAN_COMMANDS, OBSIDIAN_DEDUPE_COMMAND, OBSIDIAN_REINDEX_COMMAND, OBSIDIAN_RIBBON, OBSIDIAN_SYNC_GRAPH_COMMAND, OBSIDIAN_VIEW_TYPES, type TranscriptMemoryViewType } from "./pluginTypes.js";
 import { createUnavailableFrontendApi, DESKTOP_ONLY_MESSAGE, initialPluginHealth, readableStartupError, startupSupport, type PluginHealth } from "./startup.js";
 import { DEFAULT_SETTINGS, isLlmConfigured, normalizeSettings, settingsHealthSummary, type TranscriptMemorySettings } from "./settings.js";
-import { embeddingReindexStatus, runEmbeddingReindex } from "./embeddingSettings.js";
+import { askAiEmbeddingHealth, embeddingReindexStatus, productionEmbeddingProvider, runEmbeddingReindex } from "./embeddingSettings.js";
 import { createObsidianEmbeddingTransport } from "./embeddingTransport.js";
 import { askAiSynthesisFromSettings, memoryExtractorFromSettings } from "./llmSettings.js";
 import { createObsidianLlmTransport } from "./llmTransport.js";
@@ -103,7 +103,13 @@ export default class TranscriptMemoryVaultPlugin extends Plugin {
       this.api = createObsidianAppApi(this.db, this.app.vault, this.health,
         () => askAiSynthesisFromSettings(this.pluginSettings, { transport: this.llmTransport }),
         () => memoryExtractorFromSettings(this.pluginSettings, { transport: this.llmTransport }),
-        { llmRequired: true, getLlmReady: () => isLlmConfigured(this.pluginSettings), syncGeneratedViews: () => this.syncGeneratedGraphNotesForApi() });
+        {
+          llmRequired: true, getLlmReady: () => isLlmConfigured(this.pluginSettings), syncGeneratedViews: () => this.syncGeneratedGraphNotesForApi(),
+          // Production Ask AI requires API embeddings + a matching index; never falls back to token-hash-v1.
+          embeddingsRequired: true,
+          getEmbeddingHealth: () => askAiEmbeddingHealth(this.db!, this.pluginSettings),
+          getEmbeddingProvider: () => productionEmbeddingProvider(this.pluginSettings, { transport: createObsidianEmbeddingTransport() }),
+        });
       this.refreshReindexStatus();
       if (firstRun) new Notice("Transcript Memory Vault is ready. Upload a transcript to begin.");
     } catch (error) {

@@ -19,3 +19,27 @@ export class SynthesisFailedError extends Error {
     this.name = "SynthesisFailedError";
   }
 }
+
+/**
+ * Production Ask AI requires an API embedding provider; none is configured. token-hash-v1 is a dev/test
+ * seam only and must never serve production factual answers, so this blocks rather than silently falling back.
+ */
+export class EmbeddingSetupRequiredError extends Error {
+  readonly code = "embedding_setup_required" as const;
+  constructor(message = "Configure an API embedding provider before using Ask AI. Add an embedding provider, model, dimensions, and API key in Settings.") {
+    super(message);
+    this.name = "EmbeddingSetupRequiredError";
+  }
+}
+
+/**
+ * An API embedding provider is configured, but the index was built with a different/stale provider (e.g.
+ * token-hash-v1 or a changed provider/model/dimensions). Block until the index is rebuilt.
+ */
+export class EmbeddingReindexRequiredError extends Error {
+  readonly code = "embedding_reindex_required" as const;
+  constructor(message = "Rebuild the embedding index after changing embedding provider/settings. Run \"Rebuild embedding index\".") {
+    super(message);
+    this.name = "EmbeddingReindexRequiredError";
+  }
+}

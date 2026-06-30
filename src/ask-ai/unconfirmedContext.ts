@@ -12,7 +12,7 @@
 import type { SqliteDatabase } from "../db/connection.js";
 import { createConflictRepository } from "../conflicts/index.js";
 import { createMemoryObjectsRepo } from "../db/repositories/memoryObjectsRepo.js";
-import { searchMemoryObjects } from "../retrieval/index.js";
+import { searchMemoryObjects, type EmbeddingProvider } from "../retrieval/index.js";
 import { UNCONFIRMED_DISCLAIMER, type AskAIUnconfirmedItem, type QueryUnderstanding } from "./types.js";
 
 const MEMORY_CAP = 6;
@@ -36,7 +36,7 @@ const labelFor = (kind: AskAIUnconfirmedItem["kind"]): string =>
  *   - includeConflicts       => relevant active conflicts/tensions
  * Returns [] when the contract allows neither (the pipeline also gates the call).
  */
-export async function retrieveUnconfirmedContext(db: SqliteDatabase, query: QueryUnderstanding): Promise<AskAIUnconfirmedItem[]> {
+export async function retrieveUnconfirmedContext(db: SqliteDatabase, query: QueryUnderstanding, options: { embeddingProvider?: EmbeddingProvider } = {}): Promise<AskAIUnconfirmedItem[]> {
   const contract = query.answerContract;
   const items: AskAIUnconfirmedItem[] = [];
 
@@ -48,7 +48,7 @@ export async function retrieveUnconfirmedContext(db: SqliteDatabase, query: Quer
     const memoryIds = query.intent === "conflict_risk"
       ? memoryRepo.listCanonicalMemoryObjects().filter((m) => m.status === "needs_review" || m.status === "weak").map((m) => m.id)
       : (await searchMemoryObjects(db, {
-          query: query.normalizedQuestion, mode: "hybrid", finalLimit: MEMORY_CAP * 3,
+          query: query.normalizedQuestion, mode: "hybrid", finalLimit: MEMORY_CAP * 3, embeddingProvider: options.embeddingProvider,
           filters: { memoryStatuses: ["needs_review", "weak"], includeUnsupportedMemory: true },
         })).map((candidate) => candidate.targetId);
     for (const memoryId of memoryIds) {

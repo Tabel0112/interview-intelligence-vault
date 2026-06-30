@@ -1,15 +1,16 @@
 import type { SqliteDatabase } from "../db/connection.js";
 import { createConflictRepository } from "../conflicts/index.js";
 import { getEvidenceCandidatesForTarget, scoreEvidenceBundle, type EvidenceCandidate, type EvidenceUseType } from "../evidence/index.js";
-import { searchEvidencePointers } from "../retrieval/index.js";
+import { searchEvidencePointers, type EmbeddingProvider } from "../retrieval/index.js";
 import { retrieveUnconfirmedContext } from "./unconfirmedContext.js";
 import type { QueryUnderstanding, AskAIAnalysisModel, AskAIDependencies, AskAILanguageModel, ClaimKind, SynthesisInfo } from "./types.js";
 
 const useType = (kind: ClaimKind): EvidenceUseType => kind === "fact" ? "direct_fact" : kind === "pattern" ? "pattern" : kind;
 
-async function retrieve(db: SqliteDatabase, query: QueryUnderstanding): Promise<EvidenceCandidate[]> {
+async function retrieve(db: SqliteDatabase, query: QueryUnderstanding, embeddingProvider?: EmbeddingProvider): Promise<EvidenceCandidate[]> {
   const results = await searchEvidencePointers(db, {
     query: query.normalizedQuestion, mode: "hybrid", finalLimit: 50, requireEvidencePointers: true,
+    embeddingProvider, // when configured + healthy, Ask AI does semantic (vector) retrieval, not keyword-only
     filters: {
       transcriptIds: query.transcriptIds.length ? query.transcriptIds : undefined,
       createdAfter: query.timeRange?.start, createdBefore: query.timeRange?.end,
@@ -27,15 +28,15 @@ async function retrieve(db: SqliteDatabase, query: QueryUnderstanding): Promise<
 
 export function createDatabaseAskAIDependencies(
   db: SqliteDatabase,
-  options: { now?: () => Date; llm?: AskAILanguageModel; analysis?: AskAIAnalysisModel; synthesisInfo?: SynthesisInfo; requireLlm?: boolean } = {},
+  options: { now?: () => Date; llm?: AskAILanguageModel; analysis?: AskAIAnalysisModel; synthesisInfo?: SynthesisInfo; requireLlm?: boolean; embeddingProvider?: EmbeddingProvider } = {},
 ): AskAIDependencies {
   return {
     db, now: options.now, llm: options.llm, analysis: options.analysis, synthesisInfo: options.synthesisInfo, requireLlm: options.requireLlm,
-    retrieveCandidates: (query) => retrieve(db, query),
+    retrieveCandidates: (query) => retrieve(db, query, options.embeddingProvider),
     scoreEvidence: async (question, candidates, query) => scoreEvidenceBundle({
       claimText: question, candidates, useType: useType(query.requestedClaimKinds[0] ?? "fact"), now: options.now?.().toISOString(),
     }),
     findConflicts: async (evidence) => createConflictRepository(db, { now: options.now }).listActiveForEvidencePointers(evidence.map((item) => item.evidencePointerId)),
-    retrieveUnconfirmed: (query) => retrieveUnconfirmedContext(db, query),
+    retrieveUnconfirmed: (query) => retrieveUnconfirmedContext(db, query, { embeddingProvider: options.embeddingProvider }),
   };
 }

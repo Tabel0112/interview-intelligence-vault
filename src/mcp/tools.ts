@@ -9,7 +9,7 @@
 //   - The inspection tools (search_evidence, get_memory_object, get_conflicts) return scored,
 //     provenance-backed data with `mv://` links, never secrets.
 
-import { SynthesisFailedError, SynthesisSetupRequiredError } from "../ask-ai/index.js";
+import { EmbeddingReindexRequiredError, EmbeddingSetupRequiredError, SynthesisFailedError, SynthesisSetupRequiredError } from "../ask-ai/index.js";
 import { createConflictRepository } from "../conflicts/index.js";
 import type { SqliteDatabase } from "../db/connection.js";
 import type { FrontendApi } from "../frontend/index.js";
@@ -99,6 +99,8 @@ export function createVaultTools(deps: VaultToolDeps): { definitions: McpToolDef
         } catch (error) {
           if (error instanceof SynthesisSetupRequiredError) return { ok: false, state: "setup_required", message: error.message };
           if (error instanceof SynthesisFailedError) return { ok: false, state: "llm_failed", message: error.message };
+          if (error instanceof EmbeddingSetupRequiredError) return { ok: false, state: "embedding_setup_required", message: error.message };
+          if (error instanceof EmbeddingReindexRequiredError) return { ok: false, state: "embedding_reindex_required", message: error.message };
           throw error;
         }
       },

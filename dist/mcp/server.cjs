@@ -710,6 +710,20 @@ var SynthesisFailedError = class extends Error {
     this.name = "SynthesisFailedError";
   }
 };
+var EmbeddingSetupRequiredError = class extends Error {
+  code = "embedding_setup_required";
+  constructor(message = "Configure an API embedding provider before using Ask AI. Add an embedding provider, model, dimensions, and API key in Settings.") {
+    super(message);
+    this.name = "EmbeddingSetupRequiredError";
+  }
+};
+var EmbeddingReindexRequiredError = class extends Error {
+  code = "embedding_reindex_required";
+  constructor(message = 'Rebuild the embedding index after changing embedding provider/settings. Run "Rebuild embedding index".') {
+    super(message);
+    this.name = "EmbeddingReindexRequiredError";
+  }
+};
 
 // src/ask-ai/queryUnderstanding.ts
 var unique = (values) => [...new Set(values.filter(Boolean))];
@@ -2832,7 +2846,7 @@ var sharesToken = (queryTokens, text) => {
   return false;
 };
 var labelFor = (kind) => kind === "conflict" ? "Conflict / tension" : kind === "tentative" ? "Tentative idea" : kind === "possible_duplicate" ? "Possible duplicate" : kind === "degraded" ? "Missing evidence" : "Review-only";
-async function retrieveUnconfirmedContext(db, query) {
+async function retrieveUnconfirmedContext(db, query, options = {}) {
   const contract = query.answerContract;
   const items = [];
   if (contract.includeReviewOnlyItems) {
@@ -2841,6 +2855,7 @@ async function retrieveUnconfirmedContext(db, query) {
       query: query.normalizedQuestion,
       mode: "hybrid",
       finalLimit: MEMORY_CAP * 3,
+      embeddingProvider: options.embeddingProvider,
       filters: { memoryStatuses: ["needs_review", "weak"], includeUnsupportedMemory: true }
     })).map((candidate) => candidate.targetId);
     for (const memoryId of memoryIds) {
@@ -3308,12 +3323,14 @@ function getAskAIResponse(db, id) {
 
 // src/ask-ai/dependencies.ts
 var useType = (kind) => kind === "fact" ? "direct_fact" : kind === "pattern" ? "pattern" : kind;
-async function retrieve(db, query) {
+async function retrieve(db, query, embeddingProvider) {
   const results = await searchEvidencePointers(db, {
     query: query.normalizedQuestion,
     mode: "hybrid",
     finalLimit: 50,
     requireEvidencePointers: true,
+    embeddingProvider,
+    // when configured + healthy, Ask AI does semantic (vector) retrieval, not keyword-only
     filters: {
       transcriptIds: query.transcriptIds.length ? query.transcriptIds : void 0,
       createdAfter: query.timeRange?.start,
@@ -3334,7 +3351,7 @@ function createDatabaseAskAIDependencies(db, options = {}) {
     analysis: options.analysis,
     synthesisInfo: options.synthesisInfo,
     requireLlm: options.requireLlm,
-    retrieveCandidates: (query) => retrieve(db, query),
+    retrieveCandidates: (query) => retrieve(db, query, options.embeddingProvider),
     scoreEvidence: async (question, candidates, query) => scoreEvidenceBundle({
       claimText: question,
       candidates,
@@ -3342,7 +3359,7 @@ function createDatabaseAskAIDependencies(db, options = {}) {
       now: options.now?.().toISOString()
     }),
     findConflicts: async (evidence) => createConflictRepository(db, { now: options.now }).listActiveForEvidencePointers(evidence.map((item) => item.evidencePointerId)),
-    retrieveUnconfirmed: (query) => retrieveUnconfirmedContext(db, query)
+    retrieveUnconfirmed: (query) => retrieveUnconfirmedContext(db, query, { embeddingProvider: options.embeddingProvider })
   };
 }
 
@@ -4155,6 +4172,20 @@ function generatedSyncStatus(db) {
   }
 }
 function createSqliteFrontendApi(db, options = {}) {
+  const askGated = (question, askOptions) => {
+    const synth = options.getSynthesis?.();
+    if (options.llmRequired && !synth?.llm) throw new SynthesisSetupRequiredError();
+    if (options.embeddingsRequired) {
+      const health = options.getEmbeddingHealth?.() ?? { state: "setup_required", reason: "Embedding health is unavailable." };
+      if (health.state === "setup_required") throw new EmbeddingSetupRequiredError();
+      if (health.state === "reindex_required") throw new EmbeddingReindexRequiredError();
+    }
+    const embeddingProvider = options.embeddingsRequired ? options.getEmbeddingProvider?.() : void 0;
+    return askAI(
+      { question, transcriptIds: askOptions?.transcriptIds, maxEvidenceItems: askOptions?.maxEvidence },
+      createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, analysis: synth?.analysis, synthesisInfo: synth?.info, requireLlm: options.llmRequired, embeddingProvider })
+    );
+  };
   return {
     async getDashboard() {
       const answers = db.prepare("SELECT id,question,evidence_confidence,created_at FROM ask_ai_runs ORDER BY created_at DESC,id LIMIT 8").all();
@@ -4236,14 +4267,15 @@ function createSqliteFrontendApi(db, options = {}) {
       };
     },
     async ask(question, askOptions) {
-      const synth = options.getSynthesis?.();
-      if (options.llmRequired && !synth?.llm) throw new SynthesisSetupRequiredError();
-      return askAI({ question, transcriptIds: askOptions?.transcriptIds, maxEvidenceItems: askOptions?.maxEvidence }, createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, analysis: synth?.analysis, synthesisInfo: synth?.info, requireLlm: options.llmRequired }));
+      return askGated(question, askOptions);
     },
     async askAI(question, askOptions) {
-      const synth = options.getSynthesis?.();
-      if (options.llmRequired && !synth?.llm) throw new SynthesisSetupRequiredError();
-      return askAI({ question, transcriptIds: askOptions?.transcriptIds, maxEvidenceItems: askOptions?.maxEvidence }, createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, analysis: synth?.analysis, synthesisInfo: synth?.info, requireLlm: options.llmRequired }));
+      return askGated(question, askOptions);
+    },
+    async getEmbeddingStatus() {
+      const required = !!options.embeddingsRequired;
+      const health = options.getEmbeddingHealth?.();
+      return { required, state: required ? health?.state ?? "setup_required" : "ok", reason: health?.reason };
     },
     async getAnswer(id) {
       try {
@@ -4806,6 +4838,8 @@ function createVaultTools(deps) {
         } catch (error) {
           if (error instanceof SynthesisSetupRequiredError) return { ok: false, state: "setup_required", message: error.message };
           if (error instanceof SynthesisFailedError) return { ok: false, state: "llm_failed", message: error.message };
+          if (error instanceof EmbeddingSetupRequiredError) return { ok: false, state: "embedding_setup_required", message: error.message };
+          if (error instanceof EmbeddingReindexRequiredError) return { ok: false, state: "embedding_reindex_required", message: error.message };
           throw error;
         }
       }

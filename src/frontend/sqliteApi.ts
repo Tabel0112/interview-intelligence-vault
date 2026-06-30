@@ -1,4 +1,8 @@
-import { askAI, createDatabaseAskAIDependencies, getAskAIResponse, SynthesisSetupRequiredError, type AskAIAnalysisModel, type AskAILanguageModel, type SynthesisInfo } from "../ask-ai/index.js";
+import { askAI, createDatabaseAskAIDependencies, EmbeddingReindexRequiredError, EmbeddingSetupRequiredError, getAskAIResponse, SynthesisSetupRequiredError, type AskAIAnalysisModel, type AskAILanguageModel, type AskAIResponse, type SynthesisInfo } from "../ask-ai/index.js";
+import type { EmbeddingProvider } from "../retrieval/index.js";
+
+/** Read-only production-readiness of Ask AI embeddings (resolved by the plugin from settings). */
+export type EmbeddingHealth = { state: "ok" | "setup_required" | "reindex_required"; reason: string };
 import { createConflictRepository } from "../conflicts/index.js";
 import type { SqliteDatabase } from "../db/connection.js";
 import { createCorrectionsRepo } from "../db/repositories/correctionsRepo.js";
@@ -228,12 +232,39 @@ export function createSqliteFrontendApi(
     /** Current-settings readiness (no construction); used for setup-required UI. */
     getLlmReady?: () => boolean;
     /**
+     * Live app: require a production API embedding provider with a matching index before Ask AI answers.
+     * When true, Ask AI blocks (setup_required / reindex_required) instead of silently using token-hash-v1.
+     * Tests/dev leave this false, preserving deterministic keyword-only retrieval without API keys.
+     */
+    embeddingsRequired?: boolean;
+    /** Read-only embedding health (no network, no reindex). Required when `embeddingsRequired` is true. */
+    getEmbeddingHealth?: () => EmbeddingHealth;
+    /** The live external embedding provider for retrieval (never the token-hash fallback). Undefined => none. */
+    getEmbeddingProvider?: () => EmbeddingProvider | undefined;
+    /**
      * Injected by the Obsidian plugin (which knows the on-disk vault path) to write the generated
      * Markdown view layer. Headless/MCP callers leave this unset -> syncGeneratedGraphNotes is unavailable.
      */
     syncGeneratedViews?: () => Promise<GeneratedSyncResult>;
   } = {},
 ): FrontendApi {
+  // Shared Ask AI entrypoint with the production gates. Order: LLM gate -> embedding gate -> answer.
+  const askGated = (question: string, askOptions?: { transcriptIds?: string[]; maxEvidence?: number }): Promise<AskAIResponse> => {
+    const synth = options.getSynthesis?.();
+    // LLM-required: with no LLM configured, refuse with setup-required before answering (no deterministic answer).
+    if (options.llmRequired && !synth?.llm) throw new SynthesisSetupRequiredError();
+    // Embedding-required (production): block factual answers unless an API embedding provider is configured and
+    // the index matches it. token-hash-v1 is never used for production answers (no silent fallback).
+    if (options.embeddingsRequired) {
+      const health = options.getEmbeddingHealth?.() ?? { state: "setup_required" as const, reason: "Embedding health is unavailable." };
+      if (health.state === "setup_required") throw new EmbeddingSetupRequiredError();
+      if (health.state === "reindex_required") throw new EmbeddingReindexRequiredError();
+    }
+    // When healthy, pass the live external embedding provider so retrieval is semantic, not keyword-only.
+    const embeddingProvider = options.embeddingsRequired ? options.getEmbeddingProvider?.() : undefined;
+    return askAI({ question, transcriptIds: askOptions?.transcriptIds, maxEvidenceItems: askOptions?.maxEvidence },
+      createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, analysis: synth?.analysis, synthesisInfo: synth?.info, requireLlm: options.llmRequired, embeddingProvider }));
+  };
   return {
     async getDashboard(): Promise<DashboardView> {
       const answers = db.prepare("SELECT id,question,evidence_confidence,created_at FROM ask_ai_runs ORDER BY created_at DESC,id LIMIT 8").all() as Row[];
@@ -309,16 +340,12 @@ export function createSqliteFrontendApi(
         })),
       };
     },
-    async ask(question, askOptions) {
-      const synth = options.getSynthesis?.();
-      // LLM-required: with no LLM configured, refuse with setup-required before answering (no deterministic answer).
-      if (options.llmRequired && !synth?.llm) throw new SynthesisSetupRequiredError();
-      return askAI({ question, transcriptIds: askOptions?.transcriptIds, maxEvidenceItems: askOptions?.maxEvidence }, createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, analysis: synth?.analysis, synthesisInfo: synth?.info, requireLlm: options.llmRequired }));
-    },
-    async askAI(question, askOptions) {
-      const synth = options.getSynthesis?.();
-      if (options.llmRequired && !synth?.llm) throw new SynthesisSetupRequiredError();
-      return askAI({ question, transcriptIds: askOptions?.transcriptIds, maxEvidenceItems: askOptions?.maxEvidence }, createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, analysis: synth?.analysis, synthesisInfo: synth?.info, requireLlm: options.llmRequired }));
+    async ask(question, askOptions) { return askGated(question, askOptions); },
+    async askAI(question, askOptions) { return askGated(question, askOptions); },
+    async getEmbeddingStatus() {
+      const required = !!options.embeddingsRequired;
+      const health = options.getEmbeddingHealth?.();
+      return { required, state: required ? (health?.state ?? "setup_required") : "ok", reason: health?.reason };
     },
     async getAnswer(id) {
       try {

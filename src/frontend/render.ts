@@ -245,6 +245,17 @@ export async function renderPage(context: PageContext): Promise<RenderedPage> {
           <p>Ask AI answers only from your transcripts, with citations — but it needs a configured external LLM to generate the answer. Add a provider, model, and API key in the plugin Settings.</p>
           ${links([{ href: routeHref.dashboard(), label: "Open dashboard" }])}</section>`) };
       }
+      // Production embedding gate: block factual answers until an API embedding provider is configured and the
+      // index matches it (token-hash-v1 is dev/test only, never a production retrieval path).
+      const embedding = (await api.getEmbeddingStatus?.()) ?? { required: false, state: "ok" as const };
+      if (embedding.required && embedding.state !== "ok") {
+        const setup = embedding.state === "setup_required";
+        return { title: "Ask AI", html: appShell("Ask AI", `${claudeDesktopBanner}<section class="trust-warning ask-setup-required">${trustBadge("no_evidence", setup ? "Embeddings required" : "Reindex required")}<h2>${setup ? "Set up an API embedding provider to use Ask AI" : "Rebuild the embedding index to use Ask AI"}</h2>
+          <p>${setup
+            ? "Ask AI uses semantic retrieval over your transcripts and needs a configured API embedding provider (provider, model, dimensions, API key) in Settings. token-hash-v1 is a dev/test seam, not a production retrieval path."
+            : "The embedding index was built with a different or stale provider (e.g. after changing embedding settings). Run the \"Rebuild embedding index\" command before Ask AI can answer."}${embedding.reason ? ` ${escapeHtml(embedding.reason)}` : ""}</p>
+          ${links([{ href: routeHref.dashboard(), label: "Open dashboard" }])}</section>`) };
+      }
       const transcripts = (await api.listTranscripts()).slice(0, 100);
       return { title: "Ask AI", html: appShell("Ask AI", `${claudeDesktopBanner}<aside class="immutable-notice">Ask AI retrieves and scores evidence before answering. Weak or conflicting evidence remains visibly labeled.</aside>
         <form data-action="ask"><label>Question <textarea name="question" required></textarea></label>

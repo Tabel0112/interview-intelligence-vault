@@ -8,7 +8,7 @@
 import type { SqliteDatabase } from "../db/index.js";
 import {
   detectReindexNeeded, rebuildRetrievalIndex, resolveEmbeddingProvider, TOKEN_HASH_MODEL,
-  type EmbeddingProviderResolution, type EmbeddingTransport, type ExternalEmbeddingConfig, type ReindexAssessment,
+  type EmbeddingProvider, type EmbeddingProviderResolution, type EmbeddingTransport, type ExternalEmbeddingConfig, type ReindexAssessment,
 } from "../retrieval/index.js";
 import { isExternalEmbeddingProvider, type TranscriptMemorySettings } from "./settings.js";
 
@@ -116,4 +116,36 @@ export async function runEmbeddingReindex(
   const result = await rebuildRetrievalIndex(db, { embeddingProvider: resolution.provider });
   const assessment = detectReindexNeeded(db, resolution.provider);
   return { summary: summarizeResolution(resolution), result, assessment };
+}
+
+export type AskAiEmbeddingHealthState = "ok" | "setup_required" | "reindex_required";
+export interface AskAiEmbeddingHealth { state: AskAiEmbeddingHealthState; reason: string; }
+
+/**
+ * Read-only PRODUCTION-readiness check for Ask AI embeddings. Uses the EXTERNAL config directly (never the
+ * token-hash fallback), so a vault with no API embeddings is `setup_required` and a vault still indexed under
+ * a different/stale space (e.g. token-hash-v1, or a changed provider/model/dimensions) is `reindex_required`.
+ * Never constructs a live provider, never calls the network, never reindexes, never writes anything.
+ */
+export function askAiEmbeddingHealth(db: SqliteDatabase, settings: TranscriptMemorySettings): AskAiEmbeddingHealth {
+  const external = externalEmbeddingConfigFromSettings(settings);
+  if (!external) {
+    return { state: "setup_required", reason: "No API embedding provider is configured. token-hash-v1 is dev/test only and is not used for production Ask AI answers." };
+  }
+  // Decide against the external SPACE only (no provider construction / no transport / no network).
+  const assessment = detectReindexNeeded(db, { provider: external.provider, model: external.model, dimensions: external.dimensions });
+  if (assessment.needsReindex) {
+    return { state: "reindex_required", reason: assessment.reasons.join(" ") || "The embedding index does not match the configured API embedding provider. Rebuild the embedding index." };
+  }
+  return { state: "ok", reason: "Embedding index matches the configured API embedding provider." };
+}
+
+/**
+ * The LIVE external embedding provider for production Ask AI retrieval, or `undefined` when none is configured.
+ * NEVER returns the token-hash-v1 fallback (so token-hash is never passed as a production provider). A mock
+ * transport may be injected in tests; production passes the Obsidian requestUrl transport.
+ */
+export function productionEmbeddingProvider(settings: TranscriptMemorySettings, options: { transport?: EmbeddingTransport } = {}): EmbeddingProvider | undefined {
+  const resolution = resolveEmbeddingProviderFromSettings(settings, options);
+  return resolution.usedFallback ? undefined : resolution.provider;
 }

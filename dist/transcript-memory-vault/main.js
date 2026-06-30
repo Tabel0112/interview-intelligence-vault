@@ -1602,6 +1602,20 @@ var SynthesisFailedError = class extends Error {
     this.name = "SynthesisFailedError";
   }
 };
+var EmbeddingSetupRequiredError = class extends Error {
+  code = "embedding_setup_required";
+  constructor(message = "Configure an API embedding provider before using Ask AI. Add an embedding provider, model, dimensions, and API key in Settings.") {
+    super(message);
+    this.name = "EmbeddingSetupRequiredError";
+  }
+};
+var EmbeddingReindexRequiredError = class extends Error {
+  code = "embedding_reindex_required";
+  constructor(message = 'Rebuild the embedding index after changing embedding provider/settings. Run "Rebuild embedding index".') {
+    super(message);
+    this.name = "EmbeddingReindexRequiredError";
+  }
+};
 
 // src/ask-ai/queryUnderstanding.ts
 var unique = (values) => [...new Set(values.filter(Boolean))];
@@ -4095,7 +4109,7 @@ var sharesToken = (queryTokens, text) => {
   return false;
 };
 var labelFor = (kind) => kind === "conflict" ? "Conflict / tension" : kind === "tentative" ? "Tentative idea" : kind === "possible_duplicate" ? "Possible duplicate" : kind === "degraded" ? "Missing evidence" : "Review-only";
-async function retrieveUnconfirmedContext(db, query) {
+async function retrieveUnconfirmedContext(db, query, options = {}) {
   const contract = query.answerContract;
   const items = [];
   if (contract.includeReviewOnlyItems) {
@@ -4104,6 +4118,7 @@ async function retrieveUnconfirmedContext(db, query) {
       query: query.normalizedQuestion,
       mode: "hybrid",
       finalLimit: MEMORY_CAP * 3,
+      embeddingProvider: options.embeddingProvider,
       filters: { memoryStatuses: ["needs_review", "weak"], includeUnsupportedMemory: true }
     })).map((candidate) => candidate.targetId);
     for (const memoryId of memoryIds) {
@@ -4571,12 +4586,14 @@ function getAskAIResponse(db, id) {
 
 // src/ask-ai/dependencies.ts
 var useType = (kind) => kind === "fact" ? "direct_fact" : kind === "pattern" ? "pattern" : kind;
-async function retrieve(db, query) {
+async function retrieve(db, query, embeddingProvider) {
   const results = await searchEvidencePointers(db, {
     query: query.normalizedQuestion,
     mode: "hybrid",
     finalLimit: 50,
     requireEvidencePointers: true,
+    embeddingProvider,
+    // when configured + healthy, Ask AI does semantic (vector) retrieval, not keyword-only
     filters: {
       transcriptIds: query.transcriptIds.length ? query.transcriptIds : void 0,
       createdAfter: query.timeRange?.start,
@@ -4597,7 +4614,7 @@ function createDatabaseAskAIDependencies(db, options = {}) {
     analysis: options.analysis,
     synthesisInfo: options.synthesisInfo,
     requireLlm: options.requireLlm,
-    retrieveCandidates: (query) => retrieve(db, query),
+    retrieveCandidates: (query) => retrieve(db, query, options.embeddingProvider),
     scoreEvidence: async (question, candidates, query) => scoreEvidenceBundle({
       claimText: question,
       candidates,
@@ -4605,7 +4622,7 @@ function createDatabaseAskAIDependencies(db, options = {}) {
       now: options.now?.().toISOString()
     }),
     findConflicts: async (evidence) => createConflictRepository(db, { now: options.now }).listActiveForEvidencePointers(evidence.map((item) => item.evidencePointerId)),
-    retrieveUnconfirmed: (query) => retrieveUnconfirmedContext(db, query)
+    retrieveUnconfirmed: (query) => retrieveUnconfirmedContext(db, query, { embeddingProvider: options.embeddingProvider })
   };
 }
 
@@ -5420,6 +5437,20 @@ function generatedSyncStatus(db) {
   }
 }
 function createSqliteFrontendApi(db, options = {}) {
+  const askGated = (question, askOptions) => {
+    const synth = options.getSynthesis?.();
+    if (options.llmRequired && !synth?.llm) throw new SynthesisSetupRequiredError();
+    if (options.embeddingsRequired) {
+      const health = options.getEmbeddingHealth?.() ?? { state: "setup_required", reason: "Embedding health is unavailable." };
+      if (health.state === "setup_required") throw new EmbeddingSetupRequiredError();
+      if (health.state === "reindex_required") throw new EmbeddingReindexRequiredError();
+    }
+    const embeddingProvider = options.embeddingsRequired ? options.getEmbeddingProvider?.() : void 0;
+    return askAI(
+      { question, transcriptIds: askOptions?.transcriptIds, maxEvidenceItems: askOptions?.maxEvidence },
+      createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, analysis: synth?.analysis, synthesisInfo: synth?.info, requireLlm: options.llmRequired, embeddingProvider })
+    );
+  };
   return {
     async getDashboard() {
       const answers = db.prepare("SELECT id,question,evidence_confidence,created_at FROM ask_ai_runs ORDER BY created_at DESC,id LIMIT 8").all();
@@ -5501,14 +5532,15 @@ function createSqliteFrontendApi(db, options = {}) {
       };
     },
     async ask(question, askOptions) {
-      const synth = options.getSynthesis?.();
-      if (options.llmRequired && !synth?.llm) throw new SynthesisSetupRequiredError();
-      return askAI({ question, transcriptIds: askOptions?.transcriptIds, maxEvidenceItems: askOptions?.maxEvidence }, createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, analysis: synth?.analysis, synthesisInfo: synth?.info, requireLlm: options.llmRequired }));
+      return askGated(question, askOptions);
     },
     async askAI(question, askOptions) {
-      const synth = options.getSynthesis?.();
-      if (options.llmRequired && !synth?.llm) throw new SynthesisSetupRequiredError();
-      return askAI({ question, transcriptIds: askOptions?.transcriptIds, maxEvidenceItems: askOptions?.maxEvidence }, createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, analysis: synth?.analysis, synthesisInfo: synth?.info, requireLlm: options.llmRequired }));
+      return askGated(question, askOptions);
+    },
+    async getEmbeddingStatus() {
+      const required = !!options.embeddingsRequired;
+      const health = options.getEmbeddingHealth?.();
+      return { required, state: required ? health?.state ?? "setup_required" : "ok", reason: health?.reason };
     },
     async getAnswer(id) {
       try {
@@ -5834,6 +5866,13 @@ async function renderPage(context) {
       if (llm.required && !llm.ready) {
         return { title: "Ask AI", html: appShell("Ask AI", `${claudeDesktopBanner}<section class="trust-warning ask-setup-required">${trustBadge("no_evidence", "LLM required")}<h2>Set up an LLM to use Ask AI</h2>
           <p>Ask AI answers only from your transcripts, with citations \u2014 but it needs a configured external LLM to generate the answer. Add a provider, model, and API key in the plugin Settings.</p>
+          ${links([{ href: routeHref.dashboard(), label: "Open dashboard" }])}</section>`) };
+      }
+      const embedding = await api.getEmbeddingStatus?.() ?? { required: false, state: "ok" };
+      if (embedding.required && embedding.state !== "ok") {
+        const setup = embedding.state === "setup_required";
+        return { title: "Ask AI", html: appShell("Ask AI", `${claudeDesktopBanner}<section class="trust-warning ask-setup-required">${trustBadge("no_evidence", setup ? "Embeddings required" : "Reindex required")}<h2>${setup ? "Set up an API embedding provider to use Ask AI" : "Rebuild the embedding index to use Ask AI"}</h2>
+          <p>${setup ? "Ask AI uses semantic retrieval over your transcripts and needs a configured API embedding provider (provider, model, dimensions, API key) in Settings. token-hash-v1 is a dev/test seam, not a production retrieval path." : 'The embedding index was built with a different or stale provider (e.g. after changing embedding settings). Run the "Rebuild embedding index" command before Ask AI can answer.'}${embedding.reason ? ` ${escapeHtml(embedding.reason)}` : ""}</p>
           ${links([{ href: routeHref.dashboard(), label: "Open dashboard" }])}</section>`) };
       }
       const transcripts = (await api.listTranscripts()).slice(0, 100);
@@ -7027,7 +7066,17 @@ var TranscriptMemoryItemView = class extends import_obsidian2.ItemView {
 
 // src/obsidian/services/ObsidianAppApi.ts
 function createObsidianAppApi(db, vault, health, getSynthesis, getMemoryExtractor, options) {
-  const api = createSqliteFrontendApi(db, { health, getSynthesis, getMemoryExtractor, llmRequired: options?.llmRequired, getLlmReady: options?.getLlmReady, syncGeneratedViews: options?.syncGeneratedViews });
+  const api = createSqliteFrontendApi(db, {
+    health,
+    getSynthesis,
+    getMemoryExtractor,
+    llmRequired: options?.llmRequired,
+    getLlmReady: options?.getLlmReady,
+    syncGeneratedViews: options?.syncGeneratedViews,
+    embeddingsRequired: options?.embeddingsRequired,
+    getEmbeddingHealth: options?.getEmbeddingHealth,
+    getEmbeddingProvider: options?.getEmbeddingProvider
+  });
   return {
     ...api,
     async uploadVaultFile(file) {
@@ -7183,6 +7232,21 @@ async function runEmbeddingReindex(db, settings, options = {}) {
   const result = await rebuildRetrievalIndex(db, { embeddingProvider: resolution.provider });
   const assessment = detectReindexNeeded(db, resolution.provider);
   return { summary: summarizeResolution(resolution), result, assessment };
+}
+function askAiEmbeddingHealth(db, settings) {
+  const external = externalEmbeddingConfigFromSettings(settings);
+  if (!external) {
+    return { state: "setup_required", reason: "No API embedding provider is configured. token-hash-v1 is dev/test only and is not used for production Ask AI answers." };
+  }
+  const assessment = detectReindexNeeded(db, { provider: external.provider, model: external.model, dimensions: external.dimensions });
+  if (assessment.needsReindex) {
+    return { state: "reindex_required", reason: assessment.reasons.join(" ") || "The embedding index does not match the configured API embedding provider. Rebuild the embedding index." };
+  }
+  return { state: "ok", reason: "Embedding index matches the configured API embedding provider." };
+}
+function productionEmbeddingProvider(settings, options = {}) {
+  const resolution = resolveEmbeddingProviderFromSettings(settings, options);
+  return resolution.usedFallback ? void 0 : resolution.provider;
 }
 
 // src/obsidian/embeddingTransport.ts
@@ -7519,7 +7583,15 @@ var TranscriptMemoryVaultPlugin = class extends import_obsidian5.Plugin {
         this.health,
         () => askAiSynthesisFromSettings(this.pluginSettings, { transport: this.llmTransport }),
         () => memoryExtractorFromSettings(this.pluginSettings, { transport: this.llmTransport }),
-        { llmRequired: true, getLlmReady: () => isLlmConfigured(this.pluginSettings), syncGeneratedViews: () => this.syncGeneratedGraphNotesForApi() }
+        {
+          llmRequired: true,
+          getLlmReady: () => isLlmConfigured(this.pluginSettings),
+          syncGeneratedViews: () => this.syncGeneratedGraphNotesForApi(),
+          // Production Ask AI requires API embeddings + a matching index; never falls back to token-hash-v1.
+          embeddingsRequired: true,
+          getEmbeddingHealth: () => askAiEmbeddingHealth(this.db, this.pluginSettings),
+          getEmbeddingProvider: () => productionEmbeddingProvider(this.pluginSettings, { transport: createObsidianEmbeddingTransport() })
+        }
       );
       this.refreshReindexStatus();
       if (firstRun) new import_obsidian5.Notice("Transcript Memory Vault is ready. Upload a transcript to begin.");

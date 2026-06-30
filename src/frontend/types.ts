@@ -186,6 +186,8 @@ export interface FrontendApi {
   reviewMemoryObject(memoryId: string, decision: "approve" | "reject"): Promise<{ status: "approved" | "rejected" | "cannot_approve"; warning?: string }>;
   /** Whether the live app requires an LLM and whether one is currently configured. */
   getLlmStatus(): Promise<{ required: boolean; ready: boolean }>;
+  /** Production Ask AI embedding readiness: setup-required / reindex-required / ok. Optional (headless: ok). */
+  getEmbeddingStatus?(): Promise<{ required: boolean; state: "ok" | "setup_required" | "reindex_required"; reason?: string }>;
   /** Run AI extraction for a transcript that has no completed run yet (e.g. imported before LLM setup). */
   runExtraction(transcriptId: string): Promise<{ status: "extracted" | "skipped" | "setup_required" | "failed"; warning?: string }>;
   /**
