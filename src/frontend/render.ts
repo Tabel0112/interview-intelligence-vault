@@ -1,5 +1,6 @@
 import { appShell, emptyState, escapeHtml, routeButton, score, trustBadge } from "./html.js";
 import { routeHref } from "./router.js";
+import { DEGRADED_MEMORY_REASON } from "./types.js";
 import type { EvidenceView, FrontendAnswerView, MemoryView, PageContext, RenderedPage, ReviewItemView, SearchResultView, TranscriptView, TrustState } from "./types.js";
 
 const section = (title: string, body: string, className = "") => `<section class="vault-section${className ? ` ${escapeHtml(className)}` : ""}"><h2>${escapeHtml(title)}</h2>${body}</section>`;
@@ -78,8 +79,11 @@ function memoryView(view: MemoryView): string {
   // A memory in a reviewable state gets the same Approve/Reject controls here as in the review queue,
   // so following a review item to its memory page is never a dead end.
   const reviewable = memory.status === "needs_review" || memory.status === "weak";
+  // Same actionability rule as the review queue: a memory with no live evidence span (e.g. its source
+  // transcript was deleted) is degraded — Approve is omitted with a warning; Reject/Dismiss stays available.
+  const hasLiveEvidence = memory.evidenceSpanIds.length > 0;
   const reviewSection = reviewable
-    ? section("Review decision", `<p>Approve to promote this memory to active, citable evidence, or Reject to remove it from Ask AI and search. Both are append-only and never edit raw transcript text.</p>${memoryReviewControls(memory.id)}`)
+    ? section("Review decision", `<p>Approve to promote this memory to active, citable evidence, or Reject to remove it from Ask AI and search. Both are append-only and never edit raw transcript text.</p>${memoryReviewControls(memory.id, { canApprove: hasLiveEvidence, degradedReason: hasLiveEvidence ? undefined : DEGRADED_MEMORY_REASON })}`)
     : "";
   return `${warning}<article class="memory-object">
     <p>${trustBadge(view.trustState)} ${escapeHtml(memory.type)} · confidence ${score(memory.confidence)} (${escapeHtml(memory.confidenceLabel)})</p>
@@ -93,16 +97,22 @@ function memoryView(view: MemoryView): string {
 
 // Approve/Reject operate on a memory object's review status via reviewMemoryObject. They are shown
 // only when the review item is safely tied to a real memory_object id — never creating fake evidence
-// or editing raw transcript text. The submit handler reads memoryId from this form.
-const memoryReviewControls = (memoryId: string): string =>
-  `<form data-action="review" class="review-actions"><input type="hidden" name="memoryId" value="${escapeHtml(memoryId)}">
-      <button type="submit" name="decision" value="approve">Approve</button>
-      <button type="submit" name="decision" value="reject">Reject</button></form><div data-form-result></div>`;
+// or editing raw transcript text. The submit handler reads memoryId from this form. A degraded memory
+// (zero live evidence, e.g. its source transcript was deleted) CANNOT be approved — Approve is omitted and
+// a clear warning is shown — but it stays dismissible via Reject so it is never a dead/actionless item.
+const memoryReviewControls = (memoryId: string, options: { canApprove?: boolean; degradedReason?: string } = {}): string => {
+  const warning = options.degradedReason
+    ? `<aside class="trust-warning">${trustBadge("no_evidence", "Evidence removed")} ${escapeHtml(options.degradedReason)}</aside>`
+    : "";
+  const approve = options.canApprove === false ? "" : `<button type="submit" name="decision" value="approve">Approve</button>`;
+  return `${warning}<form data-action="review" class="review-actions"><input type="hidden" name="memoryId" value="${escapeHtml(memoryId)}">
+      ${approve}<button type="submit" name="decision" value="reject">${options.canApprove === false ? "Reject / Dismiss" : "Reject"}</button></form><div data-form-result></div>`;
+};
 
 const reviewActions = (item: ReviewItemView): string => {
   // memory_needs_review is always a memory_object; weak_evidence may be attached to a memory_object.
   if (item.targetType === "memory_object" && (item.type === "memory_needs_review" || item.type === "weak_evidence")) {
-    return memoryReviewControls(item.targetId);
+    return memoryReviewControls(item.targetId, { canApprove: item.canApprove, degradedReason: item.degradedReason });
   }
   // Weak evidence not tied to a memory object: no safe direct Approve/Reject — explain instead.
   if (item.type === "weak_evidence") {

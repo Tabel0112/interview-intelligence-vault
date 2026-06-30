@@ -124,6 +124,9 @@ export interface SearchResultView {
 
 export type ReviewItemType = "weak_evidence" | "broken_pointer" | "memory_needs_review" | "conflict" | "user_correction";
 
+/** Shown on a degraded (zero-live-evidence) memory review item — e.g. its source transcript was deleted. */
+export const DEGRADED_MEMORY_REASON = "Evidence was removed or no longer resolves, possibly because the source transcript was deleted. This memory cannot be approved, but you can reject it to dismiss it.";
+
 export interface ReviewItemView {
   id: string;
   type: ReviewItemType;
@@ -138,6 +141,15 @@ export interface ReviewItemView {
   status: "open" | "resolved" | "dismissed";
   relatedTranscriptIds: string[];
   relatedEvidenceIds: string[];
+  /**
+   * Actionability for memory review items. A memory with no live evidence (span/pointer/link) — e.g. after
+   * its source transcript was deleted — is degraded: it cannot be approved (the trust gate requires
+   * evidence) but can be rejected to dismiss it. Undefined on non-memory items (treated as actionable).
+   */
+  hasLiveEvidence?: boolean;
+  canApprove?: boolean;
+  canReject?: boolean;
+  degradedReason?: string;
 }
 
 export interface CorrectionDraft {
@@ -171,7 +183,7 @@ export interface FrontendApi {
   listReviewItems(filter?: { type?: ReviewItemType; status?: ReviewItemView["status"] }): Promise<ReviewItemView[]>;
   getReviewItem(id: string): Promise<ReviewItemView | null>;
   submitCorrection(input: CorrectionDraft): Promise<{ correctionId: string; status: "received" }>;
-  reviewMemoryObject(memoryId: string, decision: "approve" | "reject"): Promise<{ status: "approved" | "rejected"; warning?: string }>;
+  reviewMemoryObject(memoryId: string, decision: "approve" | "reject"): Promise<{ status: "approved" | "rejected" | "cannot_approve"; warning?: string }>;
   /** Whether the live app requires an LLM and whether one is currently configured. */
   getLlmStatus(): Promise<{ required: boolean; ready: boolean }>;
   /** Run AI extraction for a transcript that has no completed run yet (e.g. imported before LLM setup). */

@@ -1454,6 +1454,9 @@ function createRepositories(db) {
   };
 }
 
+// src/frontend/types.ts
+var DEGRADED_MEMORY_REASON = "Evidence was removed or no longer resolves, possibly because the source transcript was deleted. This memory cannot be approved, but you can reject it to dismiss it.";
+
 // src/frontend/router.ts
 var patterns = [
   { id: "dashboard", pattern: /^\/(?:dashboard\/?)?$/ },
@@ -5019,6 +5022,11 @@ function buildObsidianGraph(db) {
 }
 
 // src/frontend/sqliteApi.ts
+function memoryHasLiveEvidenceForReview(db, memoryId) {
+  return db.prepare(`SELECT
+    (SELECT COUNT(*) FROM memory_object_evidence WHERE memory_id=?) +
+    (SELECT COUNT(*) FROM evidence_pointers WHERE target_type IN ('memory_object','claim','summary') AND target_id=?) c`).get(memoryId, memoryId).c > 0;
+}
 var trust = (value) => {
   const state = String(value ?? "no_evidence");
   return ["strong", "mixed", "weak", "conflicting", "no_evidence", "broken", "needs_review", "rejected", "superseded"].includes(state) ? state : "weak";
@@ -5159,6 +5167,7 @@ function reviewItems(db) {
       const row = db.prepare("SELECT created_at FROM memory_objects WHERE id=?").get(memory.id);
       const transcriptIds = db.prepare(`SELECT DISTINCT s.transcript_id FROM transcript_spans s
         WHERE s.id IN (SELECT span_id FROM memory_object_evidence WHERE memory_id=?) ORDER BY s.transcript_id`).all(memory.id).map((item) => item.transcript_id);
+      const hasLiveEvidence = memoryHasLiveEvidenceForReview(db, memory.id);
       items.push({
         id: `memory:${memory.id}`,
         type: "memory_needs_review",
@@ -5172,7 +5181,11 @@ function reviewItems(db) {
         severity: "medium",
         status: "open",
         relatedTranscriptIds: transcriptIds,
-        relatedEvidenceIds: []
+        relatedEvidenceIds: [],
+        hasLiveEvidence,
+        canApprove: hasLiveEvidence,
+        canReject: true,
+        degradedReason: hasLiveEvidence ? void 0 : DEGRADED_MEMORY_REASON
       });
     }
   }
@@ -5442,6 +5455,9 @@ function createSqliteFrontendApi(db, options = {}) {
     async reviewMemoryObject(memoryId, decision) {
       const corrections = createCorrectionsRepo(db);
       if (decision === "approve") {
+        if (!memoryHasLiveEvidenceForReview(db, memoryId)) {
+          return { status: "cannot_approve", warning: DEGRADED_MEMORY_REASON };
+        }
         corrections.applyMemoryObjectCorrection(memoryId, { correction_type: "confirm", new_value: { status: "active" } });
         let warning;
         try {
@@ -5556,7 +5572,8 @@ function memoryView(view) {
   const memory = view.memory;
   const warning = view.trustState === "strong" ? "" : `<aside class="trust-warning">${trustBadge(view.trustState)} This memory is not independent strong truth.</aside>`;
   const reviewable = memory.status === "needs_review" || memory.status === "weak";
-  const reviewSection = reviewable ? section("Review decision", `<p>Approve to promote this memory to active, citable evidence, or Reject to remove it from Ask AI and search. Both are append-only and never edit raw transcript text.</p>${memoryReviewControls(memory.id)}`) : "";
+  const hasLiveEvidence = memory.evidenceSpanIds.length > 0;
+  const reviewSection = reviewable ? section("Review decision", `<p>Approve to promote this memory to active, citable evidence, or Reject to remove it from Ask AI and search. Both are append-only and never edit raw transcript text.</p>${memoryReviewControls(memory.id, { canApprove: hasLiveEvidence, degradedReason: hasLiveEvidence ? void 0 : DEGRADED_MEMORY_REASON })}`) : "";
   return `${warning}<article class="memory-object">
     <p>${trustBadge(view.trustState)} ${escapeHtml(memory.type)} \xB7 confidence ${score(memory.confidence)} (${escapeHtml(memory.confidenceLabel)})</p>
     <h2>${escapeHtml(memory.title || memory.type)}</h2><p>${escapeHtml(memory.body)}</p>
@@ -5566,12 +5583,15 @@ function memoryView(view) {
   ${reviewSection}
   ${section("Submit a correction", correctionForm("memory_object", memory.id))}`;
 }
-var memoryReviewControls = (memoryId) => `<form data-action="review" class="review-actions"><input type="hidden" name="memoryId" value="${escapeHtml(memoryId)}">
-      <button type="submit" name="decision" value="approve">Approve</button>
-      <button type="submit" name="decision" value="reject">Reject</button></form><div data-form-result></div>`;
+var memoryReviewControls = (memoryId, options = {}) => {
+  const warning = options.degradedReason ? `<aside class="trust-warning">${trustBadge("no_evidence", "Evidence removed")} ${escapeHtml(options.degradedReason)}</aside>` : "";
+  const approve = options.canApprove === false ? "" : `<button type="submit" name="decision" value="approve">Approve</button>`;
+  return `${warning}<form data-action="review" class="review-actions"><input type="hidden" name="memoryId" value="${escapeHtml(memoryId)}">
+      ${approve}<button type="submit" name="decision" value="reject">${options.canApprove === false ? "Reject / Dismiss" : "Reject"}</button></form><div data-form-result></div>`;
+};
 var reviewActions = (item) => {
   if (item.targetType === "memory_object" && (item.type === "memory_needs_review" || item.type === "weak_evidence")) {
-    return memoryReviewControls(item.targetId);
+    return memoryReviewControls(item.targetId, { canApprove: item.canApprove, degradedReason: item.degradedReason });
   }
   if (item.type === "weak_evidence") {
     return `<p class="trust-warning">This weak-evidence item is attached to a ${escapeHtml(item.targetType)}, not a memory object, so it has no direct Approve/Reject. Open the linked evidence and use the append-only correction below.</p>`;

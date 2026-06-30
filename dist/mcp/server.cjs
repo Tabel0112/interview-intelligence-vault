@@ -664,6 +664,9 @@ function createRepositories(db) {
   };
 }
 
+// src/frontend/types.ts
+var DEGRADED_MEMORY_REASON = "Evidence was removed or no longer resolves, possibly because the source transcript was deleted. This memory cannot be approved, but you can reject it to dismiss it.";
+
 // src/frontend/router.ts
 var OBSIDIAN_PROTOCOL_ACTION = "transcript-memory-vault";
 function toObsidianUri(mvUri, opts = {}) {
@@ -3754,6 +3757,11 @@ function buildObsidianGraph(db) {
 }
 
 // src/frontend/sqliteApi.ts
+function memoryHasLiveEvidenceForReview(db, memoryId) {
+  return db.prepare(`SELECT
+    (SELECT COUNT(*) FROM memory_object_evidence WHERE memory_id=?) +
+    (SELECT COUNT(*) FROM evidence_pointers WHERE target_type IN ('memory_object','claim','summary') AND target_id=?) c`).get(memoryId, memoryId).c > 0;
+}
 var trust = (value) => {
   const state = String(value ?? "no_evidence");
   return ["strong", "mixed", "weak", "conflicting", "no_evidence", "broken", "needs_review", "rejected", "superseded"].includes(state) ? state : "weak";
@@ -3894,6 +3902,7 @@ function reviewItems(db) {
       const row = db.prepare("SELECT created_at FROM memory_objects WHERE id=?").get(memory.id);
       const transcriptIds = db.prepare(`SELECT DISTINCT s.transcript_id FROM transcript_spans s
         WHERE s.id IN (SELECT span_id FROM memory_object_evidence WHERE memory_id=?) ORDER BY s.transcript_id`).all(memory.id).map((item) => item.transcript_id);
+      const hasLiveEvidence = memoryHasLiveEvidenceForReview(db, memory.id);
       items.push({
         id: `memory:${memory.id}`,
         type: "memory_needs_review",
@@ -3907,7 +3916,11 @@ function reviewItems(db) {
         severity: "medium",
         status: "open",
         relatedTranscriptIds: transcriptIds,
-        relatedEvidenceIds: []
+        relatedEvidenceIds: [],
+        hasLiveEvidence,
+        canApprove: hasLiveEvidence,
+        canReject: true,
+        degradedReason: hasLiveEvidence ? void 0 : DEGRADED_MEMORY_REASON
       });
     }
   }
@@ -4177,6 +4190,9 @@ function createSqliteFrontendApi(db, options = {}) {
     async reviewMemoryObject(memoryId, decision) {
       const corrections = createCorrectionsRepo(db);
       if (decision === "approve") {
+        if (!memoryHasLiveEvidenceForReview(db, memoryId)) {
+          return { status: "cannot_approve", warning: DEGRADED_MEMORY_REASON };
+        }
         corrections.applyMemoryObjectCorrection(memoryId, { correction_type: "confirm", new_value: { status: "active" } });
         let warning;
         try {

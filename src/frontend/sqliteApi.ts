@@ -13,9 +13,22 @@ import { indexTranscriptForRetrieval, removeRetrievalDocument } from "../retriev
 import { buildObsidianGraph } from "../obsidian/graphBuilder.js";
 import { resolveEvidencePointer, type EvidencePointer } from "../provenance/index.js";
 import { routeHref } from "./router.js";
+import { DEGRADED_MEMORY_REASON } from "./types.js";
 import type {
   DashboardView, EvidenceView, FrontendApi, GeneratedSyncResult, GeneratedSyncStatus, MemoryView, ReviewItemView, SearchResultView, TranscriptListItem, TranscriptView, TrustState,
 } from "./types.js";
+
+/**
+ * Live-evidence count for a memory, EXACTLY mirroring the approve trust gate (correctionsRepo): a memory is
+ * approvable iff it has >=1 memory_object_evidence row OR >=1 evidence_pointer targeting it. After its source
+ * transcript is deleted both are gone, so this returns false and the memory is degraded (reject-only).
+ */
+function memoryHasLiveEvidenceForReview(db: SqliteDatabase, memoryId: string): boolean {
+  return (db.prepare(`SELECT
+    (SELECT COUNT(*) FROM memory_object_evidence WHERE memory_id=?) +
+    (SELECT COUNT(*) FROM evidence_pointers WHERE target_type IN ('memory_object','claim','summary') AND target_id=?) c`)
+    .get(memoryId, memoryId) as { c: number }).c > 0;
+}
 import type { PluginHealth } from "../obsidian/startup.js";
 
 type Row = Record<string, unknown>;
@@ -115,11 +128,17 @@ function reviewItems(db: SqliteDatabase): ReviewItemView[] {
       const row = db.prepare("SELECT created_at FROM memory_objects WHERE id=?").get(memory.id) as { created_at: string };
       const transcriptIds = (db.prepare(`SELECT DISTINCT s.transcript_id FROM transcript_spans s
         WHERE s.id IN (SELECT span_id FROM memory_object_evidence WHERE memory_id=?) ORDER BY s.transcript_id`).all(memory.id) as Array<{ transcript_id: string }>).map((item) => item.transcript_id);
+      // Live-evidence count mirrors the approve trust gate (memory_object_evidence + evidence_pointers).
+      // A memory with zero live evidence (e.g. its source transcript was deleted) is degraded: it cannot be
+      // approved, but stays visible in Review as dismissible (Reject) so it is never a dead/actionless item.
+      const hasLiveEvidence = memoryHasLiveEvidenceForReview(db, memory.id);
       items.push({
         id: `memory:${memory.id}`, type: "memory_needs_review", title: memory.title || memory.body,
         detail: `${memory.status}; ${memory.evidenceSpanIds.length} evidence span(s)`, targetType: "memory_object", targetId: memory.id,
         trustState: memory.status, href: routeHref.memory(memory.id),
         createdAt: row.created_at, severity: "medium", status: "open", relatedTranscriptIds: transcriptIds, relatedEvidenceIds: [],
+        hasLiveEvidence, canApprove: hasLiveEvidence, canReject: true,
+        degradedReason: hasLiveEvidence ? undefined : DEGRADED_MEMORY_REASON,
       });
     }
   }
@@ -384,6 +403,12 @@ export function createSqliteFrontendApi(
     async reviewMemoryObject(memoryId, decision) {
       const corrections = createCorrectionsRepo(db);
       if (decision === "approve") {
+        // Defense-in-depth: a memory with no live evidence can NEVER be promoted (the correction trust gate
+        // would throw EvidenceRequiredError). Return a clear friendly result instead of a raw failure, and
+        // do not promote / create evidence / change status. The trust gate remains the ultimate backstop.
+        if (!memoryHasLiveEvidenceForReview(db, memoryId)) {
+          return { status: "cannot_approve", warning: DEGRADED_MEMORY_REASON };
+        }
         // Promote through the existing trust gate: append-only user correction (sets status+extraction_status
         // active and user_corrected=1; throws if no evidence exists). Then bridge + local keyword index.
         corrections.applyMemoryObjectCorrection(memoryId, { correction_type: "confirm", new_value: { status: "active" } });
