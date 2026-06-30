@@ -142,15 +142,16 @@ describe("Step 2: MCP ask_vault live bundle", () => {
   });
 });
 
-describe("Step 2: reconstruction limitation (analysis is live-only, not persisted)", () => {
-  it("8. a reconstructed advice answer is transcript-fact-only and never shows analysis as supported", async () => {
+describe("reconstructed advice answer (Step 3: analysis persists, never as supported)", () => {
+  it("8. reconstructs structured analysis but never as a supported transcript claim", async () => {
     const live = await askAI({ question: "How do I improve the business?" }, createDatabaseAskAIDependencies(db, { now, analysis: mockAnalysis }));
-    expect(live.hasAnalysis).toBe(true); // live response has analysis...
+    expect(live.hasAnalysis).toBe(true);
 
     const reconstructed = getAskAIResponse(db, live.id);
-    expect(reconstructed.analysis ?? []).toHaveLength(0); // ...but the persisted/reconstructed answer does not
-    expect(reconstructed.claims).toHaveLength(0); // no transcript-backed claims either (it was a refusal record)
-    // Nothing in the persisted answer presents the analysis as a supported claim.
+    expect(reconstructed.hasAnalysis).toBe(true); // Step 3: analysis now round-trips...
+    expect(reconstructed.analysis).toHaveLength(2);
+    expect(reconstructed.analysis!.every((a) => a.supportStatus === "ai_analysis")).toBe(true);
+    expect(reconstructed.claims).toHaveLength(0); // ...but it is NOT a transcript-backed claim
     expect(reconstructed.claims.some((c) => c.supportStatus === "supported")).toBe(false);
   });
 });

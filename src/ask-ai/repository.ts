@@ -7,7 +7,8 @@ import {
   createAnswerClaim, createCitationLinksForAnswer, linkAnswerClaimToEvidence, resolveEvidencePointer, resolveSourcePointer,
   type EvidencePointer, type EvidenceStrength, type ProvenanceEvidenceRole,
 } from "../provenance/index.js";
-import type { AskAIResponse, ClaimKind, ClaimSupportStatus } from "./types.js";
+import { AI_ANALYSIS_WARNING } from "./types.js";
+import type { AskAIAnalysisClaim, AskAIResponse, ClaimKind, ClaimSupportStatus } from "./types.js";
 import { createConflictRepository } from "../conflicts/index.js";
 
 const bundleStatus = (confidence: AskAIResponse["evidenceConfidence"]): EvidenceBundleStatus =>
@@ -102,6 +103,15 @@ export function persistAskAIResponse(db: SqliteDatabase, response: AskAIResponse
     response.conflicts.forEach((conflict) => db.prepare(
       "INSERT INTO ask_ai_run_conflicts(ask_ai_run_id,conflict_assessment_id) VALUES (?,?)",
     ).run(response.id, conflict.id));
+    // LIVE-ONLY AI analysis (Step 3): stored in a separate table with NO evidence/citation/support columns.
+    // Guard before insert so a future bug can never slip a cited/supported analysis item into persistence.
+    (response.analysis ?? []).forEach((item, index) => {
+      if (item.supportStatus !== "ai_analysis" || item.evidencePointerIds.length || item.citationIds.length) {
+        throw new ValidationError(`AI analysis item must be uncited and unsupported: ${item.id}`);
+      }
+      db.prepare(`INSERT INTO ask_ai_analysis_claims(id,ask_ai_run_id,position,kind,text,explanation,warning,metadata_json,created_at)
+        VALUES (?,?,?,?,?,?,?, '{}', ?)`).run(item.id, response.id, index, item.kind, item.text, item.explanation ?? null, item.warning, response.createdAt);
+    });
   })();
 }
 
@@ -150,12 +160,22 @@ export function getAskAIResponse(db: SqliteDatabase, id: string): AskAIResponse 
   } catch {
     synthesis = undefined;
   }
+  // LIVE-ONLY AI analysis (Step 3): reconstructed from its OWN table. supportStatus / pointers / citations
+  // are hard-coded here (the table has no such columns), so analysis can never reload as supported or cited,
+  // and never passes through reconstructClaimSupport. Old runs / Step-2-window runs have no rows -> [].
+  const analysis = (db.prepare("SELECT id,kind,text,explanation,warning FROM ask_ai_analysis_claims WHERE ask_ai_run_id=? ORDER BY position").all(id) as Array<Record<string, unknown>>)
+    .map((item): AskAIAnalysisClaim => ({
+      id: String(item.id), kind: item.kind as ClaimKind, text: String(item.text),
+      supportStatus: "ai_analysis", evidencePointerIds: [], citationIds: [],
+      warning: AI_ANALYSIS_WARNING, explanation: item.explanation == null ? undefined : String(item.explanation),
+    }));
   return {
     id, question: String(run.question), answerMarkdown: String(run.answer_markdown),
     evidenceConfidence,
     notEnoughEvidence: Boolean(run.not_enough_evidence), createdAt: String(run.created_at),
     queryUnderstanding: JSON.parse(String(run.query_understanding_json)), scoreRunId: run.score_run_id == null ? undefined : String(run.score_run_id),
     evidence,
+    ...(analysis.length ? { analysis, hasAnalysis: true } : {}),
     claims: claimRows.map((item) => {
       const claimCitations = citations.filter((citation) => linkRows.some((link) => link.answer_claim_id === item.answer_claim_id && link.citation_link_id === citation.id));
       return {

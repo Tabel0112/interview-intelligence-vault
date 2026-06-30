@@ -839,7 +839,8 @@ var PACKAGED_MIGRATIONS = [
   { id: "010", name: "conflict_detection", filename: "010_conflict_detection.sql" },
   { id: "011", name: "agent_orchestration_hermes", filename: "011_agent_orchestration_hermes.sql" },
   { id: "012", name: "obsidian_views", filename: "012_obsidian_views.sql" },
-  { id: "013", name: "ask_ai_claim_support", filename: "013_ask_ai_claim_support.sql" }
+  { id: "013", name: "ask_ai_claim_support", filename: "013_ask_ai_claim_support.sql" },
+  { id: "014", name: "ask_ai_analysis", filename: "014_ask_ai_analysis.sql" }
 ];
 var PACKAGED_MIGRATION_COUNT = PACKAGED_MIGRATIONS.length;
 function validateMigrationPackage(directory = defaultMigrationDirectory()) {
@@ -2764,6 +2765,13 @@ function persistAskAIResponse(db, response) {
     response.conflicts.forEach((conflict) => db.prepare(
       "INSERT INTO ask_ai_run_conflicts(ask_ai_run_id,conflict_assessment_id) VALUES (?,?)"
     ).run(response.id, conflict.id));
+    (response.analysis ?? []).forEach((item, index) => {
+      if (item.supportStatus !== "ai_analysis" || item.evidencePointerIds.length || item.citationIds.length) {
+        throw new ValidationError(`AI analysis item must be uncited and unsupported: ${item.id}`);
+      }
+      db.prepare(`INSERT INTO ask_ai_analysis_claims(id,ask_ai_run_id,position,kind,text,explanation,warning,metadata_json,created_at)
+        VALUES (?,?,?,?,?,?,?, '{}', ?)`).run(item.id, response.id, index, item.kind, item.text, item.explanation ?? null, item.warning, response.createdAt);
+    });
   })();
 }
 function getAskAIResponse(db, id) {
@@ -2815,6 +2823,16 @@ function getAskAIResponse(db, id) {
   } catch {
     synthesis = void 0;
   }
+  const analysis = db.prepare("SELECT id,kind,text,explanation,warning FROM ask_ai_analysis_claims WHERE ask_ai_run_id=? ORDER BY position").all(id).map((item) => ({
+    id: String(item.id),
+    kind: item.kind,
+    text: String(item.text),
+    supportStatus: "ai_analysis",
+    evidencePointerIds: [],
+    citationIds: [],
+    warning: AI_ANALYSIS_WARNING,
+    explanation: item.explanation == null ? void 0 : String(item.explanation)
+  }));
   return {
     id,
     question: String(run.question),
@@ -2825,6 +2843,7 @@ function getAskAIResponse(db, id) {
     queryUnderstanding: JSON.parse(String(run.query_understanding_json)),
     scoreRunId: run.score_run_id == null ? void 0 : String(run.score_run_id),
     evidence,
+    ...analysis.length ? { analysis, hasAnalysis: true } : {},
     claims: claimRows.map((item) => {
       const claimCitations = citations.filter((citation) => linkRows.some((link) => link.answer_claim_id === item.answer_claim_id && link.citation_link_id === citation.id));
       return {
