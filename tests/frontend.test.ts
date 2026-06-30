@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { askAI, createDatabaseAskAIDependencies, type AskAIResponse } from "../src/ask-ai/index.js";
+import { askAI, createDatabaseAskAIDependencies, understandQuestion, type AskAIResponse } from "../src/ask-ai/index.js";
 import { createRepositories, openDatabase, type SqliteDatabase } from "../src/db/index.js";
 import { createSqliteFrontendApi, matchRoute, renderPage, renderRoute, routeHref, validateTranscriptUpload, type FrontendApi } from "../src/frontend/index.js";
 import { importTranscript } from "../src/ingest/index.js";
@@ -73,11 +73,7 @@ describe("frontend routes and trust rendering", () => {
       claims: hasEvidence ? [{ id: "claim_1", kind: "fact", text: "Traceable claim", supportStatus: confidence === "conflicting" ? "conflicting" : "weakly_supported", evidencePointerIds: ["evp_1"], citationIds: ["cit_1"] }] : [],
       citations: hasEvidence ? [{ id: "cit_1", label: "[1]", evidencePointerId: "evp_1", transcriptId: "tr_1", spanId: "sp_1", quotePreview: "Source", clickbackUri: "mv://evidence/evp_1" }] : [],
       evidence: hasEvidence ? [{ evidencePointerId: "evp_1", transcriptId: "tr_1", spanId: "sp_1", quotePreview: "Source", evidenceScore: 0.4, evidenceConfidence: confidence, scoringExplanation: "Traceable", clickbackUri: "mv://evidence/evp_1", stance: confidence === "conflicting" ? "opposes" : "supports", sourceKind: "raw_transcript_span" }] : [],
-      createdAt: now().toISOString(), queryUnderstanding: {
-        originalQuestion: "What is true?", normalizedQuestion: "What is true?", answerMode: "direct", detectedEntities: [],
-        detectedTopics: [], timeHints: [], requestedClaimKinds: ["fact"], needsRecommendation: false, needsComparison: false,
-        needsChronology: false, shouldUseMemoryObjects: true, shouldUseRawTranscriptSpans: true, transcriptIds: [], entityIds: [], memoryObjectIds: [],
-      }, conflicts: [],
+      createdAt: now().toISOString(), queryUnderstanding: understandQuestion("What is true?"), conflicts: [],
     });
     };
     for (const state of ["weak", "conflicting", "no_evidence"] as const) {
@@ -92,11 +88,7 @@ describe("frontend routes and trust rendering", () => {
     const unsupported = {
       id: "ask_bad", question: "Unsupported?", answerMarkdown: "Trust me", evidenceConfidence: "strong",
       claims: [], citations: [], evidence: [], suggestedFollowups: [], notEnoughEvidence: false, createdAt: now().toISOString(),
-      queryUnderstanding: {
-        originalQuestion: "Unsupported?", normalizedQuestion: "Unsupported?", answerMode: "direct", detectedEntities: [], detectedTopics: [],
-        timeHints: [], requestedClaimKinds: ["fact"], needsRecommendation: false, needsComparison: false, needsChronology: false,
-        shouldUseMemoryObjects: true, shouldUseRawTranscriptSpans: true, transcriptIds: [], entityIds: [], memoryObjectIds: [],
-      }, conflicts: [],
+      queryUnderstanding: understandQuestion("Unsupported?"), conflicts: [],
     } satisfies AskAIResponse;
     const api = { getAnswer: async () => unsupported } as unknown as FrontendApi;
     const html = await renderRoute(api, "/answers/ask_bad");

@@ -4,6 +4,37 @@ import type { ConflictAssessment } from "../conflicts/types.js";
 
 export type AskAIAnswerMode = "direct" | "exploratory" | "summary" | "recommendation";
 export type ClaimKind = "fact" | "pattern" | "inference" | "recommendation";
+
+/**
+ * Internally-detected task type for a question. Deterministic, derived from the prompt — the user never
+ * selects this. Used (in later steps) to pick the answer contract; Step 1 only classifies and exposes it.
+ */
+export type AskAIQueryIntent =
+  | "factual_lookup" | "decision_lookup" | "evidence_check" | "advice_strategy"
+  | "planning_draft" | "conflict_risk" | "comparison" | "summary" | "mixed";
+
+/**
+ * What the answer is allowed to do for a given intent. Step 1 ONLY computes and returns this metadata;
+ * nothing downstream consumes it yet, so factual lookup, refusal, scoring, and MCP/UI output are unchanged.
+ * `requireEvidenceForFactualClaims` is always true: a vault factual claim must trace to transcript evidence,
+ * regardless of intent. The other flags gate behavior that later steps will implement.
+ */
+export interface AskAIAnswerContract {
+  /** A claim about what the vault/transcripts say must be evidence-backed. Always true. */
+  requireEvidenceForFactualClaims: boolean;
+  /** May add general (clearly-labeled, uncited) reasoning beyond the transcript evidence. */
+  allowGeneralReasoning: boolean;
+  /** May produce recommendations (labeled as analysis, not transcript facts). */
+  allowRecommendations: boolean;
+  /** Refuse when there is no/insufficient transcript evidence (preserves factual-lookup refusal). */
+  refuseIfNoEvidence: boolean;
+  /** May surface review-only / tentative memories, labeled unconfirmed. */
+  includeReviewOnlyItems: boolean;
+  /** Should surface conflicts/contradictions among the evidence. */
+  includeConflicts: boolean;
+  /** May draft artifacts (plan, email, outline) from the evidence + assumptions. */
+  allowDrafting: boolean;
+}
 export type EvidenceConfidence = EvidenceStrength;
 export type ClaimSupportStatus = "supported" | "weakly_supported" | "conflicting" | "unsupported";
 
@@ -22,6 +53,10 @@ export interface QueryUnderstanding {
   originalQuestion: string;
   normalizedQuestion: string;
   answerMode: AskAIAnswerMode;
+  /** Internally-detected task type (deterministic). Step 1 metadata; not yet consumed downstream. */
+  intent: AskAIQueryIntent;
+  /** Per-intent behavior contract. Step 1 metadata; not yet consumed downstream. */
+  answerContract: AskAIAnswerContract;
   detectedEntities: string[];
   detectedTopics: string[];
   timeHints: string[];
