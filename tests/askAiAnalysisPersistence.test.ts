@@ -51,6 +51,21 @@ describe("Step 3: migration + schema", () => {
   });
 });
 
+describe("Step 3: analysis claim id is run-scoped (regression for the analysis-PK collision, migration 016)", () => {
+  it("two answers with IDENTICAL analysis text both persist + reconstruct (no PRIMARY KEY collision)", async () => {
+    // The live analysis id is a content hash unique only within a run; identical analysis across two answers
+    // (e.g. the same advice question twice) must not collide on the persisted primary key.
+    const a1 = await askAI({ question: "How do I improve the business?" }, deps());
+    const a2 = await askAI({ question: "How do I improve the business?" }, deps());
+    expect(a1.analysis?.map((x) => x.id)).toEqual(a2.analysis?.map((x) => x.id)); // deterministic ids collide across runs
+    expect(a1.id).not.toBe(a2.id);
+    // Both persisted their own analysis rows under the composite (ask_ai_run_id, id) key.
+    expect((db.prepare("SELECT COUNT(*) c FROM ask_ai_analysis_claims WHERE ask_ai_run_id=?").get(a1.id) as { c: number }).c).toBe(a1.analysis!.length);
+    expect((db.prepare("SELECT COUNT(*) c FROM ask_ai_analysis_claims WHERE ask_ai_run_id=?").get(a2.id) as { c: number }).c).toBe(a2.analysis!.length);
+    expect(getAskAIResponse(db, a2.id).analysis?.map((x) => x.text)).toEqual(a2.analysis?.map((x) => x.text));
+  });
+});
+
 describe("Step 3: persistence + reconstruction", () => {
   it("2. an answer with no analysis reconstructs with analysis=[]", async () => {
     const response = await askAI({ question: "What did we decide about SQLite?" }, deps());
