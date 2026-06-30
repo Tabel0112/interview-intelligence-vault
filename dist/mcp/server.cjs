@@ -691,6 +691,7 @@ var routeHref = {
 
 // src/ask-ai/types.ts
 var AI_ANALYSIS_WARNING = "AI analysis \u2014 not from transcript evidence";
+var UNCONFIRMED_DISCLAIMER = "These items are not confirmed transcript-backed facts. They are review-only, tentative, conflicting, or missing evidence.";
 
 // src/ask-ai/errors.ts
 var SynthesisSetupRequiredError = class extends Error {
@@ -985,147 +986,82 @@ function createLlmAskAIAnalysisModel(provider, options = {}) {
   };
 }
 
-// src/ask-ai/llmSynthesis.ts
-var LlmSynthesisError = class extends Error {
-  constructor(message, options) {
-    super(message, options);
-    this.name = "LlmSynthesisError";
-  }
+// src/conflicts/rules.ts
+var stopwords = /* @__PURE__ */ new Set(["a", "an", "and", "are", "as", "be", "but", "for", "i", "in", "is", "it", "of", "on", "or", "the", "to", "we"]);
+var conditional = /\b(if|when|unless|depending|except|only when|in uncertain|for uncertain|high[- ]confidence|low[- ]confidence)\b/i;
+var negative = /\b(no|not|never|avoid|reject|without|cannot|can't|shouldn't|mustn't|do not|don't)\b/i;
+var assertion = /\b(should|must|prefer|want|accept|use|require|allow|is|are|will)\b/i;
+var tensionPairs = [
+  [/\bautomatic|automated|speed|fast\b/i, /\bmanual|review|accurate|accuracy\b/i],
+  [/\bsimple|simplicity\b/i, /\bvisible|reviewable|auditable|transparent\b/i],
+  [/\bprivate|privacy\b/i, /\bshare|shared|collaborative\b/i]
+];
+var round = (value) => Math.round(Math.max(0, Math.min(1, value)) * 1e3) / 1e3;
+var tokens = (text) => new Set(text.toLowerCase().match(/[a-z0-9]+/g)?.filter((token) => token.length > 2 && !stopwords.has(token)) ?? []);
+var overlap = (a, b) => {
+  const left = tokens(a), right = tokens(b);
+  const shared = [...left].filter((token) => right.has(token)).length;
+  return round(shared / Math.max(1, Math.min(left.size, right.size)));
 };
-var CLAIM_KINDS = ["fact", "pattern", "inference", "recommendation"];
-var normalizeForMatch = (value) => value.toLowerCase().replace(/\s+/g, " ").trim();
-function buildSynthesisPrompt(query, evidence) {
-  const items = evidence.map((item, index) => `${index + 1}. pointerId: ${item.evidencePointerId}
-   quote: ${item.quotePreview}`).join("\n");
-  const system = [
-    "You answer questions strictly from the transcript evidence provided.",
-    "Use ONLY the listed evidence; never use outside knowledge or invent facts.",
-    "Cite evidence by its exact pointerId. Each claim must include a supportingQuote copied verbatim from one of the quotes you cite.",
-    "If the evidence does not support an answer, return an empty claims array. Respond with JSON only."
-  ].join(" ");
-  const prompt = [
-    `Question: ${query.originalQuestion}`,
-    "",
-    "Evidence:",
-    items,
-    "",
-    'Return JSON of the form: {"claims":[{"kind":"fact|pattern|inference|recommendation","text":"...","evidencePointerIds":["<pointerId>"],"supportingQuote":"<verbatim substring of a cited quote>","explanation":"<optional>"}]}'
-  ].join("\n");
-  return { system, prompt };
-}
-function parseAndGroundClaims(rawText, evidence) {
-  let parsed;
-  try {
-    parsed = JSON.parse(rawText);
-  } catch {
-    throw new LlmSynthesisError("LLM synthesis output was not valid JSON");
-  }
-  if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.claims)) {
-    throw new LlmSynthesisError("LLM synthesis output did not contain a claims array");
-  }
-  const snippetByPointer = new Map(evidence.map((item) => [item.evidencePointerId, normalizeForMatch(item.quotePreview)]));
-  const grounded = [];
-  for (const raw of parsed.claims) {
-    if (!raw || typeof raw !== "object") continue;
-    const candidate = raw;
-    const kind = candidate.kind;
-    if (typeof kind !== "string" || !CLAIM_KINDS.includes(kind)) continue;
-    const text = candidate.text;
-    if (typeof text !== "string" || !text.trim()) continue;
-    const ids = candidate.evidencePointerIds;
-    if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string")) continue;
-    const pointerIds = [...new Set(ids)].filter((id) => snippetByPointer.has(id));
-    if (!pointerIds.length) continue;
-    const quote = candidate.supportingQuote;
-    if (typeof quote !== "string" || !quote.trim()) continue;
-    const needle = normalizeForMatch(quote);
-    const anchored = needle.length > 0 && pointerIds.some((id) => snippetByPointer.get(id)?.includes(needle));
-    if (!anchored) continue;
-    const explanation = typeof candidate.explanation === "string" ? candidate.explanation : void 0;
-    grounded.push({ kind, text: text.trim(), evidencePointerIds: pointerIds, explanation });
-  }
-  return grounded;
-}
-function createLlmAskAILanguageModel(provider, options = {}) {
+function temporal(candidate) {
+  const left = candidate.leftTimestamp ? Date.parse(candidate.leftTimestamp) : Number.NaN;
+  const right = candidate.rightTimestamp ? Date.parse(candidate.rightTimestamp) : Number.NaN;
+  if (!Number.isFinite(left) || !Number.isFinite(right) || left === right) return { score: 0, newerTargetId: null, olderTargetId: null };
+  const distance = Math.min(1, Math.abs(left - right) / (1e3 * 60 * 60 * 24 * 30));
   return {
-    async generateClaims({ query, evidence }) {
-      const { system, prompt } = buildSynthesisPrompt(query, evidence);
-      const requestOptions = {};
-      if (options.timeoutMs != null) requestOptions.timeoutMs = options.timeoutMs;
-      let text;
-      try {
-        text = (await provider.complete({ system, prompt, responseFormat: "json" }, requestOptions)).text;
-      } catch {
-        throw new LlmSynthesisError("LLM synthesis request failed");
-      }
-      return parseAndGroundClaims(text, evidence);
-    }
+    score: round(distance),
+    newerTargetId: left > right ? candidate.leftTargetId : candidate.rightTargetId,
+    olderTargetId: left > right ? candidate.rightTargetId : candidate.leftTargetId
   };
 }
-
-// src/ask-ai/citations.ts
-var import_node_crypto4 = require("node:crypto");
-var stableId3 = (value) => `aic_${(0, import_node_crypto4.createHash)("sha256").update(value).digest("hex").slice(0, 24)}`;
-function buildCitations(evidence) {
-  const seen = /* @__PURE__ */ new Set();
-  return evidence.filter((item) => {
-    if (seen.has(item.evidencePointerId)) return false;
-    seen.add(item.evidencePointerId);
-    return true;
-  }).map((item, index) => ({
-    id: stableId3(item.evidencePointerId),
-    label: `[${index + 1}]`,
-    evidencePointerId: item.evidencePointerId,
-    sourcePointerId: item.sourcePointerId,
-    transcriptId: item.transcriptId,
-    spanId: item.spanId,
-    quotePreview: item.quotePreview,
-    clickbackUri: item.clickbackUri
-  }));
+function scoreConflict(candidate, kind, components, options = {}) {
+  const validated = new Set(options.validatedEvidenceIds ?? [...candidate.leftEvidenceIds, ...candidate.rightEvidenceIds]);
+  const leftValid = candidate.leftEvidenceIds.filter((id) => validated.has(id));
+  const rightValid = candidate.rightEvidenceIds.filter((id) => validated.has(id));
+  if (!leftValid.length || !rightValid.length) return round(0.15 + 0.2 * components.topicOverlap);
+  const average = (ids) => ids.reduce((sum, id) => sum + (options.evidenceScores?.[id] ?? 0.7), 0) / ids.length;
+  const quality = Math.min(average(leftValid), average(rightValid));
+  const correctionBoost = new Set(options.userCorrectionTargetIds ?? []).has(candidate.leftTargetId) || new Set(options.userCorrectionTargetIds ?? []).has(candidate.rightTargetId) ? 0.08 : 0;
+  const base = kind === "direct_contradiction" ? 0.45 + 0.2 * components.topicOverlap + 0.2 * quality + 0.15 * components.polarityOpposition : kind === "temporal_update" ? 0.4 + 0.15 * components.topicOverlap + 0.2 * quality + 0.2 * components.temporalDistance : kind === "conditional_difference" ? 0.4 + 0.15 * components.topicOverlap + 0.2 * quality + 0.15 * components.conditionality : kind === "tension" ? 0.4 + 0.2 * components.topicOverlap + 0.2 * quality : 0.15 + 0.15 * components.topicOverlap;
+  const scored = round(base + correctionBoost);
+  if (quality < 0.45) return Math.min(scored, 0.59);
+  if (quality < 0.65) return Math.min(scored, 0.79);
+  return scored;
 }
-var renderCitation = (citation) => `${citation.label}(${citation.clickbackUri})`;
-
-// src/ask-ai/answerRendering.ts
-var REFUSAL = "I don't have enough transcript-backed evidence to answer that.";
-function renderFactual(input) {
-  const citations = new Map(input.citations.map((item) => [item.id, item]));
-  const lines = input.claims.map((claim) => {
-    const links = claim.citationIds.map((id) => citations.get(id)).filter((item) => item != null).map(renderCitation);
-    if (!links.length) throw new ValidationError(`Ask AI claim has no selected citation: ${claim.id}`);
-    const label = claim.kind === "fact" ? "" : `**${claim.kind[0].toUpperCase()}${claim.kind.slice(1)}:** `;
-    return `${label}${claim.text} ${links.join(" ")}`;
-  });
-  const intro = input.confidence === "weak" ? "The evidence I found is weak, so this should be treated cautiously." : input.confidence === "conflicting" ? "The evidence conflicts, so I can't give one clean answer. Both sides are shown below." : input.confidence === "mixed" ? "The transcript evidence supports a qualified answer." : "Based on the transcript evidence:";
-  return `${intro}
-
-${lines.join("\n\n")}`;
-}
-function renderAnalysisClaim(claim) {
-  const label = `**${claim.kind[0].toUpperCase()}${claim.kind.slice(1)}:** `;
-  return `${label}${claim.text}`;
-}
-function renderAnswer(input) {
-  const analysis = input.analysis ?? [];
-  const hasFactual = input.confidence !== "no_evidence" && input.claims.length > 0;
-  const factual = hasFactual ? renderFactual(input) : "";
-  if (!analysis.length) {
-    return hasFactual ? factual : REFUSAL;
+function classifyConflictCandidate(candidate, options = {}) {
+  const topicOverlap = candidate.sharedEntities?.length || candidate.sharedTopics?.length ? 1 : overlap(candidate.leftText, candidate.rightText);
+  const leftNegative = negative.test(candidate.leftText), rightNegative = negative.test(candidate.rightText);
+  const polarityOpposition = leftNegative !== rightNegative && assertion.test(candidate.leftText) && assertion.test(candidate.rightText) ? 1 : 0;
+  const conditionality = conditional.test(candidate.leftText) || conditional.test(candidate.rightText) ? 1 : 0;
+  const temporalInfo = temporal(candidate);
+  const validated = new Set(options.validatedEvidenceIds ?? [...candidate.leftEvidenceIds, ...candidate.rightEvidenceIds]);
+  const evidenceCoverage = candidate.leftEvidenceIds.some((id) => validated.has(id)) && candidate.rightEvidenceIds.some((id) => validated.has(id)) ? 1 : 0;
+  const tension = tensionPairs.some(([left, right]) => left.test(candidate.leftText) && right.test(candidate.rightText) || right.test(candidate.leftText) && left.test(candidate.rightText));
+  const components = { topicOverlap, polarityOpposition, conditionality, temporalDistance: temporalInfo.score, evidenceCoverage };
+  let kind = "weak_or_ambiguous";
+  if (evidenceCoverage && topicOverlap >= 0.15) {
+    if (conditionality && (polarityOpposition || tension)) kind = "conditional_difference";
+    else if ((options.preferTemporalUpdate ?? candidate.preferTemporalUpdate) && temporalInfo.score > 0 && (polarityOpposition || tension)) kind = "temporal_update";
+    else if (polarityOpposition) kind = "direct_contradiction";
+    else if (tension) kind = "tension";
   }
-  const lead = hasFactual ? factual : "I don't have transcript-backed evidence for this, so the following is AI analysis, not from your transcripts.";
-  const analysisBlock = `## AI analysis \u2014 not from your transcripts
-
-${analysis.map(renderAnalysisClaim).join("\n\n")}`;
-  return `${lead}
-
-${analysisBlock}`;
-}
-
-// src/ask-ai/followups.ts
-function suggestFollowups(confidence, query) {
-  if (confidence === "no_evidence") return ["Do you want to search only within a specific transcript?", "Do you want to import more transcripts related to this topic?"];
-  if (confidence === "weak") return ["Do you want to see the exact transcript spans I found?", "Do you want to broaden the search?"];
-  if (confidence === "conflicting") return ["Do you want to compare the conflicting transcript moments?", "Do you want to review which source is newer?"];
-  return query.needsChronology ? ["Do you want the answer grouped by speaker?", "Do you want the supporting transcript clips?"] : ["Do you want a timeline of this?", "Do you want the answer grouped by speaker?", "Do you want the supporting transcript clips?"];
+  const confidence = scoreConflict(candidate, kind, components, options);
+  const labels = {
+    direct_contradiction: "The two source-backed statements directly oppose each other.",
+    tension: "The statements express competing goals or constraints.",
+    temporal_update: "The newer source-backed statement appears to update the older one.",
+    conditional_difference: "The statements differ under an explicit condition or context.",
+    weak_or_ambiguous: "The pair lacks enough shared context or source-backed evidence for a reliable conflict."
+  };
+  return {
+    kind,
+    confidence,
+    summary: `${kind.replaceAll("_", " ")} between ${candidate.leftTargetId} and ${candidate.rightTargetId}`,
+    explanation: `${labels[kind]} Topic overlap=${topicOverlap.toFixed(3)}; polarity opposition=${polarityOpposition.toFixed(3)}; conditionality=${conditionality.toFixed(3)}; temporal clarity=${temporalInfo.score.toFixed(3)}; validated-side coverage=${evidenceCoverage.toFixed(3)}; confidence=${confidence.toFixed(3)}.`,
+    componentScores: components,
+    newerTargetId: kind === "temporal_update" ? temporalInfo.newerTargetId : null,
+    olderTargetId: kind === "temporal_update" ? temporalInfo.olderTargetId : null
+  };
 }
 
 // src/provenance/pointerFormat.ts
@@ -1224,8 +1160,8 @@ function resolveSourcePointer(db, pointerUri) {
 }
 
 // src/provenance/utils.ts
-var import_node_crypto5 = require("node:crypto");
-var stableProvenanceId = (prefix, value) => `${prefix}${(0, import_node_crypto5.createHash)("sha256").update(value).digest("hex").slice(0, 24)}`;
+var import_node_crypto4 = require("node:crypto");
+var stableProvenanceId = (prefix, value) => `${prefix}${(0, import_node_crypto4.createHash)("sha256").update(value).digest("hex").slice(0, 24)}`;
 function validateScore(value, name) {
   if (value != null && (!Number.isFinite(value) || value < 0 || value > 1)) throw new ValidationError(`${name} must be between 0 and 1`);
 }
@@ -1365,84 +1301,6 @@ function createCitationLinksForAnswer(db, input) {
       return db.prepare("SELECT * FROM citation_links WHERE citation_link_id=?").get(id);
     });
   })();
-}
-
-// src/conflicts/rules.ts
-var stopwords = /* @__PURE__ */ new Set(["a", "an", "and", "are", "as", "be", "but", "for", "i", "in", "is", "it", "of", "on", "or", "the", "to", "we"]);
-var conditional = /\b(if|when|unless|depending|except|only when|in uncertain|for uncertain|high[- ]confidence|low[- ]confidence)\b/i;
-var negative = /\b(no|not|never|avoid|reject|without|cannot|can't|shouldn't|mustn't|do not|don't)\b/i;
-var assertion = /\b(should|must|prefer|want|accept|use|require|allow|is|are|will)\b/i;
-var tensionPairs = [
-  [/\bautomatic|automated|speed|fast\b/i, /\bmanual|review|accurate|accuracy\b/i],
-  [/\bsimple|simplicity\b/i, /\bvisible|reviewable|auditable|transparent\b/i],
-  [/\bprivate|privacy\b/i, /\bshare|shared|collaborative\b/i]
-];
-var round = (value) => Math.round(Math.max(0, Math.min(1, value)) * 1e3) / 1e3;
-var tokens = (text) => new Set(text.toLowerCase().match(/[a-z0-9]+/g)?.filter((token) => token.length > 2 && !stopwords.has(token)) ?? []);
-var overlap = (a, b) => {
-  const left = tokens(a), right = tokens(b);
-  const shared = [...left].filter((token) => right.has(token)).length;
-  return round(shared / Math.max(1, Math.min(left.size, right.size)));
-};
-function temporal(candidate) {
-  const left = candidate.leftTimestamp ? Date.parse(candidate.leftTimestamp) : Number.NaN;
-  const right = candidate.rightTimestamp ? Date.parse(candidate.rightTimestamp) : Number.NaN;
-  if (!Number.isFinite(left) || !Number.isFinite(right) || left === right) return { score: 0, newerTargetId: null, olderTargetId: null };
-  const distance = Math.min(1, Math.abs(left - right) / (1e3 * 60 * 60 * 24 * 30));
-  return {
-    score: round(distance),
-    newerTargetId: left > right ? candidate.leftTargetId : candidate.rightTargetId,
-    olderTargetId: left > right ? candidate.rightTargetId : candidate.leftTargetId
-  };
-}
-function scoreConflict(candidate, kind, components, options = {}) {
-  const validated = new Set(options.validatedEvidenceIds ?? [...candidate.leftEvidenceIds, ...candidate.rightEvidenceIds]);
-  const leftValid = candidate.leftEvidenceIds.filter((id) => validated.has(id));
-  const rightValid = candidate.rightEvidenceIds.filter((id) => validated.has(id));
-  if (!leftValid.length || !rightValid.length) return round(0.15 + 0.2 * components.topicOverlap);
-  const average = (ids) => ids.reduce((sum, id) => sum + (options.evidenceScores?.[id] ?? 0.7), 0) / ids.length;
-  const quality = Math.min(average(leftValid), average(rightValid));
-  const correctionBoost = new Set(options.userCorrectionTargetIds ?? []).has(candidate.leftTargetId) || new Set(options.userCorrectionTargetIds ?? []).has(candidate.rightTargetId) ? 0.08 : 0;
-  const base = kind === "direct_contradiction" ? 0.45 + 0.2 * components.topicOverlap + 0.2 * quality + 0.15 * components.polarityOpposition : kind === "temporal_update" ? 0.4 + 0.15 * components.topicOverlap + 0.2 * quality + 0.2 * components.temporalDistance : kind === "conditional_difference" ? 0.4 + 0.15 * components.topicOverlap + 0.2 * quality + 0.15 * components.conditionality : kind === "tension" ? 0.4 + 0.2 * components.topicOverlap + 0.2 * quality : 0.15 + 0.15 * components.topicOverlap;
-  const scored = round(base + correctionBoost);
-  if (quality < 0.45) return Math.min(scored, 0.59);
-  if (quality < 0.65) return Math.min(scored, 0.79);
-  return scored;
-}
-function classifyConflictCandidate(candidate, options = {}) {
-  const topicOverlap = candidate.sharedEntities?.length || candidate.sharedTopics?.length ? 1 : overlap(candidate.leftText, candidate.rightText);
-  const leftNegative = negative.test(candidate.leftText), rightNegative = negative.test(candidate.rightText);
-  const polarityOpposition = leftNegative !== rightNegative && assertion.test(candidate.leftText) && assertion.test(candidate.rightText) ? 1 : 0;
-  const conditionality = conditional.test(candidate.leftText) || conditional.test(candidate.rightText) ? 1 : 0;
-  const temporalInfo = temporal(candidate);
-  const validated = new Set(options.validatedEvidenceIds ?? [...candidate.leftEvidenceIds, ...candidate.rightEvidenceIds]);
-  const evidenceCoverage = candidate.leftEvidenceIds.some((id) => validated.has(id)) && candidate.rightEvidenceIds.some((id) => validated.has(id)) ? 1 : 0;
-  const tension = tensionPairs.some(([left, right]) => left.test(candidate.leftText) && right.test(candidate.rightText) || right.test(candidate.leftText) && left.test(candidate.rightText));
-  const components = { topicOverlap, polarityOpposition, conditionality, temporalDistance: temporalInfo.score, evidenceCoverage };
-  let kind = "weak_or_ambiguous";
-  if (evidenceCoverage && topicOverlap >= 0.15) {
-    if (conditionality && (polarityOpposition || tension)) kind = "conditional_difference";
-    else if ((options.preferTemporalUpdate ?? candidate.preferTemporalUpdate) && temporalInfo.score > 0 && (polarityOpposition || tension)) kind = "temporal_update";
-    else if (polarityOpposition) kind = "direct_contradiction";
-    else if (tension) kind = "tension";
-  }
-  const confidence = scoreConflict(candidate, kind, components, options);
-  const labels = {
-    direct_contradiction: "The two source-backed statements directly oppose each other.",
-    tension: "The statements express competing goals or constraints.",
-    temporal_update: "The newer source-backed statement appears to update the older one.",
-    conditional_difference: "The statements differ under an explicit condition or context.",
-    weak_or_ambiguous: "The pair lacks enough shared context or source-backed evidence for a reliable conflict."
-  };
-  return {
-    kind,
-    confidence,
-    summary: `${kind.replaceAll("_", " ")} between ${candidate.leftTargetId} and ${candidate.rightTargetId}`,
-    explanation: `${labels[kind]} Topic overlap=${topicOverlap.toFixed(3)}; polarity opposition=${polarityOpposition.toFixed(3)}; conditionality=${conditionality.toFixed(3)}; temporal clarity=${temporalInfo.score.toFixed(3)}; validated-side coverage=${evidenceCoverage.toFixed(3)}; confidence=${confidence.toFixed(3)}.`,
-    componentScores: components,
-    newerTargetId: kind === "temporal_update" ? temporalInfo.newerTargetId : null,
-    olderTargetId: kind === "temporal_update" ? temporalInfo.olderTargetId : null
-  };
 }
 
 // src/conflicts/repository.ts
@@ -1766,603 +1624,6 @@ function conflictEvidenceForAnswer(conflicts) {
   return [...new Map(items.map((item) => [item.evidencePointerId, item])).values()];
 }
 
-// src/ask-ai/repository.ts
-var bundleStatus = (confidence) => confidence === "no_evidence" ? "weak" : confidence;
-var answerStatus = (confidence) => confidence === "no_evidence" ? "refused_no_evidence" : confidence === "weak" ? "weak_evidence" : confidence === "conflicting" ? "conflicting_evidence" : "answered";
-var answerConfidence = (confidence) => confidence === "strong" ? "high" : confidence === "mixed" || confidence === "conflicting" ? "medium" : "low";
-var itemStance = (stance) => stance === "opposes" ? "contradicts" : stance === "qualifies" ? "qualifies" : stance === "supports" || stance === "updates" ? "supports" : "unknown";
-var pointerRole = (stance) => stance === "opposes" ? "opposition" : stance === "qualifies" ? "conditional" : stance === "supports" || stance === "updates" ? "support" : "unclear";
-var pointerStrength = (strength) => strength === "no_evidence" ? "weak" : strength;
-var reconstructClaimSupport = (stored, evidenceConfidence) => {
-  if (stored === "supported" || stored === "weakly_supported" || stored === "conflicting" || stored === "unsupported") return stored;
-  switch (evidenceConfidence) {
-    case "no_evidence":
-      return "unsupported";
-    case "conflicting":
-      return "conflicting";
-    case "weak":
-      return "weakly_supported";
-    default:
-      return "supported";
-  }
-};
-function persistAskAIResponse(db, response) {
-  db.transaction(() => {
-    const repos = createRepositories(db);
-    const bundle = repos.evidence.createEvidenceBundle({
-      purpose: "ask_ai",
-      query_text: response.queryUnderstanding.normalizedQuestion,
-      status: bundleStatus(response.evidenceConfidence),
-      overall_score: response.evidence.length ? Math.max(...response.evidence.map((item) => item.evidenceScore)) : null,
-      metadata: { ask_ai_run_id: response.id, score_run_id: response.scoreRunId ?? null }
-    });
-    response.evidence.forEach((item, index) => {
-      const pointer = resolveEvidencePointer(db, item.evidencePointerId);
-      if (!pointer.ok || pointer.evidence.transcript_id !== item.transcriptId || pointer.evidence.span_id !== item.spanId) {
-        throw new ValidationError(`Ask AI evidence pointer is broken or mismatched: ${item.evidencePointerId}`);
-      }
-      const sourcePointerId = item.sourcePointerId ?? pointer.evidence.source_pointer_uri;
-      if (!resolveSourcePointer(db, sourcePointerId).ok) throw new ValidationError(`Ask AI source pointer is broken: ${sourcePointerId}`);
-      repos.evidence.addEvidenceItem(bundle.id, {
-        span_id: item.spanId,
-        retrieval_rank: index + 1,
-        final_score: item.evidenceScore,
-        stance: itemStance(item.stance),
-        reason: item.scoringExplanation,
-        metadata: { evidence_pointer_id: item.evidencePointerId, source_pointer_id: sourcePointerId }
-      });
-    });
-    const answer = repos.answers.createAnswer({
-      id: response.id,
-      question_text: response.question,
-      answer_text: response.answerMarkdown,
-      evidence_bundle_id: bundle.id,
-      confidence: answerConfidence(response.evidenceConfidence),
-      answer_status: answerStatus(response.evidenceConfidence),
-      // Only non-secret synthesis metadata is recorded: actual mode, provider id, model id, usedFallback, reason.
-      model_name: response.synthesis?.model ?? null,
-      metadata: { ask_ai: true, score_run_id: response.scoreRunId ?? null, synthesis: response.synthesis ?? null }
-    });
-    const selected = new Map(response.evidence.map((item) => [item.evidencePointerId, item]));
-    response.claims.forEach((claim, index) => {
-      const stored = createAnswerClaim(db, { answerId: answer.id, claimText: claim.text, claimOrder: index });
-      db.prepare("INSERT INTO ask_ai_claim_metadata(answer_claim_id,kind,explanation,support_status) VALUES (?,?,?,?)").run(stored.answer_claim_id, claim.kind, claim.explanation ?? null, claim.supportStatus);
-      claim.evidencePointerIds.forEach((pointerId) => {
-        const item = selected.get(pointerId);
-        if (!item) throw new ValidationError(`Ask AI claim references unselected evidence: ${pointerId}`);
-        linkAnswerClaimToEvidence(db, {
-          answerClaimId: stored.answer_claim_id,
-          transcriptId: item.transcriptId,
-          spanId: item.spanId,
-          evidenceRole: pointerRole(item.stance),
-          evidenceStrength: pointerStrength(item.evidenceConfidence),
-          confidence: item.evidenceScore,
-          scores: { relevanceScore: item.relevanceScore, finalScore: item.evidenceScore }
-        });
-      });
-    });
-    createCitationLinksForAnswer(db, { answerId: answer.id });
-    db.prepare(`INSERT INTO ask_ai_runs(
-      id,question,normalized_question,answer_markdown,evidence_confidence,query_understanding_json,answer_id,score_run_id,not_enough_evidence,created_at
-    ) VALUES (?,?,?,?,?,?,?,?,?,?)`).run(
-      response.id,
-      response.question,
-      response.queryUnderstanding.normalizedQuestion,
-      response.answerMarkdown,
-      response.evidenceConfidence,
-      JSON.stringify(response.queryUnderstanding),
-      answer.id,
-      response.scoreRunId ?? null,
-      response.notEnoughEvidence ? 1 : 0,
-      response.createdAt
-    );
-    response.evidence.forEach((item, index) => db.prepare(`INSERT INTO ask_ai_run_evidence(
-      ask_ai_run_id,evidence_pointer_id,source_pointer_id,transcript_id,span_id,rank,evidence_score,evidence_confidence,quote_preview,scoring_explanation
-    ) VALUES (?,?,?,?,?,?,?,?,?,?)`).run(
-      response.id,
-      item.evidencePointerId,
-      item.sourcePointerId ?? null,
-      item.transcriptId,
-      item.spanId,
-      index + 1,
-      item.evidenceScore,
-      item.evidenceConfidence,
-      item.quotePreview,
-      item.scoringExplanation
-    ));
-    response.suggestedFollowups.forEach((text, index) => db.prepare(
-      "INSERT INTO ask_ai_suggested_followups(id,ask_ai_run_id,text,rank) VALUES (?,?,?,?)"
-    ).run(createId("aif_"), response.id, text, index + 1));
-    response.conflicts.forEach((conflict) => db.prepare(
-      "INSERT INTO ask_ai_run_conflicts(ask_ai_run_id,conflict_assessment_id) VALUES (?,?)"
-    ).run(response.id, conflict.id));
-    (response.analysis ?? []).forEach((item, index) => {
-      if (item.supportStatus !== "ai_analysis" || item.evidencePointerIds.length || item.citationIds.length) {
-        throw new ValidationError(`AI analysis item must be uncited and unsupported: ${item.id}`);
-      }
-      db.prepare(`INSERT INTO ask_ai_analysis_claims(id,ask_ai_run_id,position,kind,text,explanation,warning,metadata_json,created_at)
-        VALUES (?,?,?,?,?,?,?, '{}', ?)`).run(item.id, response.id, index, item.kind, item.text, item.explanation ?? null, item.warning, response.createdAt);
-    });
-  })();
-}
-function getAskAIResponse(db, id) {
-  const run = db.prepare("SELECT * FROM ask_ai_runs WHERE id=?").get(id);
-  if (!run) throw new NotFoundError(`Ask AI run not found: ${id}`);
-  const evidenceRows = db.prepare("SELECT * FROM ask_ai_run_evidence WHERE ask_ai_run_id=? ORDER BY rank").all(id);
-  const claimRows = db.prepare(`SELECT c.*,m.kind,m.explanation,m.support_status AS claim_support_status FROM answer_claims c
-    JOIN ask_ai_claim_metadata m ON m.answer_claim_id=c.answer_claim_id
-    WHERE c.answer_id=? ORDER BY c.claim_order`).all(run.answer_id);
-  const linkRows = db.prepare(`SELECT l.*,e.source_pointer_uri,e.transcript_id,e.span_id,e.quote_preview
-    FROM citation_links l JOIN evidence_pointers e ON e.evidence_pointer_id=l.evidence_pointer_id
-    WHERE l.answer_id=? ORDER BY l.citation_order`).all(run.answer_id);
-  const followups = db.prepare("SELECT text FROM ask_ai_suggested_followups WHERE ask_ai_run_id=? ORDER BY rank").all(id);
-  const conflicts = db.prepare("SELECT conflict_assessment_id FROM ask_ai_run_conflicts WHERE ask_ai_run_id=? ORDER BY conflict_assessment_id").all(id).map((row) => createConflictRepository(db).get(row.conflict_assessment_id)).filter(Boolean);
-  const evidenceConfidence = run.evidence_confidence;
-  const evidence = evidenceRows.map((item) => ({
-    evidencePointerId: String(item.evidence_pointer_id),
-    sourcePointerId: item.source_pointer_id == null ? void 0 : String(item.source_pointer_id),
-    transcriptId: String(item.transcript_id),
-    spanId: String(item.span_id),
-    quotePreview: String(item.quote_preview),
-    evidenceScore: Number(item.evidence_score),
-    evidenceConfidence: item.evidence_confidence,
-    scoringExplanation: String(item.scoring_explanation),
-    clickbackUri: `mv://evidence/${String(item.evidence_pointer_id)}`,
-    stance: "unknown",
-    sourceKind: "raw_transcript_span"
-  }));
-  const selectedBySpan = new Map(evidence.map((item) => [`${item.transcriptId}::${item.spanId}`, item]));
-  const citations = linkRows.map((item) => {
-    const selected = selectedBySpan.get(`${String(item.transcript_id)}::${String(item.span_id)}`);
-    const evidencePointerId = selected?.evidencePointerId ?? String(item.evidence_pointer_id);
-    return {
-      id: String(item.citation_link_id),
-      label: String(item.citation_label),
-      evidencePointerId,
-      sourcePointerId: selected?.sourcePointerId ?? String(item.source_pointer_uri),
-      transcriptId: String(item.transcript_id),
-      spanId: String(item.span_id),
-      quotePreview: selected?.quotePreview ?? String(item.quote_preview),
-      clickbackUri: `mv://evidence/${evidencePointerId}`
-    };
-  });
-  const answerMeta = db.prepare("SELECT metadata_json FROM ai_answers WHERE id=?").get(run.answer_id);
-  let synthesis;
-  try {
-    const parsedMeta = answerMeta?.metadata_json ? JSON.parse(answerMeta.metadata_json) : null;
-    synthesis = parsedMeta?.synthesis ?? void 0;
-  } catch {
-    synthesis = void 0;
-  }
-  const analysis = db.prepare("SELECT id,kind,text,explanation,warning FROM ask_ai_analysis_claims WHERE ask_ai_run_id=? ORDER BY position").all(id).map((item) => ({
-    id: String(item.id),
-    kind: item.kind,
-    text: String(item.text),
-    supportStatus: "ai_analysis",
-    evidencePointerIds: [],
-    citationIds: [],
-    warning: AI_ANALYSIS_WARNING,
-    explanation: item.explanation == null ? void 0 : String(item.explanation)
-  }));
-  return {
-    id,
-    question: String(run.question),
-    answerMarkdown: String(run.answer_markdown),
-    evidenceConfidence,
-    notEnoughEvidence: Boolean(run.not_enough_evidence),
-    createdAt: String(run.created_at),
-    queryUnderstanding: JSON.parse(String(run.query_understanding_json)),
-    scoreRunId: run.score_run_id == null ? void 0 : String(run.score_run_id),
-    evidence,
-    ...analysis.length ? { analysis, hasAnalysis: true } : {},
-    claims: claimRows.map((item) => {
-      const claimCitations = citations.filter((citation) => linkRows.some((link) => link.answer_claim_id === item.answer_claim_id && link.citation_link_id === citation.id));
-      return {
-        id: String(item.answer_claim_id),
-        kind: item.kind,
-        text: String(item.claim_text),
-        supportStatus: reconstructClaimSupport(item.claim_support_status, evidenceConfidence),
-        evidencePointerIds: claimCitations.map((citation) => citation.evidencePointerId),
-        citationIds: claimCitations.map((citation) => citation.id),
-        explanation: item.explanation == null ? void 0 : String(item.explanation)
-      };
-    }),
-    citations,
-    suggestedFollowups: followups.map((item) => item.text),
-    conflicts,
-    synthesis
-  };
-}
-
-// src/evidence/rules.ts
-var SCORER_VERSION = "mvp-evidence-v1";
-var USE_TYPE_WEIGHTS = {
-  direct_fact: { relevance: 0.2, directness: 0.26, specificity: 0.2, sourceStrength: 0.16, repetition: 0.04, recency: 0.04, correctionWeight: 0.06, confidence: 0.04 },
-  pattern: { relevance: 0.18, directness: 0.14, specificity: 0.12, sourceStrength: 0.15, repetition: 0.24, recency: 0.06, correctionWeight: 0.06, confidence: 0.05 },
-  inference: { relevance: 0.22, directness: 0.12, specificity: 0.14, sourceStrength: 0.18, repetition: 0.18, recency: 0.05, correctionWeight: 0.06, confidence: 0.05 },
-  recommendation: { relevance: 0.2, directness: 0.15, specificity: 0.14, sourceStrength: 0.15, repetition: 0.1, recency: 0.14, correctionWeight: 0.08, confidence: 0.04 }
-};
-var stopWords = /* @__PURE__ */ new Set(["a", "an", "and", "are", "as", "at", "be", "because", "by", "for", "from", "has", "in", "is", "it", "of", "on", "or", "that", "the", "this", "to", "was", "were", "with"]);
-var clamp = (value) => Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
-var round2 = (value) => Math.round(clamp(value) * 1e4) / 1e4;
-function tokens2(text = "") {
-  return [...new Set(text.toLowerCase().match(/[\p{L}\p{N}]+/gu)?.filter((token) => token.length > 1 && !stopWords.has(token)) ?? [])];
-}
-function lexicalCoverage(claimText, quote = "") {
-  const claim = tokens2(claimText), evidence = new Set(tokens2(quote));
-  return claim.length ? claim.filter((token) => evidence.has(token)).length / claim.length : 0;
-}
-function calculateRelevance(candidate, claimText, requiredTerms = []) {
-  const available = [candidate.retrievalScore, candidate.vectorScore, candidate.keywordScore].filter((score2) => score2 != null).map(clamp);
-  const lexical = lexicalCoverage(claimText, candidate.quote);
-  const requiredCoverage = requiredTerms.length ? requiredTerms.filter((term) => candidate.quote?.toLowerCase().includes(term.toLowerCase())).length / requiredTerms.length : lexical;
-  if (!available.length) return round2(0.75 * lexical + 0.25 * requiredCoverage);
-  const retrieval = clamp(candidate.retrievalScore ?? lexical);
-  const vector = clamp(candidate.vectorScore ?? lexical);
-  const keyword = clamp(candidate.keywordScore ?? lexical);
-  return round2(0.35 * retrieval + 0.2 * vector + 0.2 * keyword + 0.15 * lexical + 0.1 * requiredCoverage);
-}
-function calculateDirectness(candidate, useType3) {
-  if (candidate.userCorrectionStatus === "confirmed") return 1;
-  if (!candidate.spanIds.length) return 0;
-  const base = {
-    raw_transcript_span: candidate.quote ? 0.95 : 0.75,
-    user_correction: 0.9,
-    generated_summary_with_pointers: 0.62,
-    memory_object_with_pointers: 0.62,
-    graph_edge_with_pointers: 0.55,
-    answer_claim_with_pointers: 0.58
-  };
-  return round2(base[candidate.sourceKind] + (useType3 === "inference" ? 0.05 : 0));
-}
-function calculateSpecificity(candidate, claimText, requiredTerms = []) {
-  const quote = candidate.quote ?? "";
-  const coverage = lexicalCoverage(claimText, quote);
-  const claimSpecifics = tokens2(claimText).filter((token) => /\d/.test(token) || token.length >= 7);
-  const required = [.../* @__PURE__ */ new Set([...requiredTerms.map((term) => term.toLowerCase()), ...claimSpecifics])];
-  const specificCoverage = required.length ? required.filter((term) => quote.toLowerCase().includes(term)).length / required.length : coverage;
-  const concrete = /\d|(?:\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|may|june|july|august|september|october|november|december)\b)/i.test(quote) ? 0.15 : 0;
-  return round2(0.55 * coverage + 0.45 * specificCoverage + concrete);
-}
-function calculateSourceStrength(candidate) {
-  if (candidate.userCorrectionStatus === "rejected") return 0;
-  if (candidate.userCorrectionStatus === "superseded") return 0.15;
-  if (candidate.userCorrectionStatus === "confirmed") return 1;
-  if (!candidate.spanIds.length) return 0;
-  const strengths2 = {
-    raw_transcript_span: 0.95,
-    user_correction: 0.85,
-    generated_summary_with_pointers: 0.68,
-    memory_object_with_pointers: 0.68,
-    graph_edge_with_pointers: 0.65,
-    answer_claim_with_pointers: 0.62
-  };
-  return strengths2[candidate.sourceKind];
-}
-function calculateCorrectionWeight(candidate) {
-  if (candidate.userCorrectionStatus === "confirmed" || candidate.isUserCorrection) return 1;
-  if (candidate.userCorrectionStatus === "rejected" || candidate.userCorrectionStatus === "superseded") return 0;
-  return 0.5;
-}
-function calculateConfidence(candidate) {
-  const values = [candidate.sourceConfidence, candidate.extractionConfidence].filter((value) => value != null);
-  return round2(values.length ? values.reduce((sum, value) => sum + clamp(value), 0) / values.length : 0.5);
-}
-function candidateCaps(candidate, useType3, components, requiredTerms = [], claimText = "") {
-  const reasons = [];
-  let maxStrength;
-  const capWeak = (reason) => {
-    if (maxStrength !== "no_evidence") maxStrength = "weak";
-    reasons.push(reason);
-  };
-  const capNone = (reason) => {
-    maxStrength = "no_evidence";
-    reasons.push(reason);
-  };
-  if (candidate.userCorrectionStatus === "rejected") capNone("Rejected user correction is excluded");
-  else if (candidate.userCorrectionStatus === "superseded" || candidate.metadata?.superseded === true) capWeak("Superseded evidence is not current truth");
-  if (!candidate.spanIds.length && candidate.userCorrectionStatus !== "confirmed") capNone("No raw transcript span or confirmed correction");
-  if (candidate.sourceKind !== "raw_transcript_span" && candidate.sourceKind !== "user_correction" && !candidate.spanIds.length) capNone("Generated-only evidence has no raw pointers");
-  if (candidate.sourceKind !== "raw_transcript_span" && candidate.sourceKind !== "user_correction" && candidate.provenanceValidated !== true) {
-    capNone("Generated-object evidence was not validated against a raw transcript span");
-  }
-  if (components.relevance < 0.35) capWeak("Low relevance cannot establish the claim");
-  if (useType3 === "direct_fact" && components.directness < 0.5) capWeak("Direct fact lacks direct evidence");
-  if (components.specificity < 0.4) capWeak("Specific claim lacks required details");
-  if (candidate.vectorScore != null && candidate.keywordScore == null && candidate.retrievalScore == null && lexicalCoverage(claimText, candidate.quote) < 0.5) capWeak("Vector-only match cannot establish truth");
-  const memoryStatus = candidate.metadata?.canonicalMemoryStatus;
-  if (candidate.sourceKind === "memory_object_with_pointers" && memoryStatus !== void 0 && memoryStatus !== "active") capWeak("Canonical memory status is not active");
-  if (candidate.metadata?.memoryUsableAsEvidence === false || candidate.metadata?.duplicateOfId != null) capWeak("Memory object is not independently usable as strong evidence");
-  return { maxStrength, reasons };
-}
-var rank2 = { no_evidence: 0, weak: 1, mixed: 2, strong: 3, conflicting: 3 };
-function classifyEvidenceStrength(score2, caps = { reasons: [] }) {
-  let strength = score2 >= 0.78 ? "strong" : score2 >= 0.55 ? "mixed" : score2 >= 0.35 ? "weak" : "no_evidence";
-  if (caps.maxStrength && rank2[strength] > rank2[caps.maxStrength]) strength = caps.maxStrength;
-  return strength;
-}
-
-// src/evidence/repetition.ts
-var normalizeQuote = (quote = "") => quote.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
-function nearIdentical(left = "", right = "") {
-  const a = new Set(normalizeQuote(left).split(" ").filter(Boolean)), b = new Set(normalizeQuote(right).split(" ").filter(Boolean));
-  if (!a.size || !b.size) return false;
-  const intersection = [...a].filter((token) => b.has(token)).length;
-  return intersection / Math.max(a.size, b.size) >= 0.9;
-}
-function areDuplicates(left, right) {
-  if (left.evidencePointerId && left.evidencePointerId === right.evidencePointerId) return true;
-  if (left.spanIds.some((id) => right.spanIds.includes(id))) return true;
-  if (nearIdentical(left.quote, right.quote)) return true;
-  return left.transcriptId != null && left.transcriptId === right.transcriptId && left.turnTimestampStartMs != null && left.turnTimestampStartMs === right.turnTimestampStartMs && left.turnTimestampEndMs != null && left.turnTimestampEndMs === right.turnTimestampEndMs;
-}
-function deduplicateEvidenceCandidates(candidates) {
-  const accepted = [];
-  for (const candidate of candidates) {
-    if (!accepted.some((item) => areDuplicates(item, candidate))) accepted.push(candidate);
-  }
-  return accepted;
-}
-function calculateRepetitionScore(candidate, allCandidates, useType3 = "direct_fact") {
-  const sameStance = deduplicateEvidenceCandidates(allCandidates).filter((item) => (item.stance ?? "unknown") === (candidate.stance ?? "unknown"));
-  const count = sameStance.length;
-  if (useType3 === "pattern") return round2(count >= 3 ? 1 : count === 2 ? 0.78 : 0.2);
-  return round2(count >= 3 ? 1 : count === 2 ? 0.75 : 0.5);
-}
-
-// src/evidence/recency.ts
-function calculateRecencyScore(candidate, now2, useType3) {
-  const date = candidate.transcriptRecordedAt ?? candidate.createdAt;
-  if (!date || !now2) return 0.5;
-  const nowMs = Date.parse(now2), dateMs = Date.parse(date);
-  if (!Number.isFinite(nowMs) || !Number.isFinite(dateMs)) return 0.5;
-  const ageDays = Math.max(0, (nowMs - dateMs) / 864e5);
-  let score2 = ageDays <= 7 ? 1 : ageDays <= 30 ? 0.8 : ageDays <= 180 ? 0.6 : 0.4;
-  if (useType3 === "direct_fact" || useType3 === "inference") score2 = 0.5 + score2 * 0.5;
-  return round2(score2);
-}
-
-// src/evidence/explain.ts
-function explanationForStrength(strength, useType3) {
-  const subject = useType3 === "inference" ? "inference" : useType3 === "recommendation" ? "recommendation" : "claim";
-  if (strength === "strong") return `Strong evidence: the ${subject} is supported by specific source-backed evidence with no meaningful unresolved opposition.`;
-  if (strength === "mixed") return `Mixed evidence: the ${subject} has usable support, but some evidence qualifies or partially challenges it.`;
-  if (strength === "conflicting") return `Conflicting evidence: there is strong support for the ${subject}, but other source-backed evidence directly opposes it.`;
-  if (strength === "weak") return `Weak evidence: the available source-backed evidence is related, but it is not sufficient to support the ${useType3 === "pattern" ? "pattern" : subject} confidently.`;
-  return `No evidence: no usable source-backed transcript spans or confirmed corrections were found for this ${subject}.`;
-}
-function explainEvidenceScore(assessment) {
-  return explanationForStrength(assessment.strength, assessment.useType);
-}
-
-// src/evidence/scoring.ts
-var scoreOrder = { strong: 4, mixed: 3, weak: 2, conflicting: 1, no_evidence: 0 };
-var byScore = (a, b) => b.finalScore - a.finalScore || a.candidate.id.localeCompare(b.candidate.id);
-var meaningful = (item) => item.strength !== "no_evidence";
-var supportStances = /* @__PURE__ */ new Set(["supports", "updates"]);
-function scoreEvidenceCandidate(candidate, context) {
-  const stance = context.knownOppositionCandidateIds?.includes(candidate.id) ? "opposes" : candidate.stance ?? "unknown";
-  const components = {
-    relevance: calculateRelevance(candidate, context.claimText, context.requiredSpecificityTerms),
-    directness: calculateDirectness(candidate, context.useType),
-    specificity: calculateSpecificity(candidate, context.claimText, context.requiredSpecificityTerms),
-    sourceStrength: calculateSourceStrength(candidate),
-    repetition: calculateRepetitionScore({ ...candidate, stance }, context.allCandidates, context.useType),
-    recency: calculateRecencyScore(candidate, context.now, context.useType),
-    correctionWeight: calculateCorrectionWeight(candidate),
-    confidence: calculateConfidence(candidate),
-    oppositionPenalty: stance === "opposes" ? 0.05 : 0
-  };
-  const weights = USE_TYPE_WEIGHTS[context.useType];
-  const weighted = Object.entries(weights).reduce((sum, [key, weight]) => sum + components[key] * weight, 0);
-  const finalScore = round2(weighted - components.oppositionPenalty);
-  const caps = candidateCaps(candidate, context.useType, components, context.requiredSpecificityTerms, context.claimText);
-  const strength = classifyEvidenceStrength(finalScore, caps);
-  const reasons = [
-    ...caps.reasons,
-    components.relevance < 0.35 ? "Low relevance to the claim" : "",
-    components.directness < 0.5 ? "Evidence is indirect" : "",
-    components.specificity < 0.4 ? "Evidence lacks specific claim details" : "",
-    components.repetition >= 0.75 ? "Independent evidence repeats the support" : "",
-    candidate.userCorrectionStatus === "confirmed" ? "Confirmed user correction has priority" : ""
-  ].filter(Boolean);
-  return { candidate: { ...candidate, stance }, stance, components, finalScore, strength, caps, reasons };
-}
-function maxScore(items) {
-  return round2(items.length ? Math.max(...items.map((item) => item.finalScore)) : 0);
-}
-function hasExplicitPattern(candidate) {
-  return /\b(always|usually|often|repeatedly|consistently|tend(?:s)? to)\b/i.test(candidate.quote ?? "");
-}
-function passesUseTypeGate(input, support) {
-  if (input.useType === "direct_fact") return support.some((item) => item.strength === "strong" && item.components.directness >= 0.7);
-  if (input.useType === "pattern") return support.length >= 2 || support.some((item) => hasExplicitPattern(item.candidate) && item.finalScore >= 0.7);
-  if (input.useType === "inference") return support.filter((item) => item.finalScore >= 0.55).length >= 2 && maxScore(support) >= 0.82;
-  return support.some((item) => item.finalScore >= 0.72) && support.some((item) => item.components.recency >= 0.6 || item.candidate.userCorrectionStatus === "confirmed");
-}
-function hasStrongEnoughSupport(useType3, support) {
-  if (support.some((item) => item.strength === "strong")) return true;
-  if (useType3 === "pattern") return support.some((item) => hasExplicitPattern(item.candidate) && item.finalScore >= 0.7);
-  return false;
-}
-function aggregateSupportAndOpposition(input, scoredCandidates) {
-  const scoredEvidence = [...scoredCandidates].sort(byScore);
-  const usableEvidence = scoredEvidence.filter(meaningful);
-  const bestSupportingEvidence = usableEvidence.filter((item) => supportStances.has(item.stance)).sort(byScore);
-  const bestOpposingEvidence = usableEvidence.filter((item) => item.stance === "opposes").sort(byScore);
-  const qualifyingEvidence = usableEvidence.filter((item) => item.stance === "qualifies").sort(byScore);
-  const supportScore = maxScore(bestSupportingEvidence);
-  const oppositionScore = maxScore(bestOpposingEvidence);
-  const qualificationScore = maxScore(qualifyingEvidence);
-  const strongSupport = supportScore >= 0.7;
-  const strongOpposition = oppositionScore >= 0.65;
-  const comparableOpposition = oppositionScore >= Math.max(0.55, supportScore - 0.15);
-  const updateWins = bestSupportingEvidence.some((item) => item.stance === "updates" && item.finalScore >= oppositionScore);
-  const hasConflict = strongSupport && strongOpposition && comparableOpposition && !updateWins;
-  let strength;
-  if (!usableEvidence.length || !bestSupportingEvidence.length) strength = "no_evidence";
-  else if (hasConflict) strength = "conflicting";
-  else if (!passesUseTypeGate(input, bestSupportingEvidence)) strength = "weak";
-  else if (strongOpposition || bestOpposingEvidence.length || qualifyingEvidence.length || updateWins) strength = "mixed";
-  else if (hasStrongEnoughSupport(input.useType, bestSupportingEvidence)) strength = "strong";
-  else strength = "weak";
-  const reasons = [
-    !usableEvidence.length ? "No usable source-backed evidence" : "",
-    hasConflict ? "Comparable source-backed support and opposition remain unresolved" : "",
-    qualifyingEvidence.length ? "Qualifying evidence requires a caveat" : "",
-    updateWins ? "Newer or explicit update evidence changes older evidence" : "",
-    strength === "weak" && input.useType === "pattern" ? "A pattern needs repeated independent evidence or an explicit pattern statement" : "",
-    strength === "weak" && input.useType === "inference" ? "An inference needs multiple explainable supporting sources" : ""
-  ].filter(Boolean);
-  const assessment = {
-    claimText: input.claimText,
-    useType: input.useType,
-    strength,
-    supportScore,
-    oppositionScore,
-    qualificationScore,
-    bestSupportingEvidence,
-    bestOpposingEvidence,
-    qualifyingEvidence,
-    usableEvidence,
-    hasConflict,
-    scoredEvidence,
-    hasWeakEvidenceOnly: usableEvidence.length > 0 && strength === "weak",
-    hasNoEvidence: strength === "no_evidence",
-    explanation: "",
-    reasons,
-    scorerVersion: SCORER_VERSION
-  };
-  assessment.explanation = explainEvidenceScore(assessment);
-  return assessment;
-}
-function scoreEvidenceBundle(input) {
-  const duplicateIds = new Set(input.knownDuplicateCandidateIds ?? []);
-  const oppositionIds = new Set(input.knownOppositionCandidateIds ?? []);
-  const candidates = deduplicateEvidenceCandidates(input.candidates.filter((candidate) => !duplicateIds.has(candidate.id)).map((candidate) => oppositionIds.has(candidate.id) ? { ...candidate, stance: "opposes" } : candidate));
-  const context = {
-    claimText: input.claimText,
-    useType: input.useType,
-    allCandidates: candidates,
-    now: input.now,
-    knownOppositionCandidateIds: input.knownOppositionCandidateIds,
-    requiredSpecificityTerms: input.requiredSpecificityTerms
-  };
-  return aggregateSupportAndOpposition(input, candidates.map((candidate) => scoreEvidenceCandidate(candidate, context)).sort((a, b) => scoreOrder[b.strength] - scoreOrder[a.strength] || byScore(a, b)));
-}
-
-// src/evidence/repository.ts
-var pointerStance = (role) => role === "support" ? "supports" : role === "opposition" ? "opposes" : role === "conditional" ? "qualifies" : role === "neutral" ? "neutral" : "unknown";
-var memoryEvidenceStance = (role) => role === "supports" || role === "source" ? "supports" : role === "contradicts" ? "opposes" : role === "qualifies" ? "qualifies" : "neutral";
-var sourceKindForTarget = (targetType) => {
-  if (targetType === "memory_object" || targetType === "claim") return "memory_object_with_pointers";
-  if (targetType === "summary") return "generated_summary_with_pointers";
-  if (targetType === "graph_edge") return "graph_edge_with_pointers";
-  if (targetType === "graph_node") return "graph_edge_with_pointers";
-  if (targetType === "answer_claim" || targetType === "answer") return "answer_claim_with_pointers";
-  return "raw_transcript_span";
-};
-function getEvidenceCandidatesForTarget(db, targetType, targetId) {
-  const pointers = db.prepare("SELECT * FROM evidence_pointers WHERE target_type=? AND target_id=? ORDER BY created_at,evidence_pointer_id").all(targetType, targetId);
-  const memoryRow = targetType === "memory_object" || targetType === "claim" || targetType === "summary" ? db.prepare("SELECT * FROM memory_objects WHERE id=?").get(targetId) : void 0;
-  const memorySpanIds = memoryRow ? db.prepare(`SELECT span_id FROM memory_object_evidence WHERE memory_id=?
-      UNION SELECT span_id FROM evidence_pointers WHERE target_type IN ('memory_object','claim','summary') AND target_id=?`).all(targetId, targetId) : [];
-  const memory = memoryRow ? getCanonicalMemoryObject(memoryRow, memorySpanIds.map((row) => row.span_id)) : void 0;
-  const memoryMetadata = memory ? { canonicalMemoryStatus: memory.status, duplicateOfId: memory.duplicateOfId, memoryUsableAsEvidence: isUsableAsEvidence(memory) } : {};
-  const pointerCandidates = pointers.flatMap((pointer) => {
-    const resolved = resolveEvidencePointer(db, pointer.evidence_pointer_id);
-    if (!resolved.ok) return [];
-    return [{
-      id: pointer.evidence_pointer_id,
-      evidencePointerId: pointer.evidence_pointer_id,
-      transcriptId: pointer.transcript_id,
-      spanIds: [pointer.span_id],
-      quote: resolved.spanText,
-      sourceKind: sourceKindForTarget(targetType),
-      createdAt: pointer.created_at,
-      turnTimestampStartMs: resolved.source.start_ms,
-      turnTimestampEndMs: resolved.source.end_ms,
-      retrievalScore: pointer.relevance_score ?? pointer.final_score ?? void 0,
-      vectorScore: pointer.semantic_score ?? void 0,
-      keywordScore: pointer.lexical_score ?? void 0,
-      stance: pointerStance(pointer.evidence_role),
-      sourceConfidence: pointer.confidence,
-      provenanceValidated: true,
-      metadata: { ...memoryMetadata, sourcePointerId: pointer.source_pointer_uri }
-    }];
-  });
-  if (!memory) return pointerCandidates;
-  const pointerSpanIds = new Set(pointerCandidates.flatMap((candidate) => candidate.spanIds));
-  const legacyRows = db.prepare(`SELECT e.id,e.span_id,e.role,e.evidence_score,e.created_at,s.transcript_id,s.text,s.start_time_ms,s.end_time_ms
-    FROM memory_object_evidence e JOIN transcript_spans s ON s.id=e.span_id WHERE e.memory_id=? ORDER BY e.created_at,e.id`).all(targetId);
-  const legacyCandidates = legacyRows.filter((row) => !pointerSpanIds.has(row.span_id)).map((row) => ({
-    id: row.id,
-    transcriptId: row.transcript_id,
-    spanIds: [row.span_id],
-    quote: row.text,
-    sourceKind: "memory_object_with_pointers",
-    createdAt: row.created_at,
-    turnTimestampStartMs: row.start_time_ms,
-    turnTimestampEndMs: row.end_time_ms,
-    retrievalScore: row.evidence_score,
-    stance: memoryEvidenceStance(row.role),
-    sourceConfidence: row.evidence_score,
-    provenanceValidated: true,
-    metadata: memoryMetadata
-  }));
-  return [...pointerCandidates, ...legacyCandidates];
-}
-function saveEvidenceScoreRun(db, assessment, options) {
-  const id = options.id ?? createId("esr_");
-  db.transaction(() => {
-    db.prepare(`INSERT INTO evidence_score_runs(
-      id,target_type,target_id,claim_text,use_type,strength,support_score,opposition_score,qualification_score,has_conflict,scorer_version,reasons_json,assessment_json
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
-      id,
-      options.targetType,
-      options.targetId ?? null,
-      assessment.claimText,
-      assessment.useType,
-      assessment.strength,
-      assessment.supportScore,
-      assessment.oppositionScore,
-      assessment.qualificationScore,
-      assessment.hasConflict ? 1 : 0,
-      assessment.scorerVersion,
-      JSON.stringify(assessment.reasons),
-      JSON.stringify(assessment)
-    );
-    assessment.scoredEvidence.forEach((item) => {
-      const pointerId = item.candidate.evidencePointerId && db.prepare("SELECT 1 FROM evidence_pointers WHERE evidence_pointer_id=?").get(item.candidate.evidencePointerId) ? item.candidate.evidencePointerId : null;
-      db.prepare(`INSERT INTO evidence_score_items(
-      id,run_id,evidence_pointer_id,candidate_id,stance,final_score,strength,relevance,directness,specificity,source_strength,repetition,
-      recency,correction_weight,confidence,opposition_penalty,caps_json,reasons_json,candidate_json
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
-        createId("esi_"),
-        id,
-        pointerId,
-        item.candidate.id,
-        item.stance,
-        item.finalScore,
-        item.strength,
-        item.components.relevance,
-        item.components.directness,
-        item.components.specificity,
-        item.components.sourceStrength,
-        item.components.repetition,
-        item.components.recency,
-        item.components.correctionWeight,
-        item.components.confidence,
-        item.components.oppositionPenalty,
-        JSON.stringify(item.caps),
-        JSON.stringify(item.reasons),
-        JSON.stringify(item.candidate)
-      );
-    });
-  })();
-  return id;
-}
-
 // src/memory/extraction/prompt.ts
 var MEMORY_EXTRACTION_PROMPT_VERSION = "mvp-memory-extraction-v1";
 
@@ -2386,15 +1647,15 @@ var TENTATIVE = /\b(maybe|perhaps|possibly|probably|might|tentative\w*|i think|i
 function isTentativeStatement(...texts) {
   return texts.some((text) => typeof text === "string" && TENTATIVE.test(text));
 }
-var clamp2 = (value) => Math.max(0, Math.min(1, value));
+var clamp = (value) => Math.max(0, Math.min(1, value));
 function scoreCandidateConfidence(candidate, spans) {
-  const extractor = clamp2(candidate.confidence);
+  const extractor = clamp(candidate.confidence);
   const coverage = Math.min(1, 0.8 + Math.max(0, spans.length - 1) * 0.1);
   const normalizedTitle = candidate.title.toLowerCase().trim();
   const titleWords = normalizedTitle.split(/\s+/).filter(Boolean).length;
   const specificity = vague.has(normalizedTitle) || titleWords < 2 ? 0.3 : Math.min(1, 0.6 + titleWords * 0.07);
   const typeRule = candidate.type === "quote" ? 1 : candidate.type === "decision" || candidate.type === "action_item" ? 0.95 : candidate.type === "objection" || candidate.type === "question" ? 0.85 : 0.8;
-  const finalConfidence = clamp2(0.5 * extractor + 0.2 * coverage + 0.15 * specificity + 0.15 * typeRule);
+  const finalConfidence = clamp(0.5 * extractor + 0.2 * coverage + 0.15 * specificity + 0.15 * typeRule);
   const confidenceLabel2 = finalConfidence >= 0.85 ? "high" : finalConfidence >= 0.6 ? "medium" : "low";
   const tentative = isTentativeStatement(candidate.title, candidate.body);
   const decisionLike = candidate.type === "decision" || candidate.type === "action_item";
@@ -3030,7 +2291,7 @@ var scopeTypes = {
 function keywordScore(row, query) {
   const phrase = query.toLowerCase(), title = (row.title ?? "").toLowerCase(), text = row.search_text.toLowerCase();
   const speaker = (row.speaker_name ?? "").toLowerCase(), topic = (row.topic_text ?? "").toLowerCase();
-  const tokens3 = phrase.match(/[\p{L}\p{N}]+/gu) ?? [];
+  const tokens4 = phrase.match(/[\p{L}\p{N}]+/gu) ?? [];
   let score2 = 0;
   const reasons = [];
   if (title.includes(phrase)) {
@@ -3049,8 +2310,8 @@ function keywordScore(row, query) {
     score2 += 0.35;
     reasons.push("keyword:topic");
   }
-  const matched = tokens3.filter((token) => title.includes(token) || text.includes(token) || speaker.includes(token) || topic.includes(token)).length;
-  if (tokens3.length) score2 += 0.35 * (matched / tokens3.length);
+  const matched = tokens4.filter((token) => title.includes(token) || text.includes(token) || speaker.includes(token) || topic.includes(token)).length;
+  if (tokens4.length) score2 += 0.35 * (matched / tokens4.length);
   return { score: Math.min(1, score2), reasons: [...new Set(reasons)] };
 }
 function keywordSearch(db, query) {
@@ -3102,20 +2363,20 @@ async function vectorSearch(db, query) {
 }
 
 // src/retrieval/ranking.ts
-var clamp3 = (value) => Math.max(0, Math.min(1, value));
+var clamp2 = (value) => Math.max(0, Math.min(1, value));
 function recencyScore(timestamp, now2) {
   if (!timestamp) return 0.5;
   const time = Date.parse(timestamp), current = now2 == null ? Date.now() : Date.parse(now2);
   if (!Number.isFinite(time) || !Number.isFinite(current)) return 0.5;
   const ageDays = Math.max(0, (current - time) / 864e5);
-  return clamp3(1 / (1 + ageDays / 365));
+  return clamp2(1 / (1 + ageDays / 365));
 }
 function rankCandidate(candidate, vectorAvailable, recencyBoost = false, now2) {
   const vector = candidate.vectorScore ?? 0, keyword = candidate.keywordScore ?? 0;
   const evidence = candidate.evidenceScore ?? 0.5, metadata = candidate.metadataScore ?? 0.5;
   const recency = recencyBoost ? recencyScore(candidate.updatedAt ?? candidate.createdAt, now2) : 0.5;
   const score2 = vectorAvailable ? 0.4 * vector + 0.3 * keyword + 0.15 * evidence + 0.1 * metadata + 0.05 * recency : 0.55 * keyword + 0.25 * evidence + 0.15 * metadata + 0.05 * recency;
-  return { ...candidate, recencyScore: recency, finalScore: clamp3(score2) };
+  return { ...candidate, recencyScore: recency, finalScore: clamp2(score2) };
 }
 function mergeCandidates(candidates) {
   const merged = /* @__PURE__ */ new Map();
@@ -3166,7 +2427,841 @@ async function searchRetrieval(db, query) {
   const filtered = query.requireEvidencePointers ? ranked.filter((candidate) => candidate.evidencePointerIds.length > 0) : ranked;
   return dedupeUnderlyingEvidence(filtered).sort((a, b) => b.finalScore - a.finalScore).slice(0, query.finalLimit ?? query.limit ?? 20);
 }
+var searchMemoryObjects = (db, query) => searchRetrieval(db, { ...query, scope: "memory_objects" });
 var searchEvidencePointers = (db, query) => searchRetrieval(db, { ...query, scope: "evidence_pointers" });
+
+// src/evidence/rules.ts
+var SCORER_VERSION = "mvp-evidence-v1";
+var USE_TYPE_WEIGHTS = {
+  direct_fact: { relevance: 0.2, directness: 0.26, specificity: 0.2, sourceStrength: 0.16, repetition: 0.04, recency: 0.04, correctionWeight: 0.06, confidence: 0.04 },
+  pattern: { relevance: 0.18, directness: 0.14, specificity: 0.12, sourceStrength: 0.15, repetition: 0.24, recency: 0.06, correctionWeight: 0.06, confidence: 0.05 },
+  inference: { relevance: 0.22, directness: 0.12, specificity: 0.14, sourceStrength: 0.18, repetition: 0.18, recency: 0.05, correctionWeight: 0.06, confidence: 0.05 },
+  recommendation: { relevance: 0.2, directness: 0.15, specificity: 0.14, sourceStrength: 0.15, repetition: 0.1, recency: 0.14, correctionWeight: 0.08, confidence: 0.04 }
+};
+var stopWords = /* @__PURE__ */ new Set(["a", "an", "and", "are", "as", "at", "be", "because", "by", "for", "from", "has", "in", "is", "it", "of", "on", "or", "that", "the", "this", "to", "was", "were", "with"]);
+var clamp3 = (value) => Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
+var round2 = (value) => Math.round(clamp3(value) * 1e4) / 1e4;
+function tokens2(text = "") {
+  return [...new Set(text.toLowerCase().match(/[\p{L}\p{N}]+/gu)?.filter((token) => token.length > 1 && !stopWords.has(token)) ?? [])];
+}
+function lexicalCoverage(claimText, quote = "") {
+  const claim = tokens2(claimText), evidence = new Set(tokens2(quote));
+  return claim.length ? claim.filter((token) => evidence.has(token)).length / claim.length : 0;
+}
+function calculateRelevance(candidate, claimText, requiredTerms = []) {
+  const available = [candidate.retrievalScore, candidate.vectorScore, candidate.keywordScore].filter((score2) => score2 != null).map(clamp3);
+  const lexical = lexicalCoverage(claimText, candidate.quote);
+  const requiredCoverage = requiredTerms.length ? requiredTerms.filter((term) => candidate.quote?.toLowerCase().includes(term.toLowerCase())).length / requiredTerms.length : lexical;
+  if (!available.length) return round2(0.75 * lexical + 0.25 * requiredCoverage);
+  const retrieval = clamp3(candidate.retrievalScore ?? lexical);
+  const vector = clamp3(candidate.vectorScore ?? lexical);
+  const keyword = clamp3(candidate.keywordScore ?? lexical);
+  return round2(0.35 * retrieval + 0.2 * vector + 0.2 * keyword + 0.15 * lexical + 0.1 * requiredCoverage);
+}
+function calculateDirectness(candidate, useType3) {
+  if (candidate.userCorrectionStatus === "confirmed") return 1;
+  if (!candidate.spanIds.length) return 0;
+  const base = {
+    raw_transcript_span: candidate.quote ? 0.95 : 0.75,
+    user_correction: 0.9,
+    generated_summary_with_pointers: 0.62,
+    memory_object_with_pointers: 0.62,
+    graph_edge_with_pointers: 0.55,
+    answer_claim_with_pointers: 0.58
+  };
+  return round2(base[candidate.sourceKind] + (useType3 === "inference" ? 0.05 : 0));
+}
+function calculateSpecificity(candidate, claimText, requiredTerms = []) {
+  const quote = candidate.quote ?? "";
+  const coverage = lexicalCoverage(claimText, quote);
+  const claimSpecifics = tokens2(claimText).filter((token) => /\d/.test(token) || token.length >= 7);
+  const required = [.../* @__PURE__ */ new Set([...requiredTerms.map((term) => term.toLowerCase()), ...claimSpecifics])];
+  const specificCoverage = required.length ? required.filter((term) => quote.toLowerCase().includes(term)).length / required.length : coverage;
+  const concrete = /\d|(?:\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|may|june|july|august|september|october|november|december)\b)/i.test(quote) ? 0.15 : 0;
+  return round2(0.55 * coverage + 0.45 * specificCoverage + concrete);
+}
+function calculateSourceStrength(candidate) {
+  if (candidate.userCorrectionStatus === "rejected") return 0;
+  if (candidate.userCorrectionStatus === "superseded") return 0.15;
+  if (candidate.userCorrectionStatus === "confirmed") return 1;
+  if (!candidate.spanIds.length) return 0;
+  const strengths2 = {
+    raw_transcript_span: 0.95,
+    user_correction: 0.85,
+    generated_summary_with_pointers: 0.68,
+    memory_object_with_pointers: 0.68,
+    graph_edge_with_pointers: 0.65,
+    answer_claim_with_pointers: 0.62
+  };
+  return strengths2[candidate.sourceKind];
+}
+function calculateCorrectionWeight(candidate) {
+  if (candidate.userCorrectionStatus === "confirmed" || candidate.isUserCorrection) return 1;
+  if (candidate.userCorrectionStatus === "rejected" || candidate.userCorrectionStatus === "superseded") return 0;
+  return 0.5;
+}
+function calculateConfidence(candidate) {
+  const values = [candidate.sourceConfidence, candidate.extractionConfidence].filter((value) => value != null);
+  return round2(values.length ? values.reduce((sum, value) => sum + clamp3(value), 0) / values.length : 0.5);
+}
+function candidateCaps(candidate, useType3, components, requiredTerms = [], claimText = "") {
+  const reasons = [];
+  let maxStrength;
+  const capWeak = (reason) => {
+    if (maxStrength !== "no_evidence") maxStrength = "weak";
+    reasons.push(reason);
+  };
+  const capNone = (reason) => {
+    maxStrength = "no_evidence";
+    reasons.push(reason);
+  };
+  if (candidate.userCorrectionStatus === "rejected") capNone("Rejected user correction is excluded");
+  else if (candidate.userCorrectionStatus === "superseded" || candidate.metadata?.superseded === true) capWeak("Superseded evidence is not current truth");
+  if (!candidate.spanIds.length && candidate.userCorrectionStatus !== "confirmed") capNone("No raw transcript span or confirmed correction");
+  if (candidate.sourceKind !== "raw_transcript_span" && candidate.sourceKind !== "user_correction" && !candidate.spanIds.length) capNone("Generated-only evidence has no raw pointers");
+  if (candidate.sourceKind !== "raw_transcript_span" && candidate.sourceKind !== "user_correction" && candidate.provenanceValidated !== true) {
+    capNone("Generated-object evidence was not validated against a raw transcript span");
+  }
+  if (components.relevance < 0.35) capWeak("Low relevance cannot establish the claim");
+  if (useType3 === "direct_fact" && components.directness < 0.5) capWeak("Direct fact lacks direct evidence");
+  if (components.specificity < 0.4) capWeak("Specific claim lacks required details");
+  if (candidate.vectorScore != null && candidate.keywordScore == null && candidate.retrievalScore == null && lexicalCoverage(claimText, candidate.quote) < 0.5) capWeak("Vector-only match cannot establish truth");
+  const memoryStatus = candidate.metadata?.canonicalMemoryStatus;
+  if (candidate.sourceKind === "memory_object_with_pointers" && memoryStatus !== void 0 && memoryStatus !== "active") capWeak("Canonical memory status is not active");
+  if (candidate.metadata?.memoryUsableAsEvidence === false || candidate.metadata?.duplicateOfId != null) capWeak("Memory object is not independently usable as strong evidence");
+  return { maxStrength, reasons };
+}
+var rank2 = { no_evidence: 0, weak: 1, mixed: 2, strong: 3, conflicting: 3 };
+function classifyEvidenceStrength(score2, caps = { reasons: [] }) {
+  let strength = score2 >= 0.78 ? "strong" : score2 >= 0.55 ? "mixed" : score2 >= 0.35 ? "weak" : "no_evidence";
+  if (caps.maxStrength && rank2[strength] > rank2[caps.maxStrength]) strength = caps.maxStrength;
+  return strength;
+}
+
+// src/evidence/repetition.ts
+var normalizeQuote = (quote = "") => quote.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+function nearIdentical(left = "", right = "") {
+  const a = new Set(normalizeQuote(left).split(" ").filter(Boolean)), b = new Set(normalizeQuote(right).split(" ").filter(Boolean));
+  if (!a.size || !b.size) return false;
+  const intersection = [...a].filter((token) => b.has(token)).length;
+  return intersection / Math.max(a.size, b.size) >= 0.9;
+}
+function areDuplicates(left, right) {
+  if (left.evidencePointerId && left.evidencePointerId === right.evidencePointerId) return true;
+  if (left.spanIds.some((id) => right.spanIds.includes(id))) return true;
+  if (nearIdentical(left.quote, right.quote)) return true;
+  return left.transcriptId != null && left.transcriptId === right.transcriptId && left.turnTimestampStartMs != null && left.turnTimestampStartMs === right.turnTimestampStartMs && left.turnTimestampEndMs != null && left.turnTimestampEndMs === right.turnTimestampEndMs;
+}
+function deduplicateEvidenceCandidates(candidates) {
+  const accepted = [];
+  for (const candidate of candidates) {
+    if (!accepted.some((item) => areDuplicates(item, candidate))) accepted.push(candidate);
+  }
+  return accepted;
+}
+function calculateRepetitionScore(candidate, allCandidates, useType3 = "direct_fact") {
+  const sameStance = deduplicateEvidenceCandidates(allCandidates).filter((item) => (item.stance ?? "unknown") === (candidate.stance ?? "unknown"));
+  const count = sameStance.length;
+  if (useType3 === "pattern") return round2(count >= 3 ? 1 : count === 2 ? 0.78 : 0.2);
+  return round2(count >= 3 ? 1 : count === 2 ? 0.75 : 0.5);
+}
+
+// src/evidence/recency.ts
+function calculateRecencyScore(candidate, now2, useType3) {
+  const date = candidate.transcriptRecordedAt ?? candidate.createdAt;
+  if (!date || !now2) return 0.5;
+  const nowMs = Date.parse(now2), dateMs = Date.parse(date);
+  if (!Number.isFinite(nowMs) || !Number.isFinite(dateMs)) return 0.5;
+  const ageDays = Math.max(0, (nowMs - dateMs) / 864e5);
+  let score2 = ageDays <= 7 ? 1 : ageDays <= 30 ? 0.8 : ageDays <= 180 ? 0.6 : 0.4;
+  if (useType3 === "direct_fact" || useType3 === "inference") score2 = 0.5 + score2 * 0.5;
+  return round2(score2);
+}
+
+// src/evidence/explain.ts
+function explanationForStrength(strength, useType3) {
+  const subject = useType3 === "inference" ? "inference" : useType3 === "recommendation" ? "recommendation" : "claim";
+  if (strength === "strong") return `Strong evidence: the ${subject} is supported by specific source-backed evidence with no meaningful unresolved opposition.`;
+  if (strength === "mixed") return `Mixed evidence: the ${subject} has usable support, but some evidence qualifies or partially challenges it.`;
+  if (strength === "conflicting") return `Conflicting evidence: there is strong support for the ${subject}, but other source-backed evidence directly opposes it.`;
+  if (strength === "weak") return `Weak evidence: the available source-backed evidence is related, but it is not sufficient to support the ${useType3 === "pattern" ? "pattern" : subject} confidently.`;
+  return `No evidence: no usable source-backed transcript spans or confirmed corrections were found for this ${subject}.`;
+}
+function explainEvidenceScore(assessment) {
+  return explanationForStrength(assessment.strength, assessment.useType);
+}
+
+// src/evidence/scoring.ts
+var scoreOrder = { strong: 4, mixed: 3, weak: 2, conflicting: 1, no_evidence: 0 };
+var byScore = (a, b) => b.finalScore - a.finalScore || a.candidate.id.localeCompare(b.candidate.id);
+var meaningful = (item) => item.strength !== "no_evidence";
+var supportStances = /* @__PURE__ */ new Set(["supports", "updates"]);
+function scoreEvidenceCandidate(candidate, context) {
+  const stance = context.knownOppositionCandidateIds?.includes(candidate.id) ? "opposes" : candidate.stance ?? "unknown";
+  const components = {
+    relevance: calculateRelevance(candidate, context.claimText, context.requiredSpecificityTerms),
+    directness: calculateDirectness(candidate, context.useType),
+    specificity: calculateSpecificity(candidate, context.claimText, context.requiredSpecificityTerms),
+    sourceStrength: calculateSourceStrength(candidate),
+    repetition: calculateRepetitionScore({ ...candidate, stance }, context.allCandidates, context.useType),
+    recency: calculateRecencyScore(candidate, context.now, context.useType),
+    correctionWeight: calculateCorrectionWeight(candidate),
+    confidence: calculateConfidence(candidate),
+    oppositionPenalty: stance === "opposes" ? 0.05 : 0
+  };
+  const weights = USE_TYPE_WEIGHTS[context.useType];
+  const weighted = Object.entries(weights).reduce((sum, [key, weight]) => sum + components[key] * weight, 0);
+  const finalScore = round2(weighted - components.oppositionPenalty);
+  const caps = candidateCaps(candidate, context.useType, components, context.requiredSpecificityTerms, context.claimText);
+  const strength = classifyEvidenceStrength(finalScore, caps);
+  const reasons = [
+    ...caps.reasons,
+    components.relevance < 0.35 ? "Low relevance to the claim" : "",
+    components.directness < 0.5 ? "Evidence is indirect" : "",
+    components.specificity < 0.4 ? "Evidence lacks specific claim details" : "",
+    components.repetition >= 0.75 ? "Independent evidence repeats the support" : "",
+    candidate.userCorrectionStatus === "confirmed" ? "Confirmed user correction has priority" : ""
+  ].filter(Boolean);
+  return { candidate: { ...candidate, stance }, stance, components, finalScore, strength, caps, reasons };
+}
+function maxScore(items) {
+  return round2(items.length ? Math.max(...items.map((item) => item.finalScore)) : 0);
+}
+function hasExplicitPattern(candidate) {
+  return /\b(always|usually|often|repeatedly|consistently|tend(?:s)? to)\b/i.test(candidate.quote ?? "");
+}
+function passesUseTypeGate(input, support) {
+  if (input.useType === "direct_fact") return support.some((item) => item.strength === "strong" && item.components.directness >= 0.7);
+  if (input.useType === "pattern") return support.length >= 2 || support.some((item) => hasExplicitPattern(item.candidate) && item.finalScore >= 0.7);
+  if (input.useType === "inference") return support.filter((item) => item.finalScore >= 0.55).length >= 2 && maxScore(support) >= 0.82;
+  return support.some((item) => item.finalScore >= 0.72) && support.some((item) => item.components.recency >= 0.6 || item.candidate.userCorrectionStatus === "confirmed");
+}
+function hasStrongEnoughSupport(useType3, support) {
+  if (support.some((item) => item.strength === "strong")) return true;
+  if (useType3 === "pattern") return support.some((item) => hasExplicitPattern(item.candidate) && item.finalScore >= 0.7);
+  return false;
+}
+function aggregateSupportAndOpposition(input, scoredCandidates) {
+  const scoredEvidence = [...scoredCandidates].sort(byScore);
+  const usableEvidence = scoredEvidence.filter(meaningful);
+  const bestSupportingEvidence = usableEvidence.filter((item) => supportStances.has(item.stance)).sort(byScore);
+  const bestOpposingEvidence = usableEvidence.filter((item) => item.stance === "opposes").sort(byScore);
+  const qualifyingEvidence = usableEvidence.filter((item) => item.stance === "qualifies").sort(byScore);
+  const supportScore = maxScore(bestSupportingEvidence);
+  const oppositionScore = maxScore(bestOpposingEvidence);
+  const qualificationScore = maxScore(qualifyingEvidence);
+  const strongSupport = supportScore >= 0.7;
+  const strongOpposition = oppositionScore >= 0.65;
+  const comparableOpposition = oppositionScore >= Math.max(0.55, supportScore - 0.15);
+  const updateWins = bestSupportingEvidence.some((item) => item.stance === "updates" && item.finalScore >= oppositionScore);
+  const hasConflict = strongSupport && strongOpposition && comparableOpposition && !updateWins;
+  let strength;
+  if (!usableEvidence.length || !bestSupportingEvidence.length) strength = "no_evidence";
+  else if (hasConflict) strength = "conflicting";
+  else if (!passesUseTypeGate(input, bestSupportingEvidence)) strength = "weak";
+  else if (strongOpposition || bestOpposingEvidence.length || qualifyingEvidence.length || updateWins) strength = "mixed";
+  else if (hasStrongEnoughSupport(input.useType, bestSupportingEvidence)) strength = "strong";
+  else strength = "weak";
+  const reasons = [
+    !usableEvidence.length ? "No usable source-backed evidence" : "",
+    hasConflict ? "Comparable source-backed support and opposition remain unresolved" : "",
+    qualifyingEvidence.length ? "Qualifying evidence requires a caveat" : "",
+    updateWins ? "Newer or explicit update evidence changes older evidence" : "",
+    strength === "weak" && input.useType === "pattern" ? "A pattern needs repeated independent evidence or an explicit pattern statement" : "",
+    strength === "weak" && input.useType === "inference" ? "An inference needs multiple explainable supporting sources" : ""
+  ].filter(Boolean);
+  const assessment = {
+    claimText: input.claimText,
+    useType: input.useType,
+    strength,
+    supportScore,
+    oppositionScore,
+    qualificationScore,
+    bestSupportingEvidence,
+    bestOpposingEvidence,
+    qualifyingEvidence,
+    usableEvidence,
+    hasConflict,
+    scoredEvidence,
+    hasWeakEvidenceOnly: usableEvidence.length > 0 && strength === "weak",
+    hasNoEvidence: strength === "no_evidence",
+    explanation: "",
+    reasons,
+    scorerVersion: SCORER_VERSION
+  };
+  assessment.explanation = explainEvidenceScore(assessment);
+  return assessment;
+}
+function scoreEvidenceBundle(input) {
+  const duplicateIds = new Set(input.knownDuplicateCandidateIds ?? []);
+  const oppositionIds = new Set(input.knownOppositionCandidateIds ?? []);
+  const candidates = deduplicateEvidenceCandidates(input.candidates.filter((candidate) => !duplicateIds.has(candidate.id)).map((candidate) => oppositionIds.has(candidate.id) ? { ...candidate, stance: "opposes" } : candidate));
+  const context = {
+    claimText: input.claimText,
+    useType: input.useType,
+    allCandidates: candidates,
+    now: input.now,
+    knownOppositionCandidateIds: input.knownOppositionCandidateIds,
+    requiredSpecificityTerms: input.requiredSpecificityTerms
+  };
+  return aggregateSupportAndOpposition(input, candidates.map((candidate) => scoreEvidenceCandidate(candidate, context)).sort((a, b) => scoreOrder[b.strength] - scoreOrder[a.strength] || byScore(a, b)));
+}
+
+// src/evidence/repository.ts
+var pointerStance = (role) => role === "support" ? "supports" : role === "opposition" ? "opposes" : role === "conditional" ? "qualifies" : role === "neutral" ? "neutral" : "unknown";
+var memoryEvidenceStance = (role) => role === "supports" || role === "source" ? "supports" : role === "contradicts" ? "opposes" : role === "qualifies" ? "qualifies" : "neutral";
+var sourceKindForTarget = (targetType) => {
+  if (targetType === "memory_object" || targetType === "claim") return "memory_object_with_pointers";
+  if (targetType === "summary") return "generated_summary_with_pointers";
+  if (targetType === "graph_edge") return "graph_edge_with_pointers";
+  if (targetType === "graph_node") return "graph_edge_with_pointers";
+  if (targetType === "answer_claim" || targetType === "answer") return "answer_claim_with_pointers";
+  return "raw_transcript_span";
+};
+function getEvidenceCandidatesForTarget(db, targetType, targetId) {
+  const pointers = db.prepare("SELECT * FROM evidence_pointers WHERE target_type=? AND target_id=? ORDER BY created_at,evidence_pointer_id").all(targetType, targetId);
+  const memoryRow = targetType === "memory_object" || targetType === "claim" || targetType === "summary" ? db.prepare("SELECT * FROM memory_objects WHERE id=?").get(targetId) : void 0;
+  const memorySpanIds = memoryRow ? db.prepare(`SELECT span_id FROM memory_object_evidence WHERE memory_id=?
+      UNION SELECT span_id FROM evidence_pointers WHERE target_type IN ('memory_object','claim','summary') AND target_id=?`).all(targetId, targetId) : [];
+  const memory = memoryRow ? getCanonicalMemoryObject(memoryRow, memorySpanIds.map((row) => row.span_id)) : void 0;
+  const memoryMetadata = memory ? { canonicalMemoryStatus: memory.status, duplicateOfId: memory.duplicateOfId, memoryUsableAsEvidence: isUsableAsEvidence(memory) } : {};
+  const pointerCandidates = pointers.flatMap((pointer) => {
+    const resolved = resolveEvidencePointer(db, pointer.evidence_pointer_id);
+    if (!resolved.ok) return [];
+    return [{
+      id: pointer.evidence_pointer_id,
+      evidencePointerId: pointer.evidence_pointer_id,
+      transcriptId: pointer.transcript_id,
+      spanIds: [pointer.span_id],
+      quote: resolved.spanText,
+      sourceKind: sourceKindForTarget(targetType),
+      createdAt: pointer.created_at,
+      turnTimestampStartMs: resolved.source.start_ms,
+      turnTimestampEndMs: resolved.source.end_ms,
+      retrievalScore: pointer.relevance_score ?? pointer.final_score ?? void 0,
+      vectorScore: pointer.semantic_score ?? void 0,
+      keywordScore: pointer.lexical_score ?? void 0,
+      stance: pointerStance(pointer.evidence_role),
+      sourceConfidence: pointer.confidence,
+      provenanceValidated: true,
+      metadata: { ...memoryMetadata, sourcePointerId: pointer.source_pointer_uri }
+    }];
+  });
+  if (!memory) return pointerCandidates;
+  const pointerSpanIds = new Set(pointerCandidates.flatMap((candidate) => candidate.spanIds));
+  const legacyRows = db.prepare(`SELECT e.id,e.span_id,e.role,e.evidence_score,e.created_at,s.transcript_id,s.text,s.start_time_ms,s.end_time_ms
+    FROM memory_object_evidence e JOIN transcript_spans s ON s.id=e.span_id WHERE e.memory_id=? ORDER BY e.created_at,e.id`).all(targetId);
+  const legacyCandidates = legacyRows.filter((row) => !pointerSpanIds.has(row.span_id)).map((row) => ({
+    id: row.id,
+    transcriptId: row.transcript_id,
+    spanIds: [row.span_id],
+    quote: row.text,
+    sourceKind: "memory_object_with_pointers",
+    createdAt: row.created_at,
+    turnTimestampStartMs: row.start_time_ms,
+    turnTimestampEndMs: row.end_time_ms,
+    retrievalScore: row.evidence_score,
+    stance: memoryEvidenceStance(row.role),
+    sourceConfidence: row.evidence_score,
+    provenanceValidated: true,
+    metadata: memoryMetadata
+  }));
+  return [...pointerCandidates, ...legacyCandidates];
+}
+function saveEvidenceScoreRun(db, assessment, options) {
+  const id = options.id ?? createId("esr_");
+  db.transaction(() => {
+    db.prepare(`INSERT INTO evidence_score_runs(
+      id,target_type,target_id,claim_text,use_type,strength,support_score,opposition_score,qualification_score,has_conflict,scorer_version,reasons_json,assessment_json
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+      id,
+      options.targetType,
+      options.targetId ?? null,
+      assessment.claimText,
+      assessment.useType,
+      assessment.strength,
+      assessment.supportScore,
+      assessment.oppositionScore,
+      assessment.qualificationScore,
+      assessment.hasConflict ? 1 : 0,
+      assessment.scorerVersion,
+      JSON.stringify(assessment.reasons),
+      JSON.stringify(assessment)
+    );
+    assessment.scoredEvidence.forEach((item) => {
+      const pointerId = item.candidate.evidencePointerId && db.prepare("SELECT 1 FROM evidence_pointers WHERE evidence_pointer_id=?").get(item.candidate.evidencePointerId) ? item.candidate.evidencePointerId : null;
+      db.prepare(`INSERT INTO evidence_score_items(
+      id,run_id,evidence_pointer_id,candidate_id,stance,final_score,strength,relevance,directness,specificity,source_strength,repetition,
+      recency,correction_weight,confidence,opposition_penalty,caps_json,reasons_json,candidate_json
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+        createId("esi_"),
+        id,
+        pointerId,
+        item.candidate.id,
+        item.stance,
+        item.finalScore,
+        item.strength,
+        item.components.relevance,
+        item.components.directness,
+        item.components.specificity,
+        item.components.sourceStrength,
+        item.components.repetition,
+        item.components.recency,
+        item.components.correctionWeight,
+        item.components.confidence,
+        item.components.oppositionPenalty,
+        JSON.stringify(item.caps),
+        JSON.stringify(item.reasons),
+        JSON.stringify(item.candidate)
+      );
+    });
+  })();
+  return id;
+}
+
+// src/ask-ai/unconfirmedContext.ts
+var MEMORY_CAP = 6;
+var CONFLICT_CAP = 6;
+var TENTATIVE3 = /\b(maybe|perhaps|possibly|probably|might|tentative\w*|consider(?:ing)?|proposed|propose|discussed?|i think|not sure|unsure)\b/i;
+var STOPWORDS2 = /* @__PURE__ */ new Set(["the", "a", "an", "and", "or", "of", "to", "in", "on", "for", "is", "are", "be", "we", "i", "it", "this", "that", "what", "should", "do", "does", "how", "with", "about", "our"]);
+var tokens3 = (text) => new Set((text.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter((token) => token.length > 2 && !STOPWORDS2.has(token)));
+var sharesToken = (queryTokens, text) => {
+  for (const token of tokens3(text)) if (queryTokens.has(token)) return true;
+  return false;
+};
+var labelFor = (kind) => kind === "conflict" ? "Conflict / tension" : kind === "tentative" ? "Tentative idea" : kind === "possible_duplicate" ? "Possible duplicate" : kind === "degraded" ? "Missing evidence" : "Review-only";
+async function retrieveUnconfirmedContext(db, query) {
+  const contract = query.answerContract;
+  const items = [];
+  if (contract.includeReviewOnlyItems) {
+    const memoryRepo = createMemoryObjectsRepo(db);
+    const memoryIds = query.intent === "conflict_risk" ? memoryRepo.listCanonicalMemoryObjects().filter((m) => m.status === "needs_review" || m.status === "weak").map((m) => m.id) : (await searchMemoryObjects(db, {
+      query: query.normalizedQuestion,
+      mode: "hybrid",
+      finalLimit: MEMORY_CAP * 3,
+      filters: { memoryStatuses: ["needs_review", "weak"], includeUnsupportedMemory: true }
+    })).map((candidate) => candidate.targetId);
+    for (const memoryId of memoryIds) {
+      if (items.filter((item) => item.memoryId).length >= MEMORY_CAP) break;
+      const canonical = memoryRepo.getCanonicalMemoryObject(memoryId);
+      if (!canonical || canonical.status !== "needs_review" && canonical.status !== "weak") continue;
+      const hasSpan = canonical.evidenceSpanIds.length > 0;
+      const tentative = TENTATIVE3.test(`${canonical.title} ${canonical.body}`);
+      const kind = !hasSpan ? "degraded" : canonical.duplicateOfId ? "possible_duplicate" : tentative ? "tentative" : "review_only";
+      const livePointer = hasSpan ? db.prepare("SELECT evidence_pointer_id FROM evidence_pointers WHERE target_type IN ('memory_object','claim','summary') AND target_id=? ORDER BY evidence_pointer_id LIMIT 1").get(memoryId)?.evidence_pointer_id : void 0;
+      items.push({
+        id: `unc_mem_${memoryId}`,
+        kind,
+        memoryId,
+        text: canonical.title || canonical.body,
+        label: labelFor(kind),
+        warning: UNCONFIRMED_DISCLAIMER,
+        ...livePointer ? { evidencePointerId: livePointer, evidenceUri: `mv://evidence/${livePointer}` } : {},
+        ...hasSpan ? {} : { missingEvidence: true }
+      });
+    }
+  }
+  if (contract.includeConflicts) {
+    const queryTokens = tokens3(query.normalizedQuestion);
+    const repo = createConflictRepository(db);
+    const conflicts = repo.listActiveConflicts();
+    for (const conflict of conflicts) {
+      if (items.filter((item) => item.conflictId).length >= CONFLICT_CAP) break;
+      const haystack = `${conflict.summary} ${conflict.explanation}`;
+      const relevant = query.intent === "conflict_risk" || queryTokens.size === 0 || sharesToken(queryTokens, haystack);
+      if (!relevant) continue;
+      const live = conflict.evidenceLinks.some((link) => link.evidencePointerId);
+      items.push({
+        id: `unc_conf_${conflict.id}`,
+        kind: "conflict",
+        conflictId: conflict.id,
+        text: `${conflict.summary}. ${conflict.explanation}`,
+        label: labelFor("conflict"),
+        warning: UNCONFIRMED_DISCLAIMER,
+        ...live ? {} : { missingEvidence: true }
+      });
+    }
+  }
+  return items;
+}
+
+// src/ask-ai/llmSynthesis.ts
+var LlmSynthesisError = class extends Error {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "LlmSynthesisError";
+  }
+};
+var CLAIM_KINDS = ["fact", "pattern", "inference", "recommendation"];
+var normalizeForMatch = (value) => value.toLowerCase().replace(/\s+/g, " ").trim();
+function buildSynthesisPrompt(query, evidence) {
+  const items = evidence.map((item, index) => `${index + 1}. pointerId: ${item.evidencePointerId}
+   quote: ${item.quotePreview}`).join("\n");
+  const system = [
+    "You answer questions strictly from the transcript evidence provided.",
+    "Use ONLY the listed evidence; never use outside knowledge or invent facts.",
+    "Cite evidence by its exact pointerId. Each claim must include a supportingQuote copied verbatim from one of the quotes you cite.",
+    "If the evidence does not support an answer, return an empty claims array. Respond with JSON only."
+  ].join(" ");
+  const prompt = [
+    `Question: ${query.originalQuestion}`,
+    "",
+    "Evidence:",
+    items,
+    "",
+    'Return JSON of the form: {"claims":[{"kind":"fact|pattern|inference|recommendation","text":"...","evidencePointerIds":["<pointerId>"],"supportingQuote":"<verbatim substring of a cited quote>","explanation":"<optional>"}]}'
+  ].join("\n");
+  return { system, prompt };
+}
+function parseAndGroundClaims(rawText, evidence) {
+  let parsed;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch {
+    throw new LlmSynthesisError("LLM synthesis output was not valid JSON");
+  }
+  if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.claims)) {
+    throw new LlmSynthesisError("LLM synthesis output did not contain a claims array");
+  }
+  const snippetByPointer = new Map(evidence.map((item) => [item.evidencePointerId, normalizeForMatch(item.quotePreview)]));
+  const grounded = [];
+  for (const raw of parsed.claims) {
+    if (!raw || typeof raw !== "object") continue;
+    const candidate = raw;
+    const kind = candidate.kind;
+    if (typeof kind !== "string" || !CLAIM_KINDS.includes(kind)) continue;
+    const text = candidate.text;
+    if (typeof text !== "string" || !text.trim()) continue;
+    const ids = candidate.evidencePointerIds;
+    if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string")) continue;
+    const pointerIds = [...new Set(ids)].filter((id) => snippetByPointer.has(id));
+    if (!pointerIds.length) continue;
+    const quote = candidate.supportingQuote;
+    if (typeof quote !== "string" || !quote.trim()) continue;
+    const needle = normalizeForMatch(quote);
+    const anchored = needle.length > 0 && pointerIds.some((id) => snippetByPointer.get(id)?.includes(needle));
+    if (!anchored) continue;
+    const explanation = typeof candidate.explanation === "string" ? candidate.explanation : void 0;
+    grounded.push({ kind, text: text.trim(), evidencePointerIds: pointerIds, explanation });
+  }
+  return grounded;
+}
+function createLlmAskAILanguageModel(provider, options = {}) {
+  return {
+    async generateClaims({ query, evidence }) {
+      const { system, prompt } = buildSynthesisPrompt(query, evidence);
+      const requestOptions = {};
+      if (options.timeoutMs != null) requestOptions.timeoutMs = options.timeoutMs;
+      let text;
+      try {
+        text = (await provider.complete({ system, prompt, responseFormat: "json" }, requestOptions)).text;
+      } catch {
+        throw new LlmSynthesisError("LLM synthesis request failed");
+      }
+      return parseAndGroundClaims(text, evidence);
+    }
+  };
+}
+
+// src/ask-ai/citations.ts
+var import_node_crypto5 = require("node:crypto");
+var stableId3 = (value) => `aic_${(0, import_node_crypto5.createHash)("sha256").update(value).digest("hex").slice(0, 24)}`;
+function buildCitations(evidence) {
+  const seen = /* @__PURE__ */ new Set();
+  return evidence.filter((item) => {
+    if (seen.has(item.evidencePointerId)) return false;
+    seen.add(item.evidencePointerId);
+    return true;
+  }).map((item, index) => ({
+    id: stableId3(item.evidencePointerId),
+    label: `[${index + 1}]`,
+    evidencePointerId: item.evidencePointerId,
+    sourcePointerId: item.sourcePointerId,
+    transcriptId: item.transcriptId,
+    spanId: item.spanId,
+    quotePreview: item.quotePreview,
+    clickbackUri: item.clickbackUri
+  }));
+}
+var renderCitation = (citation) => `${citation.label}(${citation.clickbackUri})`;
+
+// src/ask-ai/answerRendering.ts
+var REFUSAL = "I don't have enough transcript-backed evidence to answer that.";
+function renderUnconfirmedItem(item) {
+  const suffix = item.evidenceUri ? ` [context](${item.evidenceUri})` : item.missingEvidence ? " _(evidence missing or deleted)_" : "";
+  return `**${item.label}:** ${item.text}${suffix}`;
+}
+function renderUnconfirmedSections(unconfirmed) {
+  const groups = [
+    ["Conflicts / tensions", ["conflict"]],
+    ["Unconfirmed / review-only findings", ["review_only", "degraded"]],
+    ["Tentative ideas", ["tentative", "possible_duplicate"]]
+  ];
+  const blocks = [];
+  for (const [heading, kinds] of groups) {
+    const group = unconfirmed.filter((item) => kinds.includes(item.kind));
+    if (group.length) blocks.push(`## ${heading}
+
+${group.map(renderUnconfirmedItem).join("\n\n")}`);
+  }
+  return blocks;
+}
+function renderFactual(input) {
+  const citations = new Map(input.citations.map((item) => [item.id, item]));
+  const lines = input.claims.map((claim) => {
+    const links = claim.citationIds.map((id) => citations.get(id)).filter((item) => item != null).map(renderCitation);
+    if (!links.length) throw new ValidationError(`Ask AI claim has no selected citation: ${claim.id}`);
+    const label = claim.kind === "fact" ? "" : `**${claim.kind[0].toUpperCase()}${claim.kind.slice(1)}:** `;
+    return `${label}${claim.text} ${links.join(" ")}`;
+  });
+  const intro = input.confidence === "weak" ? "The evidence I found is weak, so this should be treated cautiously." : input.confidence === "conflicting" ? "The evidence conflicts, so I can't give one clean answer. Both sides are shown below." : input.confidence === "mixed" ? "The transcript evidence supports a qualified answer." : "Based on the transcript evidence:";
+  return `${intro}
+
+${lines.join("\n\n")}`;
+}
+function renderAnalysisClaim(claim) {
+  const label = `**${claim.kind[0].toUpperCase()}${claim.kind.slice(1)}:** `;
+  return `${label}${claim.text}`;
+}
+function renderAnswer(input) {
+  const analysis = input.analysis ?? [];
+  const unconfirmed = input.unconfirmed ?? [];
+  const hasFactual = input.confidence !== "no_evidence" && input.claims.length > 0;
+  const factual = hasFactual ? renderFactual(input) : "";
+  const analysisBlock = analysis.length ? `## AI analysis \u2014 not from your transcripts
+
+${analysis.map(renderAnalysisClaim).join("\n\n")}` : "";
+  if (!unconfirmed.length) {
+    if (!analysis.length) return hasFactual ? factual : REFUSAL;
+    const lead = hasFactual ? factual : "I don't have transcript-backed evidence for this, so the following is AI analysis, not from your transcripts.";
+    return `${lead}
+
+${analysisBlock}`;
+  }
+  const blocks = [];
+  blocks.push(hasFactual ? factual : "I don't have confirmed transcript-backed evidence for this. The items below are unconfirmed or AI analysis \u2014 not established facts.");
+  blocks.push(`> [!warning] Unconfirmed context
+> ${UNCONFIRMED_DISCLAIMER}`);
+  blocks.push(...renderUnconfirmedSections(unconfirmed));
+  if (analysisBlock) blocks.push(analysisBlock);
+  return blocks.join("\n\n");
+}
+
+// src/ask-ai/followups.ts
+function suggestFollowups(confidence, query) {
+  if (confidence === "no_evidence") return ["Do you want to search only within a specific transcript?", "Do you want to import more transcripts related to this topic?"];
+  if (confidence === "weak") return ["Do you want to see the exact transcript spans I found?", "Do you want to broaden the search?"];
+  if (confidence === "conflicting") return ["Do you want to compare the conflicting transcript moments?", "Do you want to review which source is newer?"];
+  return query.needsChronology ? ["Do you want the answer grouped by speaker?", "Do you want the supporting transcript clips?"] : ["Do you want a timeline of this?", "Do you want the answer grouped by speaker?", "Do you want the supporting transcript clips?"];
+}
+
+// src/ask-ai/repository.ts
+var bundleStatus = (confidence) => confidence === "no_evidence" ? "weak" : confidence;
+var answerStatus = (confidence) => confidence === "no_evidence" ? "refused_no_evidence" : confidence === "weak" ? "weak_evidence" : confidence === "conflicting" ? "conflicting_evidence" : "answered";
+var answerConfidence = (confidence) => confidence === "strong" ? "high" : confidence === "mixed" || confidence === "conflicting" ? "medium" : "low";
+var itemStance = (stance) => stance === "opposes" ? "contradicts" : stance === "qualifies" ? "qualifies" : stance === "supports" || stance === "updates" ? "supports" : "unknown";
+var pointerRole = (stance) => stance === "opposes" ? "opposition" : stance === "qualifies" ? "conditional" : stance === "supports" || stance === "updates" ? "support" : "unclear";
+var pointerStrength = (strength) => strength === "no_evidence" ? "weak" : strength;
+var reconstructClaimSupport = (stored, evidenceConfidence) => {
+  if (stored === "supported" || stored === "weakly_supported" || stored === "conflicting" || stored === "unsupported") return stored;
+  switch (evidenceConfidence) {
+    case "no_evidence":
+      return "unsupported";
+    case "conflicting":
+      return "conflicting";
+    case "weak":
+      return "weakly_supported";
+    default:
+      return "supported";
+  }
+};
+function persistAskAIResponse(db, response) {
+  db.transaction(() => {
+    const repos = createRepositories(db);
+    const bundle = repos.evidence.createEvidenceBundle({
+      purpose: "ask_ai",
+      query_text: response.queryUnderstanding.normalizedQuestion,
+      status: bundleStatus(response.evidenceConfidence),
+      overall_score: response.evidence.length ? Math.max(...response.evidence.map((item) => item.evidenceScore)) : null,
+      metadata: { ask_ai_run_id: response.id, score_run_id: response.scoreRunId ?? null }
+    });
+    response.evidence.forEach((item, index) => {
+      const pointer = resolveEvidencePointer(db, item.evidencePointerId);
+      if (!pointer.ok || pointer.evidence.transcript_id !== item.transcriptId || pointer.evidence.span_id !== item.spanId) {
+        throw new ValidationError(`Ask AI evidence pointer is broken or mismatched: ${item.evidencePointerId}`);
+      }
+      const sourcePointerId = item.sourcePointerId ?? pointer.evidence.source_pointer_uri;
+      if (!resolveSourcePointer(db, sourcePointerId).ok) throw new ValidationError(`Ask AI source pointer is broken: ${sourcePointerId}`);
+      repos.evidence.addEvidenceItem(bundle.id, {
+        span_id: item.spanId,
+        retrieval_rank: index + 1,
+        final_score: item.evidenceScore,
+        stance: itemStance(item.stance),
+        reason: item.scoringExplanation,
+        metadata: { evidence_pointer_id: item.evidencePointerId, source_pointer_id: sourcePointerId }
+      });
+    });
+    const answer = repos.answers.createAnswer({
+      id: response.id,
+      question_text: response.question,
+      answer_text: response.answerMarkdown,
+      evidence_bundle_id: bundle.id,
+      confidence: answerConfidence(response.evidenceConfidence),
+      answer_status: answerStatus(response.evidenceConfidence),
+      // Only non-secret synthesis metadata is recorded: actual mode, provider id, model id, usedFallback, reason.
+      model_name: response.synthesis?.model ?? null,
+      metadata: { ask_ai: true, score_run_id: response.scoreRunId ?? null, synthesis: response.synthesis ?? null }
+    });
+    const selected = new Map(response.evidence.map((item) => [item.evidencePointerId, item]));
+    response.claims.forEach((claim, index) => {
+      const stored = createAnswerClaim(db, { answerId: answer.id, claimText: claim.text, claimOrder: index });
+      db.prepare("INSERT INTO ask_ai_claim_metadata(answer_claim_id,kind,explanation,support_status) VALUES (?,?,?,?)").run(stored.answer_claim_id, claim.kind, claim.explanation ?? null, claim.supportStatus);
+      claim.evidencePointerIds.forEach((pointerId) => {
+        const item = selected.get(pointerId);
+        if (!item) throw new ValidationError(`Ask AI claim references unselected evidence: ${pointerId}`);
+        linkAnswerClaimToEvidence(db, {
+          answerClaimId: stored.answer_claim_id,
+          transcriptId: item.transcriptId,
+          spanId: item.spanId,
+          evidenceRole: pointerRole(item.stance),
+          evidenceStrength: pointerStrength(item.evidenceConfidence),
+          confidence: item.evidenceScore,
+          scores: { relevanceScore: item.relevanceScore, finalScore: item.evidenceScore }
+        });
+      });
+    });
+    createCitationLinksForAnswer(db, { answerId: answer.id });
+    db.prepare(`INSERT INTO ask_ai_runs(
+      id,question,normalized_question,answer_markdown,evidence_confidence,query_understanding_json,answer_id,score_run_id,not_enough_evidence,created_at
+    ) VALUES (?,?,?,?,?,?,?,?,?,?)`).run(
+      response.id,
+      response.question,
+      response.queryUnderstanding.normalizedQuestion,
+      response.answerMarkdown,
+      response.evidenceConfidence,
+      JSON.stringify(response.queryUnderstanding),
+      answer.id,
+      response.scoreRunId ?? null,
+      response.notEnoughEvidence ? 1 : 0,
+      response.createdAt
+    );
+    response.evidence.forEach((item, index) => db.prepare(`INSERT INTO ask_ai_run_evidence(
+      ask_ai_run_id,evidence_pointer_id,source_pointer_id,transcript_id,span_id,rank,evidence_score,evidence_confidence,quote_preview,scoring_explanation
+    ) VALUES (?,?,?,?,?,?,?,?,?,?)`).run(
+      response.id,
+      item.evidencePointerId,
+      item.sourcePointerId ?? null,
+      item.transcriptId,
+      item.spanId,
+      index + 1,
+      item.evidenceScore,
+      item.evidenceConfidence,
+      item.quotePreview,
+      item.scoringExplanation
+    ));
+    response.suggestedFollowups.forEach((text, index) => db.prepare(
+      "INSERT INTO ask_ai_suggested_followups(id,ask_ai_run_id,text,rank) VALUES (?,?,?,?)"
+    ).run(createId("aif_"), response.id, text, index + 1));
+    response.conflicts.forEach((conflict) => db.prepare(
+      "INSERT INTO ask_ai_run_conflicts(ask_ai_run_id,conflict_assessment_id) VALUES (?,?)"
+    ).run(response.id, conflict.id));
+    (response.analysis ?? []).forEach((item, index) => {
+      if (item.supportStatus !== "ai_analysis" || item.evidencePointerIds.length || item.citationIds.length) {
+        throw new ValidationError(`AI analysis item must be uncited and unsupported: ${item.id}`);
+      }
+      db.prepare(`INSERT INTO ask_ai_analysis_claims(id,ask_ai_run_id,position,kind,text,explanation,warning,metadata_json,created_at)
+        VALUES (?,?,?,?,?,?,?, '{}', ?)`).run(item.id, response.id, index, item.kind, item.text, item.explanation ?? null, item.warning, response.createdAt);
+    });
+  })();
+}
+function getAskAIResponse(db, id) {
+  const run = db.prepare("SELECT * FROM ask_ai_runs WHERE id=?").get(id);
+  if (!run) throw new NotFoundError(`Ask AI run not found: ${id}`);
+  const evidenceRows = db.prepare("SELECT * FROM ask_ai_run_evidence WHERE ask_ai_run_id=? ORDER BY rank").all(id);
+  const claimRows = db.prepare(`SELECT c.*,m.kind,m.explanation,m.support_status AS claim_support_status FROM answer_claims c
+    JOIN ask_ai_claim_metadata m ON m.answer_claim_id=c.answer_claim_id
+    WHERE c.answer_id=? ORDER BY c.claim_order`).all(run.answer_id);
+  const linkRows = db.prepare(`SELECT l.*,e.source_pointer_uri,e.transcript_id,e.span_id,e.quote_preview
+    FROM citation_links l JOIN evidence_pointers e ON e.evidence_pointer_id=l.evidence_pointer_id
+    WHERE l.answer_id=? ORDER BY l.citation_order`).all(run.answer_id);
+  const followups = db.prepare("SELECT text FROM ask_ai_suggested_followups WHERE ask_ai_run_id=? ORDER BY rank").all(id);
+  const conflicts = db.prepare("SELECT conflict_assessment_id FROM ask_ai_run_conflicts WHERE ask_ai_run_id=? ORDER BY conflict_assessment_id").all(id).map((row) => createConflictRepository(db).get(row.conflict_assessment_id)).filter(Boolean);
+  const evidenceConfidence = run.evidence_confidence;
+  const evidence = evidenceRows.map((item) => ({
+    evidencePointerId: String(item.evidence_pointer_id),
+    sourcePointerId: item.source_pointer_id == null ? void 0 : String(item.source_pointer_id),
+    transcriptId: String(item.transcript_id),
+    spanId: String(item.span_id),
+    quotePreview: String(item.quote_preview),
+    evidenceScore: Number(item.evidence_score),
+    evidenceConfidence: item.evidence_confidence,
+    scoringExplanation: String(item.scoring_explanation),
+    clickbackUri: `mv://evidence/${String(item.evidence_pointer_id)}`,
+    stance: "unknown",
+    sourceKind: "raw_transcript_span"
+  }));
+  const selectedBySpan = new Map(evidence.map((item) => [`${item.transcriptId}::${item.spanId}`, item]));
+  const citations = linkRows.map((item) => {
+    const selected = selectedBySpan.get(`${String(item.transcript_id)}::${String(item.span_id)}`);
+    const evidencePointerId = selected?.evidencePointerId ?? String(item.evidence_pointer_id);
+    return {
+      id: String(item.citation_link_id),
+      label: String(item.citation_label),
+      evidencePointerId,
+      sourcePointerId: selected?.sourcePointerId ?? String(item.source_pointer_uri),
+      transcriptId: String(item.transcript_id),
+      spanId: String(item.span_id),
+      quotePreview: selected?.quotePreview ?? String(item.quote_preview),
+      clickbackUri: `mv://evidence/${evidencePointerId}`
+    };
+  });
+  const answerMeta = db.prepare("SELECT metadata_json FROM ai_answers WHERE id=?").get(run.answer_id);
+  let synthesis;
+  try {
+    const parsedMeta = answerMeta?.metadata_json ? JSON.parse(answerMeta.metadata_json) : null;
+    synthesis = parsedMeta?.synthesis ?? void 0;
+  } catch {
+    synthesis = void 0;
+  }
+  const analysis = db.prepare("SELECT id,kind,text,explanation,warning FROM ask_ai_analysis_claims WHERE ask_ai_run_id=? ORDER BY position").all(id).map((item) => ({
+    id: String(item.id),
+    kind: item.kind,
+    text: String(item.text),
+    supportStatus: "ai_analysis",
+    evidencePointerIds: [],
+    citationIds: [],
+    warning: AI_ANALYSIS_WARNING,
+    explanation: item.explanation == null ? void 0 : String(item.explanation)
+  }));
+  return {
+    id,
+    question: String(run.question),
+    answerMarkdown: String(run.answer_markdown),
+    evidenceConfidence,
+    notEnoughEvidence: Boolean(run.not_enough_evidence),
+    createdAt: String(run.created_at),
+    queryUnderstanding: JSON.parse(String(run.query_understanding_json)),
+    scoreRunId: run.score_run_id == null ? void 0 : String(run.score_run_id),
+    evidence,
+    ...analysis.length ? { analysis, hasAnalysis: true } : {},
+    claims: claimRows.map((item) => {
+      const claimCitations = citations.filter((citation) => linkRows.some((link) => link.answer_claim_id === item.answer_claim_id && link.citation_link_id === citation.id));
+      return {
+        id: String(item.answer_claim_id),
+        kind: item.kind,
+        text: String(item.claim_text),
+        supportStatus: reconstructClaimSupport(item.claim_support_status, evidenceConfidence),
+        evidencePointerIds: claimCitations.map((citation) => citation.evidencePointerId),
+        citationIds: claimCitations.map((citation) => citation.id),
+        explanation: item.explanation == null ? void 0 : String(item.explanation)
+      };
+    }),
+    citations,
+    suggestedFollowups: followups.map((item) => item.text),
+    conflicts,
+    synthesis
+  };
+}
 
 // src/ask-ai/dependencies.ts
 var useType = (kind) => kind === "fact" ? "direct_fact" : kind === "pattern" ? "pattern" : kind;
@@ -3203,7 +3298,8 @@ function createDatabaseAskAIDependencies(db, options = {}) {
       useType: useType(query.requestedClaimKinds[0] ?? "fact"),
       now: options.now?.().toISOString()
     }),
-    findConflicts: async (evidence) => createConflictRepository(db, { now: options.now }).listActiveForEvidencePointers(evidence.map((item) => item.evidencePointerId))
+    findConflicts: async (evidence) => createConflictRepository(db, { now: options.now }).listActiveForEvidencePointers(evidence.map((item) => item.evidencePointerId)),
+    retrieveUnconfirmed: (query) => retrieveUnconfirmedContext(db, query)
   };
 }
 
@@ -3252,10 +3348,15 @@ async function askAI(request, deps) {
   if (allowAnalysis && deps.analysis) {
     analysis = (await deps.analysis.analyze({ query, evidence: selectedEvidence })).map((item, index) => buildAnalysisClaim(index, item));
   }
+  let unconfirmed = [];
+  if ((contract.includeReviewOnlyItems || contract.includeConflicts) && deps.retrieveUnconfirmed) {
+    const selectedConflictIds = new Set(conflicts.map((conflict) => conflict.id));
+    unconfirmed = (await deps.retrieveUnconfirmed(query)).filter((item) => !(item.conflictId && selectedConflictIds.has(item.conflictId)));
+  }
   const response = {
     id: createId("ask_"),
     question: request.question,
-    answerMarkdown: addConflictContext(renderAnswer({ confidence, claims, citations: finalCitations, analysis }), conflicts),
+    answerMarkdown: addConflictContext(renderAnswer({ confidence, claims, citations: finalCitations, analysis, unconfirmed }), conflicts),
     evidenceConfidence: confidence,
     claims,
     citations: finalCitations,
@@ -3266,7 +3367,8 @@ async function askAI(request, deps) {
     queryUnderstanding: query,
     conflicts,
     synthesis: resolveAnswerSynthesis(deps, actualMode),
-    ...analysis.length ? { analysis, hasAnalysis: true } : {}
+    ...analysis.length ? { analysis, hasAnalysis: true } : {},
+    ...unconfirmed.length ? { unconfirmed, hasUnconfirmed: true } : {}
   };
   if (deps.persistAnswer) await deps.persistAnswer(response);
   else if (deps.db) {
@@ -4530,6 +4632,17 @@ function toAnswerBundle(response, options = {}) {
     support_state: a.supportStatus,
     warning: a.warning
   }));
+  const unconfirmed = (response.unconfirmed ?? []).map((u) => ({
+    unconfirmed_id: u.id,
+    kind: u.kind,
+    label: u.label,
+    text: u.text,
+    warning: u.warning,
+    ...u.memoryId ? { memory_id: u.memoryId } : {},
+    ...u.conflictId ? { conflict_id: u.conflictId } : {},
+    ...u.evidenceUri ? { evidence_uri: u.evidenceUri } : {},
+    ...u.missingEvidence ? { missing_evidence: true } : {}
+  }));
   const warnings = [];
   if (response.notEnoughEvidence || response.evidenceConfidence === "no_evidence") {
     warnings.push(analysis.length ? "No transcript evidence was found; the AI analysis below is reasoning, not transcript-backed evidence." : "No supporting transcript evidence was found; this is a refusal, not an answer.");
@@ -4540,6 +4653,7 @@ function toAnswerBundle(response, options = {}) {
   }
   if (broken.size > 0) warnings.push(`${broken.size} citation pointer(s) no longer resolve.`);
   if (analysis.length) warnings.push("This answer includes AI analysis that is not from your transcripts and is not cited evidence.");
+  if (unconfirmed.length) warnings.push("This answer includes unconfirmed/review-only/tentative/conflict context that is NOT confirmed transcript-backed fact.");
   const conflicts = response.conflicts.map((conflict) => ({
     summary: conflict.summary,
     explanation: conflict.explanation,
@@ -4555,6 +4669,7 @@ function toAnswerBundle(response, options = {}) {
     not_enough_evidence: response.notEnoughEvidence,
     claims,
     ...analysis.length ? { analysis, has_analysis: true } : {},
+    ...unconfirmed.length ? { unconfirmed, has_unconfirmed: true } : {},
     citations,
     evidence,
     warnings,

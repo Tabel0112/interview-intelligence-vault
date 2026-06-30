@@ -4,6 +4,7 @@ export * from "./queryUnderstanding.js";
 export * from "./evidenceSelection.js";
 export * from "./claimGeneration.js";
 export * from "./analysisGeneration.js";
+export * from "./unconfirmedContext.js";
 export * from "./llmSynthesis.js";
 export * from "./citations.js";
 export * from "./answerRendering.js";

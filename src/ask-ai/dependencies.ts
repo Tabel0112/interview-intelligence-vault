@@ -2,6 +2,7 @@ import type { SqliteDatabase } from "../db/connection.js";
 import { createConflictRepository } from "../conflicts/index.js";
 import { getEvidenceCandidatesForTarget, scoreEvidenceBundle, type EvidenceCandidate, type EvidenceUseType } from "../evidence/index.js";
 import { searchEvidencePointers } from "../retrieval/index.js";
+import { retrieveUnconfirmedContext } from "./unconfirmedContext.js";
 import type { QueryUnderstanding, AskAIAnalysisModel, AskAIDependencies, AskAILanguageModel, ClaimKind, SynthesisInfo } from "./types.js";
 
 const useType = (kind: ClaimKind): EvidenceUseType => kind === "fact" ? "direct_fact" : kind === "pattern" ? "pattern" : kind;
@@ -35,5 +36,6 @@ export function createDatabaseAskAIDependencies(
       claimText: question, candidates, useType: useType(query.requestedClaimKinds[0] ?? "fact"), now: options.now?.().toISOString(),
     }),
     findConflicts: async (evidence) => createConflictRepository(db, { now: options.now }).listActiveForEvidencePointers(evidence.map((item) => item.evidencePointerId)),
+    retrieveUnconfirmed: (query) => retrieveUnconfirmedContext(db, query),
   };
 }

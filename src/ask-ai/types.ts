@@ -141,6 +141,41 @@ export interface AskAIAnalysisModel {
   analyze(input: { query: QueryUnderstanding; evidence: AskAIEvidenceItem[] }): Promise<Array<{ kind: ClaimKind; text: string; explanation?: string }>>;
 }
 
+/** Disclaimer shown above every unconfirmed-context section. */
+export const UNCONFIRMED_DISCLAIMER = "These items are not confirmed transcript-backed facts. They are review-only, tentative, conflicting, or missing evidence.";
+
+export type AskAIUnconfirmedKind = "review_only" | "tentative" | "possible_duplicate" | "conflict" | "degraded";
+
+/**
+ * A LIVE-ONLY unconfirmed-context item (sub-step A) surfaced for broad/advice/conflict prompts. It is a
+ * SEPARATE field from {@link AskAIResponse.claims} — never a supported claim, never a normal citation. It
+ * may reference an existing live evidence pointer (link/context only), but referencing it never promotes it
+ * to a cited supported claim. Degraded items (evidence removed/deleted) carry `missingEvidence` and no link.
+ * Not persisted in sub-step A (reconstruction omits it until sub-step B).
+ */
+export interface AskAIUnconfirmedItem {
+  id: string;
+  kind: AskAIUnconfirmedKind;
+  /** The canonical memory this came from (for review_only/tentative/possible_duplicate/degraded). */
+  memoryId?: string;
+  /** The conflict assessment this came from (for kind="conflict"). */
+  conflictId?: string;
+  text: string;
+  /** Short human label, e.g. "Review-only", "Tentative idea", "Possible duplicate", "Conflict / tension". */
+  label: string;
+  warning: string;
+  /** A LIVE evidence pointer for context/linking only — NOT a supported citation. Omitted when none exists. */
+  evidencePointerId?: string;
+  evidenceUri?: string;
+  /** True when this item's transcript evidence is missing/deleted (no link is shown). */
+  missingEvidence?: boolean;
+}
+
+/** Live-only seam that retrieves unconfirmed/tentative/conflict context (DB-backed; no LLM, no new pointers). */
+export interface AskAIUnconfirmedRetriever {
+  (query: QueryUnderstanding): Promise<AskAIUnconfirmedItem[]>;
+}
+
 /** Non-secret description of how the answer's claims were synthesized. No keys/prompts/provider objects. */
 export type SynthesisActualMode = "external_llm" | "deterministic" | "conflict";
 
@@ -188,6 +223,14 @@ export interface AskAIResponse {
   analysis?: AskAIAnalysisClaim[];
   /** True when live AI analysis was produced for this response (live-only; not reconstructed). */
   hasAnalysis?: boolean;
+  /**
+   * LIVE-ONLY unconfirmed/tentative/conflict context (sub-step A). Surfaced only when the answer contract
+   * allows; never a supported claim or normal citation. NOT persisted yet, so a reconstructed answer omits
+   * it (the rendered markdown still carries the sections) until sub-step B adds a separate table.
+   */
+  unconfirmed?: AskAIUnconfirmedItem[];
+  /** True when live unconfirmed context was surfaced for this response (live-only; not reconstructed). */
+  hasUnconfirmed?: boolean;
 }
 
 export interface AskAILanguageModel {
@@ -203,6 +246,8 @@ export interface AskAIDependencies {
   llm?: AskAILanguageModel;
   /** Live-only AI-analysis seam (Step 2). Injected only when an external LLM is configured. */
   analysis?: AskAIAnalysisModel;
+  /** Live-only unconfirmed/tentative/conflict retrieval seam (sub-step A). DB-backed; no LLM required. */
+  retrieveUnconfirmed?: AskAIUnconfirmedRetriever;
   /** Non-secret configured-synthesis summary, recorded with the answer. */
   synthesisInfo?: SynthesisInfo;
   /** Live app: require an LLM for synthesis (no deterministic fallback). Throws typed errors instead. */

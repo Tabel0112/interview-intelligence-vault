@@ -9,7 +9,7 @@ import { suggestFollowups } from "./followups.js";
 import { persistAskAIResponse } from "./repository.js";
 import { renderAnswer } from "./answerRendering.js";
 import { understandQuestion } from "./queryUnderstanding.js";
-import type { AnswerSynthesis, AskAIAnalysisClaim, AskAIDependencies, AskAIRequest, AskAIResponse, ClaimKind, QueryUnderstanding } from "./types.js";
+import type { AnswerSynthesis, AskAIAnalysisClaim, AskAIDependencies, AskAIRequest, AskAIResponse, AskAIUnconfirmedItem, ClaimKind, QueryUnderstanding } from "./types.js";
 
 const useType = (kind: ClaimKind): EvidenceUseType =>
   kind === "fact" ? "direct_fact" : kind === "pattern" ? "pattern" : kind;
@@ -63,14 +63,24 @@ export async function askAI(request: AskAIRequest, deps: AskAIDependencies): Pro
   if (allowAnalysis && deps.analysis) {
     analysis = (await deps.analysis.analyze({ query, evidence: selectedEvidence })).map((item, index) => buildAnalysisClaim(index, item));
   }
+  // LIVE-ONLY unconfirmed/tentative/conflict surfacing (sub-step A). Gated on the contract — factual_lookup
+  // and strict summary have neither flag, so they never enter here and their refusal is unchanged. Conflicts
+  // already surfaced via the selected-evidence `conflicts` set are removed to avoid double-counting. Never
+  // added to `claims`; never persisted in sub-step A.
+  let unconfirmed: AskAIUnconfirmedItem[] = [];
+  if ((contract.includeReviewOnlyItems || contract.includeConflicts) && deps.retrieveUnconfirmed) {
+    const selectedConflictIds = new Set(conflicts.map((conflict) => conflict.id));
+    unconfirmed = (await deps.retrieveUnconfirmed(query)).filter((item) => !(item.conflictId && selectedConflictIds.has(item.conflictId)));
+  }
   const response: AskAIResponse = {
     id: createId("ask_"), question: request.question,
-    answerMarkdown: addConflictContext(renderAnswer({ confidence, claims, citations: finalCitations, analysis }), conflicts),
+    answerMarkdown: addConflictContext(renderAnswer({ confidence, claims, citations: finalCitations, analysis, unconfirmed }), conflicts),
     evidenceConfidence: confidence, claims, citations: finalCitations, evidence: finalEvidence,
     suggestedFollowups: request.includeSuggestedFollowups === false ? [] : suggestFollowups(confidence, query),
     notEnoughEvidence: confidence === "no_evidence", createdAt: timestamp.toISOString(), queryUnderstanding: query, conflicts,
     synthesis: resolveAnswerSynthesis(deps, actualMode),
     ...(analysis.length ? { analysis, hasAnalysis: true } : {}),
+    ...(unconfirmed.length ? { unconfirmed, hasUnconfirmed: true } : {}),
   };
   if (deps.persistAnswer) await deps.persistAnswer(response);
   else if (deps.db) {

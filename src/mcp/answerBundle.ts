@@ -35,6 +35,18 @@ export interface AnswerBundleAnalysisItem {
   support_state: "ai_analysis";
   warning: string;
 }
+/** A LIVE-ONLY unconfirmed/tentative/conflict item. Never a claim, never a normal citation (sub-step A). */
+export interface AnswerBundleUnconfirmedItem {
+  unconfirmed_id: string;
+  kind: string;
+  label: string;
+  text: string;
+  warning: string;
+  memory_id?: string;
+  conflict_id?: string;
+  evidence_uri?: string;
+  missing_evidence?: boolean;
+}
 export interface AnswerBundleCitation {
   citation_id: string;
   label: string;
@@ -95,6 +107,9 @@ export interface AnswerBundle {
   /** Live-only AI analysis (uncited, not transcript-backed). Present only on fresh ask_vault responses. */
   analysis?: AnswerBundleAnalysisItem[];
   has_analysis?: boolean;
+  /** Live-only unconfirmed/tentative/conflict context (never claims/citations). Fresh responses only. */
+  unconfirmed?: AnswerBundleUnconfirmedItem[];
+  has_unconfirmed?: boolean;
   citations: AnswerBundleCitation[];
   evidence: AnswerBundleEvidence[];
   warnings: string[];
@@ -158,6 +173,12 @@ export function toAnswerBundle(response: AskAIResponse, options: { brokenCitatio
   const analysis: AnswerBundleAnalysisItem[] = (response.analysis ?? []).map((a) => ({
     analysis_id: a.id, text: a.text, kind: a.kind, support_state: a.supportStatus, warning: a.warning,
   }));
+  // Live-only unconfirmed context (sub-step A): separate from claims/citations; never a supported claim.
+  const unconfirmed: AnswerBundleUnconfirmedItem[] = (response.unconfirmed ?? []).map((u) => ({
+    unconfirmed_id: u.id, kind: u.kind, label: u.label, text: u.text, warning: u.warning,
+    ...(u.memoryId ? { memory_id: u.memoryId } : {}), ...(u.conflictId ? { conflict_id: u.conflictId } : {}),
+    ...(u.evidenceUri ? { evidence_uri: u.evidenceUri } : {}), ...(u.missingEvidence ? { missing_evidence: true } : {}),
+  }));
 
   const warnings: string[] = [];
   if (response.notEnoughEvidence || response.evidenceConfidence === "no_evidence") {
@@ -171,6 +192,7 @@ export function toAnswerBundle(response: AskAIResponse, options: { brokenCitatio
   }
   if (broken.size > 0) warnings.push(`${broken.size} citation pointer(s) no longer resolve.`);
   if (analysis.length) warnings.push("This answer includes AI analysis that is not from your transcripts and is not cited evidence.");
+  if (unconfirmed.length) warnings.push("This answer includes unconfirmed/review-only/tentative/conflict context that is NOT confirmed transcript-backed fact.");
 
   const conflicts: AnswerBundleConflict[] = response.conflicts.map((conflict) => ({
     summary: conflict.summary,
@@ -189,6 +211,7 @@ export function toAnswerBundle(response: AskAIResponse, options: { brokenCitatio
     not_enough_evidence: response.notEnoughEvidence,
     claims,
     ...(analysis.length ? { analysis, has_analysis: true } : {}),
+    ...(unconfirmed.length ? { unconfirmed, has_unconfirmed: true } : {}),
     citations,
     evidence,
     warnings,
