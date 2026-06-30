@@ -15,7 +15,7 @@ import type { SqliteDatabase } from "../db/connection.js";
 import type { FrontendApi } from "../frontend/index.js";
 import { routeHref, toObsidianUri } from "../frontend/router.js";
 import { resolveEvidencePointer } from "../provenance/index.js";
-import { searchEvidencePointers } from "../retrieval/index.js";
+import { searchEvidencePointers, type EmbeddingProvider } from "../retrieval/index.js";
 import { toAnswerBundle } from "./answerBundle.js";
 
 export class McpInputError extends Error {
@@ -67,6 +67,13 @@ export interface VaultToolDeps {
   api: FrontendApi;
   /** Optional Obsidian vault name for external obsidian:// deep links (omit -> active vault). */
   obsidianVault?: string;
+  /**
+   * Production embedding provider for the inspection `search_evidence` tool. When configured, search_evidence
+   * runs the same semantic (vector) retrieval as ask_vault; otherwise it stays keyword-only. Returns the
+   * external provider only (never token-hash-v1), matching the ask_vault gate. ask_vault's own provider is
+   * threaded through the FrontendApi, not here.
+   */
+  getEmbeddingProvider?: () => EmbeddingProvider | undefined;
 }
 
 export function createVaultTools(deps: VaultToolDeps): { definitions: McpToolDefinition[]; call: (name: string, args: unknown) => Promise<unknown> } {
@@ -145,7 +152,11 @@ export function createVaultTools(deps: VaultToolDeps): { definitions: McpToolDef
         const args = asRecord(raw);
         const query = requireString(args, "query");
         const limit = clampLimit(args.limit, 10, 25);
-        const candidates = await searchEvidencePointers(db, { query, mode: "hybrid", finalLimit: limit, requireEvidencePointers: true });
+        // Use the same production embedding provider as ask_vault when configured (semantic retrieval);
+        // otherwise stays keyword-only. Passing a provider whose space does not match the index simply
+        // yields no vector hits (it never mixes spaces), so this is safe even mid-reindex.
+        const embeddingProvider = deps.getEmbeddingProvider?.();
+        const candidates = await searchEvidencePointers(db, { query, mode: "hybrid", finalLimit: limit, requireEvidencePointers: true, embeddingProvider });
         const cards = candidates.map((candidate) => {
           const resolved = resolveEvidencePointer(db, candidate.targetId);
           if (!resolved.ok) {

@@ -15,6 +15,7 @@ import { openDatabase } from "../db/index.js";
 import { createSqliteFrontendApi } from "../frontend/index.js";
 import { isLlmConfigured } from "../obsidian/settings.js";
 import { askAiSynthesisFromSettings } from "../obsidian/llmSettings.js";
+import { askAiEmbeddingHealth, productionEmbeddingProvider } from "../obsidian/embeddingSettings.js";
 import { loadMcpConfig, McpConfigError } from "./config.js";
 import { createVaultTools, McpInputError } from "./tools.js";
 
@@ -47,17 +48,28 @@ function main(): void {
     const api = createSqliteFrontendApi(db, {
       llmRequired: true,
       getLlmReady: () => isLlmConfigured(config.settings),
-      // No transport injected -> ExternalLlmProvider uses its default Node fetch HTTP transport.
+      // No transport injected -> ExternalLlmProvider / ExternalEmbeddingProvider use their default
+      // Node fetch HTTP transport. The embedding gate + provider mirror the Obsidian app path exactly:
+      // production Ask AI requires a configured API embedding provider with a matching index, and
+      // never falls back to token-hash-v1 (productionEmbeddingProvider returns undefined when unset).
       getSynthesis: () => askAiSynthesisFromSettings(config.settings),
+      embeddingsRequired: true,
+      getEmbeddingHealth: () => askAiEmbeddingHealth(db, config.settings),
+      getEmbeddingProvider: () => productionEmbeddingProvider(config.settings),
     });
-    tools = createVaultTools({ db, api, obsidianVault: config.obsidianVault });
+    tools = createVaultTools({ db, api, obsidianVault: config.obsidianVault, getEmbeddingProvider: () => productionEmbeddingProvider(config.settings) });
   } catch (error) {
     log(`Failed to open database at TMV_DB_PATH: ${error instanceof Error ? error.message : "unknown error"}`);
     process.exit(1);
     return;
   }
 
-  log(`ready (db=${config.dbPath}, llmReady=${config.llmReady})`);
+  // Non-secret startup summary: provider NAMES only (never keys, never file contents).
+  const embeddingProviderName = productionEmbeddingProvider(config.settings)?.name ?? "none";
+  const settingsSource = config.settingsSource.loaded
+    ? `${config.settingsSource.explicit ? "explicit" : "inferred"} ${config.settingsSource.path}`
+    : `unloaded (${config.settingsSource.note ?? "no settings file"})`;
+  log(`ready (db=${config.dbPath}, settings=${settingsSource}, llmReady=${config.llmReady}, embeddingProvider=${embeddingProviderName})`);
 
   const toolList = tools.definitions.map((d) => ({ name: d.name, description: d.description, inputSchema: d.inputSchema }));
   const rl = createInterface({ input: process.stdin, terminal: false });

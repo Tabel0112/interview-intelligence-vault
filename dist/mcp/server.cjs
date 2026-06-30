@@ -25,7 +25,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 
 // src/mcp/server.ts
 var import_node_readline = require("node:readline");
-var import_node_path3 = require("node:path");
+var import_node_path4 = require("node:path");
 
 // src/db/connection.ts
 var import_better_sqlite3 = __toESM(require("better-sqlite3"), 1);
@@ -1640,6 +1640,232 @@ function conflictEvidenceForAnswer(conflicts) {
   return [...new Map(items.map((item) => [item.evidencePointerId, item])).values()];
 }
 
+// src/retrieval/embeddingProvider.ts
+var import_node_crypto5 = require("node:crypto");
+var DeterministicTestEmbeddingProvider = class {
+  constructor(dimensions = 32) {
+    this.dimensions = dimensions;
+  }
+  dimensions;
+  name = "deterministic-test";
+  model = "token-hash-v1";
+  async embedTexts(texts) {
+    return texts.map((text) => {
+      const vector = Array(this.dimensions).fill(0);
+      for (const token of text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []) {
+        const hash = (0, import_node_crypto5.createHash)("sha256").update(token).digest();
+        vector[hash[0] % this.dimensions] += hash[1] % 2 ? 1 : -1;
+      }
+      return vector;
+    });
+  }
+};
+var NoopEmbeddingProvider = class {
+  name = "noop";
+  model = "disabled";
+  dimensions = 0;
+  async embedTexts(texts) {
+    return texts.map(() => []);
+  }
+};
+
+// src/retrieval/externalEmbeddingProvider.ts
+var EmbeddingError = class extends Error {
+  context;
+  constructor(message, context, options) {
+    super(message, options);
+    this.name = new.target.name;
+    this.context = context;
+  }
+};
+var EmbeddingAuthError = class extends EmbeddingError {
+};
+var EmbeddingRateLimitError = class extends EmbeddingError {
+};
+var EmbeddingProviderError = class extends EmbeddingError {
+};
+var EmbeddingResponseError = class extends EmbeddingError {
+};
+var REDACTED = "[redacted]";
+function redactSecret(text, secret) {
+  if (!secret || !secret.trim()) return text;
+  return text.split(secret).join(REDACTED);
+}
+var DEFAULT_BASE_URL = "https://api.openai.com/v1";
+function createHttpEmbeddingTransport(fetchImpl = globalThis.fetch) {
+  return async (request) => {
+    const controller = new AbortController();
+    const onExternalAbort = () => controller.abort();
+    request.signal?.addEventListener("abort", onExternalAbort, { once: true });
+    let timer;
+    if (request.timeoutMs != null) timer = setTimeout(() => controller.abort(), request.timeoutMs);
+    try {
+      const response = await fetchImpl(request.url, {
+        method: request.method,
+        headers: request.headers,
+        body: request.body,
+        signal: controller.signal
+      });
+      let body = null;
+      try {
+        body = await response.json();
+      } catch {
+        try {
+          body = await response.text();
+        } catch {
+          body = null;
+        }
+      }
+      return { status: response.status, body };
+    } finally {
+      if (timer) clearTimeout(timer);
+      request.signal?.removeEventListener("abort", onExternalAbort);
+    }
+  };
+}
+var ExternalEmbeddingProvider = class {
+  // Only name/model/dimensions are public. The secret-bearing internals are true ECMAScript
+  // private fields (#), which are not reflectable: they never appear in JSON.stringify, object
+  // spread, Object.keys/getOwnPropertyNames, Reflect.ownKeys, or util.inspect.
+  name;
+  model;
+  dimensions;
+  #apiKey;
+  #baseUrl;
+  #transport;
+  #timeoutMs;
+  constructor(config) {
+    if (!config.apiKey || !config.apiKey.trim()) {
+      throw new EmbeddingAuthError("External embedding provider requires a non-blank API key", { provider: config.provider, model: config.model });
+    }
+    if (!Number.isInteger(config.dimensions) || config.dimensions <= 0) {
+      throw new EmbeddingResponseError("External embedding provider requires positive integer dimensions", { provider: config.provider, model: config.model });
+    }
+    this.name = config.provider;
+    this.model = config.model;
+    this.dimensions = config.dimensions;
+    this.#apiKey = config.apiKey.trim();
+    this.#baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
+    this.#transport = config.transport ?? createHttpEmbeddingTransport();
+    this.#timeoutMs = config.timeoutMs;
+  }
+  context(status) {
+    return { provider: this.name, model: this.model, status };
+  }
+  async embedTexts(texts) {
+    if (!texts.length) return [];
+    let response;
+    try {
+      response = await this.#transport({
+        url: `${this.#baseUrl}/embeddings`,
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.#apiKey}` },
+        body: JSON.stringify({ model: this.model, input: texts }),
+        timeoutMs: this.#timeoutMs
+      });
+    } catch (error) {
+      const detail = redactSecret(error instanceof Error ? error.message : String(error), this.#apiKey);
+      throw new EmbeddingProviderError(`Embedding request failed: ${detail}`, this.context());
+    }
+    if (response.status === 401 || response.status === 403) {
+      throw new EmbeddingAuthError("Embedding provider rejected the API key", this.context(response.status));
+    }
+    if (response.status === 429) {
+      throw new EmbeddingRateLimitError("Embedding provider rate limit exceeded", this.context(response.status));
+    }
+    if (response.status < 200 || response.status >= 300) {
+      throw new EmbeddingProviderError(`Embedding provider returned status ${response.status}`, this.context(response.status));
+    }
+    const data = response.body?.data;
+    if (!Array.isArray(data) || data.length !== texts.length) {
+      throw new EmbeddingResponseError("Embedding response did not contain one vector per input", this.context(response.status));
+    }
+    const ordered = [...data].sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+    return ordered.map((item) => {
+      const vector = item.embedding;
+      if (!Array.isArray(vector) || vector.length !== this.dimensions || vector.some((value) => typeof value !== "number" || !Number.isFinite(value))) {
+        throw new EmbeddingResponseError(`Embedding response vector did not match expected ${this.dimensions} finite dimensions`, this.context(response.status));
+      }
+      return vector;
+    });
+  }
+};
+var createExternalEmbeddingProvider = (config) => new ExternalEmbeddingProvider(config);
+
+// src/retrieval/embeddingSpace.ts
+var embeddingSpaceOf = (provider) => ({
+  provider: provider.name,
+  model: provider.model,
+  dimensions: provider.dimensions
+});
+var sameEmbeddingSpace = (a, b) => a.provider === b.provider && a.model === b.model && a.dimensions === b.dimensions;
+var isVectorCapable = (space) => space.dimensions > 0;
+var DEFAULT_EMBEDDING_PROVIDER_ID = "deterministic-test";
+var TOKEN_HASH_MODEL = "token-hash-v1";
+function resolveEmbeddingProvider(id = DEFAULT_EMBEDDING_PROVIDER_ID, options) {
+  if (options?.external) {
+    const external = options.external;
+    if (external.apiKey && external.apiKey.trim().length > 0) {
+      return { provider: createExternalEmbeddingProvider(external), requestedId: external.provider, usedFallback: false };
+    }
+    return {
+      provider: new DeterministicTestEmbeddingProvider(options?.dimensions),
+      requestedId: external.provider,
+      usedFallback: true,
+      reason: `Embedding provider "${external.provider}" has no API key configured; using local deterministic ${TOKEN_HASH_MODEL}.`
+    };
+  }
+  if (id === "noop" || id === "disabled") {
+    return { provider: new NoopEmbeddingProvider(), requestedId: id, usedFallback: false };
+  }
+  if (id === DEFAULT_EMBEDDING_PROVIDER_ID || id === TOKEN_HASH_MODEL) {
+    return { provider: new DeterministicTestEmbeddingProvider(options?.dimensions), requestedId: id, usedFallback: false };
+  }
+  return {
+    provider: new DeterministicTestEmbeddingProvider(options?.dimensions),
+    requestedId: id,
+    usedFallback: true,
+    reason: `Embedding provider "${id}" is not available yet; using local deterministic ${TOKEN_HASH_MODEL}.`
+  };
+}
+
+// src/retrieval/reindexStatus.ts
+var isProvider = (value) => typeof value.embedTexts === "function";
+function detectReindexNeeded(db, active, options = {}) {
+  const activeSpace = isProvider(active) ? embeddingSpaceOf(active) : active;
+  const vectorCapable = isVectorCapable(activeSpace);
+  const types = options.targetTypes;
+  const typeClause = types && types.length ? ` WHERE target_type IN (${types.map(() => "?").join(",")})` : "";
+  const typeArgs = types && types.length ? types : [];
+  const documentCount = db.prepare(`SELECT COUNT(*) c FROM retrieval_documents${typeClause}`).get(...typeArgs).c;
+  const joinTypeClause = types && types.length ? ` AND d.target_type IN (${types.map(() => "?").join(",")})` : "";
+  const embeddedUnderActive = db.prepare(
+    `SELECT COUNT(*) c FROM retrieval_documents d
+     JOIN search_embeddings e ON e.target_type=d.target_type AND e.target_id=d.target_id
+     WHERE e.embedding_provider=? AND e.embedding_model=? AND e.embedding_dim=?${joinTypeClause}`
+  ).get(activeSpace.provider, activeSpace.model, activeSpace.dimensions, ...typeArgs).c;
+  const missingUnderActive = Math.max(0, documentCount - embeddedUnderActive);
+  const indexedSpaces = db.prepare(
+    `SELECT embedding_provider provider, embedding_model model, embedding_dim dimensions, COUNT(*) count
+     FROM search_embeddings${typeClause}
+     GROUP BY embedding_provider, embedding_model, embedding_dim
+     ORDER BY embedding_provider, embedding_model, embedding_dim`
+  ).all(...typeArgs);
+  const foreignSpaces = indexedSpaces.filter((space) => !sameEmbeddingSpace(space, activeSpace));
+  const reasons = [];
+  if (!vectorCapable) reasons.push("Embeddings are disabled for the active provider (0 dimensions).");
+  if (documentCount === 0) reasons.push("No indexed documents to embed.");
+  if (vectorCapable && documentCount > 0 && missingUnderActive > 0) {
+    reasons.push(`${missingUnderActive} of ${documentCount} document(s) are not embedded under the active space (${activeSpace.provider}/${activeSpace.model}@${activeSpace.dimensions}).`);
+  }
+  if (foreignSpaces.length) {
+    const total = foreignSpaces.reduce((sum, space) => sum + space.count, 0);
+    reasons.push(`${total} embedding(s) are indexed under a different provider/model and are ignored by vector search.`);
+  }
+  const needsReindex = vectorCapable && documentCount > 0 && missingUnderActive > 0;
+  return { activeSpace, vectorCapable, documentCount, embeddedUnderActive, missingUnderActive, indexedSpaces, foreignSpaces, needsReindex, reasons };
+}
+
 // src/memory/extraction/prompt.ts
 var MEMORY_EXTRACTION_PROMPT_VERSION = "mvp-memory-extraction-v1";
 
@@ -2981,8 +3207,8 @@ function createLlmAskAILanguageModel(provider, options = {}) {
 }
 
 // src/ask-ai/citations.ts
-var import_node_crypto5 = require("node:crypto");
-var stableId3 = (value) => `aic_${(0, import_node_crypto5.createHash)("sha256").update(value).digest("hex").slice(0, 24)}`;
+var import_node_crypto6 = require("node:crypto");
+var stableId3 = (value) => `aic_${(0, import_node_crypto6.createHash)("sha256").update(value).digest("hex").slice(0, 24)}`;
 function buildCitations(evidence) {
   const seen = /* @__PURE__ */ new Set();
   return evidence.filter((item) => {
@@ -3646,9 +3872,9 @@ function createSpansFromTurns(rawText, turns) {
 }
 
 // src/ingest/importTranscript.ts
-var import_node_crypto6 = require("node:crypto");
+var import_node_crypto7 = require("node:crypto");
 function stableId4(prefix, value, length = 24) {
-  return `${prefix}${(0, import_node_crypto6.createHash)("sha256").update(value).digest("hex").slice(0, length)}`;
+  return `${prefix}${(0, import_node_crypto7.createHash)("sha256").update(value).digest("hex").slice(0, length)}`;
 }
 function sourceTypeForDatabase(sourceType) {
   if (sourceType === "paste" || sourceType === "test") return "pasted_text";
@@ -3777,7 +4003,7 @@ function importTranscript(db, input) {
 }
 
 // src/obsidian/graphBuilder.ts
-var import_node_crypto7 = require("node:crypto");
+var import_node_crypto8 = require("node:crypto");
 
 // src/obsidian/liveEvidence.ts
 var MEMORY_HAS_GRAPH_EVIDENCE_SQL = `EXISTS (
@@ -3823,7 +4049,7 @@ var conflictPath = (label, id) => readableNotePath("Conflicts", label, id);
 var entityPath = (kind, label, id) => readableNotePath(kind === "person" ? "People" : kind === "topic" ? "Topics" : "Decisions", label, id);
 
 // src/obsidian/graphBuilder.ts
-var edgeId = (source, target, type, evidence = "") => `ov_edge_${(0, import_node_crypto7.createHash)("sha256").update(`${source}:${target}:${type}:${evidence}`).digest("hex").slice(0, 24)}`;
+var edgeId = (source, target, type, evidence = "") => `ov_edge_${(0, import_node_crypto8.createHash)("sha256").update(`${source}:${target}:${type}:${evidence}`).digest("hex").slice(0, 24)}`;
 var mapEdgeType = (value) => value === "contradicts" ? "contradicts" : value === "updates" ? "updates" : value === "mentions" ? "mentions" : value === "supports" ? "supports" : value === "derived_from" ? "derived_from" : "about";
 var memoryNodeId = (id) => `memory:${id}`;
 var evidenceNodeId = (id) => `evidence:${id}`;
@@ -4428,6 +4654,8 @@ function createSqliteFrontendApi(db, options = {}) {
 // src/obsidian/settings.ts
 var EXTERNAL_LLM_PROVIDERS = ["openai"];
 var isExternalLlmProvider = (providerId) => EXTERNAL_LLM_PROVIDERS.includes(providerId);
+var EXTERNAL_EMBEDDING_PROVIDERS = ["openai"];
+var isExternalEmbeddingProvider = (providerId) => EXTERNAL_EMBEDDING_PROVIDERS.includes(providerId);
 function isLlmConfigured(settings) {
   return settings.mode === "external" && isExternalLlmProvider(settings.llm.provider) && settings.llm.model.trim().length > 0 && (settings.apiKeys[settings.llm.provider]?.trim().length ?? 0) > 0;
 }
@@ -4438,6 +4666,62 @@ var DEFAULT_SETTINGS = {
   embedding: { provider: "deterministic-test", model: "token-hash-v1" },
   apiKeys: {}
 };
+var isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+var asString = (value, fallback) => typeof value === "string" ? value : fallback;
+var normalizeMode = (value) => value === "external" ? "external" : "local";
+var positiveInt = (value) => {
+  const n = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
+  return Number.isInteger(n) && n > 0 ? n : void 0;
+};
+var positiveNumber = (value) => {
+  const n = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
+  return Number.isFinite(n) && n > 0 ? n : void 0;
+};
+var normalizeBaseUrl = (value) => typeof value === "string" && value.trim().length > 0 ? value.trim() : void 0;
+var normalizeLlmSelection = (value, fallback) => {
+  const record = isRecord(value) ? value : {};
+  const result = {
+    provider: asString(record.provider, fallback.provider),
+    model: asString(record.model, fallback.model)
+  };
+  const baseUrl = normalizeBaseUrl(record.baseUrl);
+  if (baseUrl !== void 0) result.baseUrl = baseUrl;
+  const timeoutMs = positiveNumber(record.timeoutMs);
+  if (timeoutMs !== void 0) result.timeoutMs = timeoutMs;
+  return result;
+};
+var normalizeEmbeddingSelection = (value, fallback) => {
+  const record = isRecord(value) ? value : {};
+  const result = {
+    provider: asString(record.provider, fallback.provider),
+    model: asString(record.model, fallback.model)
+  };
+  const dimensions = positiveInt(record.dimensions);
+  if (dimensions !== void 0) result.dimensions = dimensions;
+  const baseUrl = normalizeBaseUrl(record.baseUrl);
+  if (baseUrl !== void 0) result.baseUrl = baseUrl;
+  const timeoutMs = positiveNumber(record.timeoutMs);
+  if (timeoutMs !== void 0) result.timeoutMs = timeoutMs;
+  return result;
+};
+var normalizeApiKeys = (value) => {
+  if (!isRecord(value)) return {};
+  const result = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (typeof raw === "string" && raw.trim().length > 0) result[key] = raw;
+  }
+  return result;
+};
+function normalizeSettings(raw) {
+  const record = isRecord(raw) ? raw : {};
+  return {
+    schemaVersion: 1,
+    mode: normalizeMode(record.mode),
+    llm: normalizeLlmSelection(record.llm, DEFAULT_SETTINGS.llm),
+    embedding: normalizeEmbeddingSelection(record.embedding, DEFAULT_SETTINGS.embedding),
+    apiKeys: normalizeApiKeys(record.apiKeys)
+  };
+}
 
 // src/llm/errors.ts
 var LlmError = class extends Error {
@@ -4462,10 +4746,10 @@ var LlmResponseFormatError = class extends LlmError {
 };
 
 // src/llm/redaction.ts
-var REDACTED = "[redacted]";
-function redactSecret(text, secret) {
+var REDACTED2 = "[redacted]";
+function redactSecret2(text, secret) {
   if (!secret || !secret.trim()) return text;
-  return text.split(secret).join(REDACTED);
+  return text.split(secret).join(REDACTED2);
 }
 
 // src/llm/timeout.ts
@@ -4497,7 +4781,7 @@ async function runWithTimeout(operation, options = {}) {
 }
 
 // src/llm/externalLlmProvider.ts
-var DEFAULT_BASE_URL = "https://api.openai.com/v1";
+var DEFAULT_BASE_URL2 = "https://api.openai.com/v1";
 function createHttpLlmTransport(fetchImpl = globalThis.fetch) {
   return async (request) => {
     const response = await fetchImpl(request.url, {
@@ -4535,7 +4819,7 @@ var ExternalLlmProvider = class {
     this.id = config.id;
     this.model = config.model;
     this.#apiKey = config.apiKey.trim();
-    this.#baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
+    this.#baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL2).replace(/\/+$/, "");
     this.#transport = config.transport ?? createHttpLlmTransport();
     this.#timeoutMs = config.timeoutMs;
   }
@@ -4561,7 +4845,7 @@ var ExternalLlmProvider = class {
       );
     } catch (error) {
       if (error instanceof LlmError) throw error;
-      const detail = redactSecret(error instanceof Error ? error.message : String(error), this.#apiKey);
+      const detail = redactSecret2(error instanceof Error ? error.message : String(error), this.#apiKey);
       throw new LlmProviderError(`LLM request failed: ${detail}`, { provider: this.id, model: this.model });
     }
     if (response.status === 401 || response.status === 403) {
@@ -4615,7 +4899,55 @@ function askAiSynthesisFromSettings(settings, options = {}) {
   };
 }
 
+// src/obsidian/embeddingSettings.ts
+function externalEmbeddingConfigFromSettings(settings) {
+  if (settings.mode !== "external") return null;
+  const { provider, model, dimensions, baseUrl, timeoutMs } = settings.embedding;
+  if (!isExternalEmbeddingProvider(provider)) return null;
+  const apiKey = settings.apiKeys[provider];
+  if (!apiKey || !apiKey.trim()) return null;
+  if (typeof dimensions !== "number" || !Number.isInteger(dimensions) || dimensions <= 0) return null;
+  const config = { provider, model, dimensions, apiKey: apiKey.trim() };
+  if (baseUrl) config.baseUrl = baseUrl;
+  if (typeof timeoutMs === "number" && timeoutMs > 0) config.timeoutMs = timeoutMs;
+  return config;
+}
+function resolveEmbeddingProviderFromSettings(settings, options = {}) {
+  const external = externalEmbeddingConfigFromSettings(settings);
+  if (external) {
+    const config = options.transport ? { ...external, transport: options.transport } : external;
+    return resolveEmbeddingProvider(void 0, { external: config });
+  }
+  if (settings.mode === "external" && isExternalEmbeddingProvider(settings.embedding.provider)) {
+    const fallback = resolveEmbeddingProvider();
+    return {
+      ...fallback,
+      requestedId: settings.embedding.provider,
+      usedFallback: true,
+      reason: `External embedding provider "${settings.embedding.provider}" is not fully configured (needs a non-blank API key and positive dimensions); using local ${TOKEN_HASH_MODEL}.`
+    };
+  }
+  return resolveEmbeddingProvider(settings.embedding.provider, { dimensions: settings.embedding.dimensions });
+}
+function askAiEmbeddingHealth(db, settings) {
+  const external = externalEmbeddingConfigFromSettings(settings);
+  if (!external) {
+    return { state: "setup_required", reason: "No API embedding provider is configured. token-hash-v1 is dev/test only and is not used for production Ask AI answers." };
+  }
+  const assessment = detectReindexNeeded(db, { provider: external.provider, model: external.model, dimensions: external.dimensions });
+  if (assessment.needsReindex) {
+    return { state: "reindex_required", reason: assessment.reasons.join(" ") || "The embedding index does not match the configured API embedding provider. Rebuild the embedding index." };
+  }
+  return { state: "ok", reason: "Embedding index matches the configured API embedding provider." };
+}
+function productionEmbeddingProvider(settings, options = {}) {
+  const resolution = resolveEmbeddingProviderFromSettings(settings, options);
+  return resolution.usedFallback ? void 0 : resolution.provider;
+}
+
 // src/mcp/config.ts
+var import_node_fs2 = require("node:fs");
+var import_node_path3 = require("node:path");
 var McpConfigError = class extends Error {
   constructor(message) {
     super(message);
@@ -4626,26 +4958,50 @@ var trimmed = (value) => {
   const v = value?.trim();
   return v && v.length > 0 ? v : void 0;
 };
-function loadMcpConfig(env = process.env) {
+function readSettingsFileFromDisk(path) {
+  try {
+    return (0, import_node_fs2.readFileSync)(path, "utf8");
+  } catch {
+    return void 0;
+  }
+}
+function loadMcpConfig(env = process.env, options = {}) {
   const dbPath = trimmed(env.TMV_DB_PATH);
   if (!dbPath) throw new McpConfigError("TMV_DB_PATH is required (path to the Transcript Memory Vault SQLite database).");
-  const provider = trimmed(env.TMV_LLM_PROVIDER) ?? "openai";
-  const model = trimmed(env.TMV_LLM_MODEL) ?? "";
-  const baseUrl = trimmed(env.TMV_LLM_BASE_URL);
-  const apiKey = trimmed(env.TMV_LLM_API_KEY);
-  const settings = {
-    schemaVersion: 1,
-    mode: "external",
-    llm: { provider, model, ...baseUrl ? { baseUrl } : {} },
-    embedding: DEFAULT_SETTINGS.embedding,
-    // external embeddings are not required in Phase 1
-    apiKeys: apiKey ? { [provider]: apiKey } : {}
-  };
+  const explicitSettingsPath = trimmed(env.TMV_SETTINGS_PATH);
+  const settingsPath = explicitSettingsPath ?? (0, import_node_path3.join)((0, import_node_path3.dirname)(dbPath), "data.json");
+  const read = options.readSettingsFile ?? readSettingsFileFromDisk;
+  const contents = read(settingsPath);
+  let fileSettings;
+  let sourceNote;
+  if (contents === void 0) {
+    sourceNote = "settings file not found; using env/defaults (no API embeddings -> setup_required)";
+  } else {
+    try {
+      fileSettings = normalizeSettings(JSON.parse(contents));
+    } catch {
+      sourceNote = "settings file present but not valid JSON; using env/defaults";
+    }
+  }
+  let settings = fileSettings ? { ...fileSettings, apiKeys: { ...fileSettings.apiKeys } } : { ...DEFAULT_SETTINGS, apiKeys: {} };
+  const envProvider = trimmed(env.TMV_LLM_PROVIDER);
+  const envModel = trimmed(env.TMV_LLM_MODEL);
+  const envBaseUrl = trimmed(env.TMV_LLM_BASE_URL);
+  const envApiKey = trimmed(env.TMV_LLM_API_KEY);
+  if (envProvider || envModel || envBaseUrl || envApiKey) {
+    const provider = envProvider ?? "openai";
+    const llm = { provider, model: envModel ?? settings.llm.model };
+    if (envBaseUrl) llm.baseUrl = envBaseUrl;
+    const apiKeys = { ...settings.apiKeys };
+    if (envApiKey) apiKeys[provider] = envApiKey;
+    settings = { ...settings, mode: "external", llm, apiKeys };
+  }
   return {
     dbPath,
     migrationDirectory: trimmed(env.TMV_MIGRATIONS_DIR),
     settings,
     llmReady: isLlmConfigured(settings),
+    settingsSource: { path: settingsPath, loaded: fileSettings !== void 0, explicit: Boolean(explicitSettingsPath), note: sourceNote },
     obsidianVault: trimmed(env.TMV_OBSIDIAN_VAULT)
   };
 }
@@ -4884,7 +5240,8 @@ function createVaultTools(deps) {
         const args = asRecord(raw);
         const query = requireString(args, "query");
         const limit = clampLimit(args.limit, 10, 25);
-        const candidates = await searchEvidencePointers(db, { query, mode: "hybrid", finalLimit: limit, requireEvidencePointers: true });
+        const embeddingProvider = deps.getEmbeddingProvider?.();
+        const candidates = await searchEvidencePointers(db, { query, mode: "hybrid", finalLimit: limit, requireEvidencePointers: true, embeddingProvider });
         const cards = candidates.map((candidate) => {
           const resolved = resolveEvidencePointer(db, candidate.targetId);
           if (!resolved.ok) {
@@ -5014,23 +5371,31 @@ function main() {
     process.exit(1);
     return;
   }
-  const migrationDirectory = config.migrationDirectory ?? (0, import_node_path3.join)((0, import_node_path3.dirname)(process.argv[1] ?? "."), "migrations");
+  const migrationDirectory = config.migrationDirectory ?? (0, import_node_path4.join)((0, import_node_path4.dirname)(process.argv[1] ?? "."), "migrations");
   let tools;
   try {
     const db = openDatabase(config.dbPath, { migrationDirectory });
     const api = createSqliteFrontendApi(db, {
       llmRequired: true,
       getLlmReady: () => isLlmConfigured(config.settings),
-      // No transport injected -> ExternalLlmProvider uses its default Node fetch HTTP transport.
-      getSynthesis: () => askAiSynthesisFromSettings(config.settings)
+      // No transport injected -> ExternalLlmProvider / ExternalEmbeddingProvider use their default
+      // Node fetch HTTP transport. The embedding gate + provider mirror the Obsidian app path exactly:
+      // production Ask AI requires a configured API embedding provider with a matching index, and
+      // never falls back to token-hash-v1 (productionEmbeddingProvider returns undefined when unset).
+      getSynthesis: () => askAiSynthesisFromSettings(config.settings),
+      embeddingsRequired: true,
+      getEmbeddingHealth: () => askAiEmbeddingHealth(db, config.settings),
+      getEmbeddingProvider: () => productionEmbeddingProvider(config.settings)
     });
-    tools = createVaultTools({ db, api, obsidianVault: config.obsidianVault });
+    tools = createVaultTools({ db, api, obsidianVault: config.obsidianVault, getEmbeddingProvider: () => productionEmbeddingProvider(config.settings) });
   } catch (error) {
     log(`Failed to open database at TMV_DB_PATH: ${error instanceof Error ? error.message : "unknown error"}`);
     process.exit(1);
     return;
   }
-  log(`ready (db=${config.dbPath}, llmReady=${config.llmReady})`);
+  const embeddingProviderName = productionEmbeddingProvider(config.settings)?.name ?? "none";
+  const settingsSource = config.settingsSource.loaded ? `${config.settingsSource.explicit ? "explicit" : "inferred"} ${config.settingsSource.path}` : `unloaded (${config.settingsSource.note ?? "no settings file"})`;
+  log(`ready (db=${config.dbPath}, settings=${settingsSource}, llmReady=${config.llmReady}, embeddingProvider=${embeddingProviderName})`);
   const toolList = tools.definitions.map((d) => ({ name: d.name, description: d.description, inputSchema: d.inputSchema }));
   const rl = (0, import_node_readline.createInterface)({ input: process.stdin, terminal: false });
   rl.on("line", (line) => {

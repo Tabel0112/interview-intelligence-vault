@@ -269,23 +269,26 @@ describe("MCP tools", () => {
   });
 });
 
+// Inject an empty settings reader so these env-only cases never depend on a stray /tmp/data.json on disk.
+const noFile = { readSettingsFile: () => undefined };
 describe("loadMcpConfig", () => {
-  it("requires TMV_DB_PATH and builds settings from env without reading Obsidian data.json", () => {
+  it("requires TMV_DB_PATH and builds settings from env LLM when no settings file is present", () => {
     expect(() => loadMcpConfig({})).toThrow(McpConfigError);
     expect(() => loadMcpConfig({})).toThrow(/TMV_DB_PATH/); // missing DB path fails with a clear, actionable message
-    const cfg = loadMcpConfig({ TMV_DB_PATH: "/tmp/vault.sqlite", TMV_LLM_PROVIDER: "openai", TMV_LLM_MODEL: "gpt-x", TMV_LLM_API_KEY: SECRET });
+    const cfg = loadMcpConfig({ TMV_DB_PATH: "/tmp/vault.sqlite", TMV_LLM_PROVIDER: "openai", TMV_LLM_MODEL: "gpt-x", TMV_LLM_API_KEY: SECRET }, noFile);
     expect(cfg.dbPath).toBe("/tmp/vault.sqlite");
     expect(cfg.llmReady).toBe(true);
     expect(cfg.settings.mode).toBe("external");
+    expect(cfg.settingsSource.loaded).toBe(false); // no data.json -> env/defaults
   });
 
   it("reports llmReady false when the LLM is not fully configured", () => {
-    expect(loadMcpConfig({ TMV_DB_PATH: "/tmp/v.sqlite" }).llmReady).toBe(false); // no model/key
+    expect(loadMcpConfig({ TMV_DB_PATH: "/tmp/v.sqlite" }, noFile).llmReady).toBe(false); // no model/key
   });
 
   it("threads TMV_OBSIDIAN_VAULT into obsidianVault (optional; trimmed; absent -> undefined)", () => {
-    expect(loadMcpConfig({ TMV_DB_PATH: "/tmp/v.sqlite", TMV_OBSIDIAN_VAULT: "My Vault" }).obsidianVault).toBe("My Vault");
-    expect(loadMcpConfig({ TMV_DB_PATH: "/tmp/v.sqlite" }).obsidianVault).toBeUndefined();
-    expect(loadMcpConfig({ TMV_DB_PATH: "/tmp/v.sqlite", TMV_OBSIDIAN_VAULT: "   " }).obsidianVault).toBeUndefined();
+    expect(loadMcpConfig({ TMV_DB_PATH: "/tmp/v.sqlite", TMV_OBSIDIAN_VAULT: "My Vault" }, noFile).obsidianVault).toBe("My Vault");
+    expect(loadMcpConfig({ TMV_DB_PATH: "/tmp/v.sqlite" }, noFile).obsidianVault).toBeUndefined();
+    expect(loadMcpConfig({ TMV_DB_PATH: "/tmp/v.sqlite", TMV_OBSIDIAN_VAULT: "   " }, noFile).obsidianVault).toBeUndefined();
   });
 });
