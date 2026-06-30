@@ -211,7 +211,8 @@ export function toAnswerBundle(response: AskAIResponse, options: { brokenCitatio
     not_enough_evidence: response.notEnoughEvidence,
     claims,
     ...(analysis.length ? { analysis, has_analysis: true } : {}),
-    ...(unconfirmed.length ? { unconfirmed, has_unconfirmed: true } : {}),
+    // Always present (array + boolean) so live ask_vault and reconstructed get_answer share one contract.
+    unconfirmed, has_unconfirmed: unconfirmed.length > 0,
     citations,
     evidence,
     warnings,

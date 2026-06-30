@@ -74,14 +74,16 @@ describe("Ask AI unconfirmed surfacing — contract gating", () => {
     const r = await ask("What evidence supports SQLite as the source of truth?");
     expect(r.notEnoughEvidence).toBe(true);
     expect(r.answerMarkdown).toContain("don't have enough transcript-backed evidence");
-    expect(r.hasUnconfirmed).toBeUndefined();
+    expect(r.hasUnconfirmed).toBe(false);
+    expect(r.unconfirmed).toEqual([]);
   });
 
   it("factual_lookup never runs the unconfirmed branch", async () => {
     seedProject();
     const r = await ask("What is the source of truth for this app?");
     expect(r.queryUnderstanding.intent).toBe("factual_lookup");
-    expect(r.hasUnconfirmed).toBeUndefined();
+    expect(r.hasUnconfirmed).toBe(false);
+    expect(r.unconfirmed).toEqual([]);
   });
 });
 
@@ -142,12 +144,15 @@ describe("Ask AI unconfirmed surfacing — MCP & reconstruction", () => {
     expect(bundle.warnings.some((w) => /not confirmed transcript-backed fact/i.test(w))).toBe(true);
   });
 
-  it("live-only: a reconstructed answer omits structured unconfirmed[] until sub-step B (markdown still has it)", async () => {
+  it("sub-step B: a reconstructed answer restores structured unconfirmed[] (not as claims/citations)", async () => {
     seedProject();
     const live = await ask("What are the risks, conflicts, or uncertain ideas in this project?");
     expect(live.hasUnconfirmed).toBe(true);
     const reconstructed = getAskAIResponse(db, live.id);
-    expect(reconstructed.unconfirmed ?? []).toHaveLength(0); // not persisted in sub-step A
-    expect(reconstructed.answerMarkdown).toContain("Conflicts / tensions"); // markdown round-trips
+    expect(reconstructed.hasUnconfirmed).toBe(true);
+    expect((reconstructed.unconfirmed ?? []).map((u) => u.kind).sort()).toEqual((live.unconfirmed ?? []).map((u) => u.kind).sort());
+    expect(reconstructed.claims).toHaveLength(0);
+    expect(reconstructed.citations).toHaveLength(0);
+    expect(reconstructed.answerMarkdown).toContain("Conflicts / tensions");
   });
 });

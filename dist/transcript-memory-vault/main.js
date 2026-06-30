@@ -840,7 +840,8 @@ var PACKAGED_MIGRATIONS = [
   { id: "011", name: "agent_orchestration_hermes", filename: "011_agent_orchestration_hermes.sql" },
   { id: "012", name: "obsidian_views", filename: "012_obsidian_views.sql" },
   { id: "013", name: "ask_ai_claim_support", filename: "013_ask_ai_claim_support.sql" },
-  { id: "014", name: "ask_ai_analysis", filename: "014_ask_ai_analysis.sql" }
+  { id: "014", name: "ask_ai_analysis", filename: "014_ask_ai_analysis.sql" },
+  { id: "015", name: "ask_ai_unconfirmed", filename: "015_ask_ai_unconfirmed.sql" }
 ];
 var PACKAGED_MIGRATION_COUNT = PACKAGED_MIGRATIONS.length;
 function validateMigrationPackage(directory = defaultMigrationDirectory()) {
@@ -4319,6 +4320,7 @@ function suggestFollowups(confidence, query) {
 }
 
 // src/ask-ai/repository.ts
+var VALID_UNCONFIRMED_KINDS = /* @__PURE__ */ new Set(["review_only", "tentative", "possible_duplicate", "conflict", "degraded"]);
 var bundleStatus = (confidence) => confidence === "no_evidence" ? "weak" : confidence;
 var answerStatus = (confidence) => confidence === "no_evidence" ? "refused_no_evidence" : confidence === "weak" ? "weak_evidence" : confidence === "conflicting" ? "conflicting_evidence" : "answered";
 var answerConfidence = (confidence) => confidence === "strong" ? "high" : confidence === "mixed" || confidence === "conflicting" ? "medium" : "low";
@@ -4435,6 +4437,28 @@ function persistAskAIResponse(db, response) {
       db.prepare(`INSERT INTO ask_ai_analysis_claims(id,ask_ai_run_id,position,kind,text,explanation,warning,metadata_json,created_at)
         VALUES (?,?,?,?,?,?,?, '{}', ?)`).run(item.id, response.id, index, item.kind, item.text, item.explanation ?? null, item.warning, response.createdAt);
     });
+    (response.unconfirmed ?? []).forEach((item, index) => {
+      const tainted = item;
+      if (!VALID_UNCONFIRMED_KINDS.has(item.kind) || "supportStatus" in tainted || "citationIds" in tainted || "evidencePointerIds" in tainted) {
+        throw new ValidationError(`Unconfirmed item is not safe to persist (claim-shaped/invalid kind): ${item.id}`);
+      }
+      db.prepare(`INSERT INTO ask_ai_unconfirmed_items(id,ask_ai_run_id,position,kind,memory_id,conflict_id,text,label,warning,evidence_pointer_id,evidence_uri,missing_evidence,metadata_json,created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?, '{}', ?)`).run(
+        item.id,
+        response.id,
+        index,
+        item.kind,
+        item.memoryId ?? null,
+        item.conflictId ?? null,
+        item.text,
+        item.label,
+        item.warning,
+        item.evidencePointerId ?? null,
+        item.evidenceUri ?? null,
+        item.missingEvidence ? 1 : 0,
+        response.createdAt
+      );
+    });
   })();
 }
 function getAskAIResponse(db, id) {
@@ -4496,6 +4520,21 @@ function getAskAIResponse(db, id) {
     warning: AI_ANALYSIS_WARNING,
     explanation: item.explanation == null ? void 0 : String(item.explanation)
   }));
+  const unconfirmed = db.prepare("SELECT id,kind,memory_id,conflict_id,text,label,warning,evidence_pointer_id,evidence_uri,missing_evidence FROM ask_ai_unconfirmed_items WHERE ask_ai_run_id=? ORDER BY position").all(id).map((row) => {
+    const pointerId = row.evidence_pointer_id == null ? void 0 : String(row.evidence_pointer_id);
+    const stillLive = pointerId != null && resolveEvidencePointer(db, pointerId).ok;
+    return {
+      id: String(row.id),
+      kind: row.kind,
+      text: String(row.text),
+      label: String(row.label),
+      warning: String(row.warning),
+      ...row.memory_id == null ? {} : { memoryId: String(row.memory_id) },
+      ...row.conflict_id == null ? {} : { conflictId: String(row.conflict_id) },
+      ...pointerId != null && stillLive ? { evidencePointerId: pointerId, evidenceUri: row.evidence_uri == null ? `mv://evidence/${pointerId}` : String(row.evidence_uri) } : {},
+      ...Boolean(row.missing_evidence) || pointerId != null && !stillLive ? { missingEvidence: true } : {}
+    };
+  });
   return {
     id,
     question: String(run.question),
@@ -4507,6 +4546,9 @@ function getAskAIResponse(db, id) {
     scoreRunId: run.score_run_id == null ? void 0 : String(run.score_run_id),
     evidence,
     ...analysis.length ? { analysis, hasAnalysis: true } : {},
+    // Always present (array + boolean), so an old answer with no rows reconstructs `[]` / `false`.
+    unconfirmed,
+    hasUnconfirmed: unconfirmed.length > 0,
     claims: claimRows.map((item) => {
       const claimCitations = citations.filter((citation) => linkRows.some((link) => link.answer_claim_id === item.answer_claim_id && link.citation_link_id === citation.id));
       return {
@@ -4631,7 +4673,9 @@ async function askAI(request, deps) {
     conflicts,
     synthesis: resolveAnswerSynthesis(deps, actualMode),
     ...analysis.length ? { analysis, hasAnalysis: true } : {},
-    ...unconfirmed.length ? { unconfirmed, hasUnconfirmed: true } : {}
+    // Always present (array + boolean) so live and reconstructed answers share one contract.
+    unconfirmed,
+    hasUnconfirmed: unconfirmed.length > 0
   };
   if (deps.persistAnswer) await deps.persistAnswer(response);
   else if (deps.db) {

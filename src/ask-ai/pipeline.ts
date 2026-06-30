@@ -80,7 +80,8 @@ export async function askAI(request: AskAIRequest, deps: AskAIDependencies): Pro
     notEnoughEvidence: confidence === "no_evidence", createdAt: timestamp.toISOString(), queryUnderstanding: query, conflicts,
     synthesis: resolveAnswerSynthesis(deps, actualMode),
     ...(analysis.length ? { analysis, hasAnalysis: true } : {}),
-    ...(unconfirmed.length ? { unconfirmed, hasUnconfirmed: true } : {}),
+    // Always present (array + boolean) so live and reconstructed answers share one contract.
+    unconfirmed, hasUnconfirmed: unconfirmed.length > 0,
   };
   if (deps.persistAnswer) await deps.persistAnswer(response);
   else if (deps.db) {

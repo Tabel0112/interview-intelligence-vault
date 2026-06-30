@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createRepositories, openDatabase, PACKAGED_MIGRATION_COUNT, ValidationError, type SqliteDatabase } from "../src/db/index.js";
+import { createRepositories, openDatabase, PACKAGED_MIGRATIONS, ValidationError, type SqliteDatabase } from "../src/db/index.js";
 import { importTranscript } from "../src/ingest/index.js";
 import { linkMemoryObjectToSpan } from "../src/provenance/index.js";
 import { indexEvidencePointerForSearch } from "../src/retrieval/index.js";
@@ -40,7 +40,7 @@ async function seedEvidence() {
 
 describe("Step 3: migration + schema", () => {
   it("1. registers migration 014 and creates ask_ai_analysis_claims with NO evidence/citation/support columns", () => {
-    expect(PACKAGED_MIGRATION_COUNT).toBe(14);
+    expect(PACKAGED_MIGRATIONS.some((m) => m.filename === "014_ask_ai_analysis.sql")).toBe(true);
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ask_ai_analysis_claims'").get()).toBeDefined();
     const cols = (db.prepare("PRAGMA table_info(ask_ai_analysis_claims)").all() as Array<{ name: string }>).map((c) => c.name);
     expect(cols).toEqual(["id", "ask_ai_run_id", "position", "kind", "text", "explanation", "warning", "metadata_json", "created_at"]);

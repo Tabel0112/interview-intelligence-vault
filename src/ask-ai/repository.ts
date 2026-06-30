@@ -8,8 +8,10 @@ import {
   type EvidencePointer, type EvidenceStrength, type ProvenanceEvidenceRole,
 } from "../provenance/index.js";
 import { AI_ANALYSIS_WARNING } from "./types.js";
-import type { AskAIAnalysisClaim, AskAIResponse, ClaimKind, ClaimSupportStatus } from "./types.js";
+import type { AskAIAnalysisClaim, AskAIResponse, AskAIUnconfirmedItem, AskAIUnconfirmedKind, ClaimKind, ClaimSupportStatus } from "./types.js";
 import { createConflictRepository } from "../conflicts/index.js";
+
+const VALID_UNCONFIRMED_KINDS = new Set<AskAIUnconfirmedKind>(["review_only", "tentative", "possible_duplicate", "conflict", "degraded"]);
 
 const bundleStatus = (confidence: AskAIResponse["evidenceConfidence"]): EvidenceBundleStatus =>
   confidence === "no_evidence" ? "weak" : confidence;
@@ -112,6 +114,18 @@ export function persistAskAIResponse(db: SqliteDatabase, response: AskAIResponse
       db.prepare(`INSERT INTO ask_ai_analysis_claims(id,ask_ai_run_id,position,kind,text,explanation,warning,metadata_json,created_at)
         VALUES (?,?,?,?,?,?,?, '{}', ?)`).run(item.id, response.id, index, item.kind, item.text, item.explanation ?? null, item.warning, response.createdAt);
     });
+    // LIVE-ONLY unconfirmed context (sub-step B): persisted in its OWN table — never answer_claims/citation_links.
+    // Guard so a claim-shaped/cited/supported item can never slip in. evidence_pointer_id is a context link only.
+    (response.unconfirmed ?? []).forEach((item, index) => {
+      const tainted = item as unknown as Record<string, unknown>;
+      if (!VALID_UNCONFIRMED_KINDS.has(item.kind) || "supportStatus" in tainted || "citationIds" in tainted || "evidencePointerIds" in tainted) {
+        throw new ValidationError(`Unconfirmed item is not safe to persist (claim-shaped/invalid kind): ${item.id}`);
+      }
+      db.prepare(`INSERT INTO ask_ai_unconfirmed_items(id,ask_ai_run_id,position,kind,memory_id,conflict_id,text,label,warning,evidence_pointer_id,evidence_uri,missing_evidence,metadata_json,created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?, '{}', ?)`).run(
+        item.id, response.id, index, item.kind, item.memoryId ?? null, item.conflictId ?? null, item.text, item.label, item.warning,
+        item.evidencePointerId ?? null, item.evidenceUri ?? null, item.missingEvidence ? 1 : 0, response.createdAt);
+    });
   })();
 }
 
@@ -169,6 +183,22 @@ export function getAskAIResponse(db: SqliteDatabase, id: string): AskAIResponse 
       supportStatus: "ai_analysis", evidencePointerIds: [], citationIds: [],
       warning: AI_ANALYSIS_WARNING, explanation: item.explanation == null ? undefined : String(item.explanation),
     }));
+  // LIVE-ONLY unconfirmed context (sub-step B): reconstructed from its OWN table — never a claim, never a
+  // citation (the table has no such columns). An optional evidence_pointer_id is a CONTEXT link only; it is
+  // re-resolved here and dropped (with missingEvidence) if the pointer was deleted, so a deleted transcript
+  // never yields a broken citation. Old runs have no rows -> [].
+  const unconfirmed = (db.prepare("SELECT id,kind,memory_id,conflict_id,text,label,warning,evidence_pointer_id,evidence_uri,missing_evidence FROM ask_ai_unconfirmed_items WHERE ask_ai_run_id=? ORDER BY position").all(id) as Array<Record<string, unknown>>)
+    .map((row): AskAIUnconfirmedItem => {
+      const pointerId = row.evidence_pointer_id == null ? undefined : String(row.evidence_pointer_id);
+      const stillLive = pointerId != null && resolveEvidencePointer(db, pointerId).ok;
+      return {
+        id: String(row.id), kind: row.kind as AskAIUnconfirmedKind, text: String(row.text), label: String(row.label), warning: String(row.warning),
+        ...(row.memory_id == null ? {} : { memoryId: String(row.memory_id) }),
+        ...(row.conflict_id == null ? {} : { conflictId: String(row.conflict_id) }),
+        ...(pointerId != null && stillLive ? { evidencePointerId: pointerId, evidenceUri: row.evidence_uri == null ? `mv://evidence/${pointerId}` : String(row.evidence_uri) } : {}),
+        ...(Boolean(row.missing_evidence) || (pointerId != null && !stillLive) ? { missingEvidence: true } : {}),
+      };
+    });
   return {
     id, question: String(run.question), answerMarkdown: String(run.answer_markdown),
     evidenceConfidence,
@@ -176,6 +206,8 @@ export function getAskAIResponse(db: SqliteDatabase, id: string): AskAIResponse 
     queryUnderstanding: JSON.parse(String(run.query_understanding_json)), scoreRunId: run.score_run_id == null ? undefined : String(run.score_run_id),
     evidence,
     ...(analysis.length ? { analysis, hasAnalysis: true } : {}),
+    // Always present (array + boolean), so an old answer with no rows reconstructs `[]` / `false`.
+    unconfirmed, hasUnconfirmed: unconfirmed.length > 0,
     claims: claimRows.map((item) => {
       const claimCitations = citations.filter((citation) => linkRows.some((link) => link.answer_claim_id === item.answer_claim_id && link.citation_link_id === citation.id));
       return {
