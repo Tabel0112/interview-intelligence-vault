@@ -8,7 +8,7 @@
 // validates the key) — it never calls the network until synthesis/extraction actually runs. The API key
 // is never logged here, and only non-secret summaries are exposed to health/UI.
 
-import { createLlmAskAILanguageModel, type AskAILanguageModel, type SynthesisInfo } from "../ask-ai/index.js";
+import { createLlmAskAIAnalysisModel, createLlmAskAILanguageModel, type AskAIAnalysisModel, type AskAILanguageModel, type SynthesisInfo } from "../ask-ai/index.js";
 import { ExternalLlmProvider, type ExternalLlmProviderConfig, type LlmTransport } from "../llm/index.js";
 import { createLlmMemoryExtractor, type MemoryExtractor } from "../memory/index.js";
 import { isExternalLlmProvider, type TranscriptMemorySettings } from "./settings.js";
@@ -45,6 +45,8 @@ function externalProviderFromSettings(settings: TranscriptMemorySettings, option
 export interface AskAiSynthesis {
   /** The grounded LLM synthesis adapter. Present only when an external LLM is configured. */
   llm: AskAILanguageModel;
+  /** Live-only AI-analysis adapter (Step 2), from the same provider. Used for advice/strategy/planning. */
+  analysis: AskAIAnalysisModel;
   /** Non-secret configured-synthesis summary recorded with the answer. No keys/provider objects. */
   info: SynthesisInfo;
 }
@@ -59,6 +61,7 @@ export function askAiSynthesisFromSettings(settings: TranscriptMemorySettings, o
   if (!provider) return undefined;
   return {
     llm: createLlmAskAILanguageModel(provider),
+    analysis: createLlmAskAIAnalysisModel(provider),
     info: { mode: "external_llm", provider: provider.id, model: provider.model, usedFallback: false },
   };
 }

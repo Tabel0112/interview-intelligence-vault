@@ -1,4 +1,4 @@
-import { askAI, createDatabaseAskAIDependencies, getAskAIResponse, SynthesisSetupRequiredError, type AskAILanguageModel, type SynthesisInfo } from "../ask-ai/index.js";
+import { askAI, createDatabaseAskAIDependencies, getAskAIResponse, SynthesisSetupRequiredError, type AskAIAnalysisModel, type AskAILanguageModel, type SynthesisInfo } from "../ask-ai/index.js";
 import { createConflictRepository } from "../conflicts/index.js";
 import type { SqliteDatabase } from "../db/connection.js";
 import { createCorrectionsRepo } from "../db/repositories/correctionsRepo.js";
@@ -202,7 +202,7 @@ export function createSqliteFrontendApi(
   options: {
     now?: () => Date;
     health?: PluginHealth;
-    getSynthesis?: () => { llm?: AskAILanguageModel; info: SynthesisInfo } | undefined;
+    getSynthesis?: () => { llm?: AskAILanguageModel; analysis?: AskAIAnalysisModel; info: SynthesisInfo } | undefined;
     getMemoryExtractor?: () => MemoryExtractor | undefined;
     /** Live app: require a configured LLM for generation; never fall back to deterministic output. */
     llmRequired?: boolean;
@@ -294,12 +294,12 @@ export function createSqliteFrontendApi(
       const synth = options.getSynthesis?.();
       // LLM-required: with no LLM configured, refuse with setup-required before answering (no deterministic answer).
       if (options.llmRequired && !synth?.llm) throw new SynthesisSetupRequiredError();
-      return askAI({ question, transcriptIds: askOptions?.transcriptIds, maxEvidenceItems: askOptions?.maxEvidence }, createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, synthesisInfo: synth?.info, requireLlm: options.llmRequired }));
+      return askAI({ question, transcriptIds: askOptions?.transcriptIds, maxEvidenceItems: askOptions?.maxEvidence }, createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, analysis: synth?.analysis, synthesisInfo: synth?.info, requireLlm: options.llmRequired }));
     },
     async askAI(question, askOptions) {
       const synth = options.getSynthesis?.();
       if (options.llmRequired && !synth?.llm) throw new SynthesisSetupRequiredError();
-      return askAI({ question, transcriptIds: askOptions?.transcriptIds, maxEvidenceItems: askOptions?.maxEvidence }, createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, synthesisInfo: synth?.info, requireLlm: options.llmRequired }));
+      return askAI({ question, transcriptIds: askOptions?.transcriptIds, maxEvidenceItems: askOptions?.maxEvidence }, createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, analysis: synth?.analysis, synthesisInfo: synth?.info, requireLlm: options.llmRequired }));
     },
     async getAnswer(id) {
       try {

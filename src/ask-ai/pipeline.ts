@@ -1,6 +1,7 @@
 import { createId } from "../db/ids.js";
 import { saveEvidenceScoreRun, scoreEvidenceBundle, type EvidenceBundleAssessment, type EvidenceUseType } from "../evidence/index.js";
 import { addConflictContext, confidenceWithConflicts, conflictEvidenceForAnswer } from "../conflicts/index.js";
+import { buildAnalysisClaim } from "./analysisGeneration.js";
 import { buildCitations } from "./citations.js";
 import { generateClaimsFromEvidence } from "./claimGeneration.js";
 import { selectEvidenceForAnswer } from "./evidenceSelection.js";
@@ -8,7 +9,7 @@ import { suggestFollowups } from "./followups.js";
 import { persistAskAIResponse } from "./repository.js";
 import { renderAnswer } from "./answerRendering.js";
 import { understandQuestion } from "./queryUnderstanding.js";
-import type { AnswerSynthesis, AskAIDependencies, AskAIRequest, AskAIResponse, ClaimKind, QueryUnderstanding } from "./types.js";
+import type { AnswerSynthesis, AskAIAnalysisClaim, AskAIDependencies, AskAIRequest, AskAIResponse, ClaimKind, QueryUnderstanding } from "./types.js";
 
 const useType = (kind: ClaimKind): EvidenceUseType =>
   kind === "fact" ? "direct_fact" : kind === "pattern" ? "pattern" : kind;
@@ -52,13 +53,24 @@ export async function askAI(request: AskAIRequest, deps: AskAIDependencies): Pro
   const usedPointers = new Set(claims.flatMap((claim) => claim.evidencePointerIds));
   const finalEvidence = selectedEvidence.filter((item) => usedPointers.has(item.evidencePointerId));
   const finalCitations = citations.filter((item) => usedPointers.has(item.evidencePointerId));
+  // LIVE-ONLY AI analysis branch (Step 2 Option A). Only advice/strategy/planning contracts (which allow
+  // reasoning AND do not require evidence) enter here, so factual/decision/evidence/comparison/summary
+  // lookups are completely unaffected and still refuse on no evidence. Analysis is additive, never
+  // transcript-backed, never persisted (it is not added to `claims`).
+  const contract = query.answerContract;
+  const allowAnalysis = (contract.allowGeneralReasoning || contract.allowRecommendations || contract.allowDrafting) && !contract.refuseIfNoEvidence;
+  let analysis: AskAIAnalysisClaim[] = [];
+  if (allowAnalysis && deps.analysis) {
+    analysis = (await deps.analysis.analyze({ query, evidence: selectedEvidence })).map((item, index) => buildAnalysisClaim(index, item));
+  }
   const response: AskAIResponse = {
     id: createId("ask_"), question: request.question,
-    answerMarkdown: addConflictContext(renderAnswer({ confidence, claims, citations: finalCitations }), conflicts),
+    answerMarkdown: addConflictContext(renderAnswer({ confidence, claims, citations: finalCitations, analysis }), conflicts),
     evidenceConfidence: confidence, claims, citations: finalCitations, evidence: finalEvidence,
     suggestedFollowups: request.includeSuggestedFollowups === false ? [] : suggestFollowups(confidence, query),
     notEnoughEvidence: confidence === "no_evidence", createdAt: timestamp.toISOString(), queryUnderstanding: query, conflicts,
     synthesis: resolveAnswerSynthesis(deps, actualMode),
+    ...(analysis.length ? { analysis, hasAnalysis: true } : {}),
   };
   if (deps.persistAnswer) await deps.persistAnswer(response);
   else if (deps.db) {

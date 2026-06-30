@@ -1577,6 +1577,9 @@ function appShell(title, body) {
   </div>`;
 }
 
+// src/ask-ai/types.ts
+var AI_ANALYSIS_WARNING = "AI analysis \u2014 not from transcript evidence";
+
 // src/ask-ai/errors.ts
 var SynthesisSetupRequiredError = class extends Error {
   code = "synthesis_setup_required";
@@ -1799,6 +1802,77 @@ async function generateClaimsFromEvidence(query, evidence, citations, options) {
   });
 }
 
+// src/ask-ai/analysisGeneration.ts
+var import_node_crypto3 = require("node:crypto");
+var ANALYSIS_KINDS = ["recommendation", "inference", "pattern", "fact"];
+var stableId2 = (value) => `aianalysis_${(0, import_node_crypto3.createHash)("sha256").update(value).digest("hex").slice(0, 24)}`;
+function buildAnalysisClaim(index, item) {
+  return {
+    id: stableId2(`${index}:${item.kind}:${item.text}`),
+    kind: item.kind,
+    text: item.text.trim(),
+    supportStatus: "ai_analysis",
+    evidencePointerIds: [],
+    citationIds: [],
+    warning: AI_ANALYSIS_WARNING,
+    explanation: item.explanation
+  };
+}
+var ANALYSIS_SYSTEM = [
+  "You provide general analysis, recommendations, and frameworks based on reasoning \u2014 NOT facts from the user's transcripts or vault.",
+  "Do NOT claim anything comes from the transcripts. Do NOT invent specific vault facts, names, numbers, decisions, or quotes.",
+  "Cite nothing. The provided evidence is non-citable background only; if it is missing or weak, say so plainly.",
+  "Keep items concise and clearly actionable. Label them as recommendation or inference. Respond with JSON only."
+].join(" ");
+function buildAnalysisPrompt(query, evidence) {
+  const context = evidence.length ? evidence.slice(0, 5).map((item, index) => `${index + 1}. ${item.quotePreview}`).join("\n") : "(no transcript evidence was found for this question)";
+  return [
+    `Question: ${query.originalQuestion}`,
+    "",
+    "Non-citable background context (do NOT repeat as fact, do NOT cite):",
+    context,
+    "",
+    'Return JSON: {"analysis":[{"kind":"recommendation|inference","text":"...","explanation":"<optional>"}]}',
+    "Provide a few high-value recommendations or framings. If transcript evidence is missing or weak, note that the analysis is reasoning, not transcript-backed."
+  ].join("\n");
+}
+function parseAnalysisClaims(rawText) {
+  let parsed;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch {
+    return [];
+  }
+  const items = parsed?.analysis;
+  if (!Array.isArray(items)) return [];
+  const claims = [];
+  items.forEach((raw, index) => {
+    if (!raw || typeof raw !== "object") return;
+    const candidate = raw;
+    const text = candidate.text;
+    if (typeof text !== "string" || !text.trim()) return;
+    const kind = typeof candidate.kind === "string" && ANALYSIS_KINDS.includes(candidate.kind) ? candidate.kind : "recommendation";
+    const explanation = typeof candidate.explanation === "string" ? candidate.explanation : void 0;
+    claims.push(buildAnalysisClaim(index, { kind, text, explanation }));
+  });
+  return claims;
+}
+function createLlmAskAIAnalysisModel(provider, options = {}) {
+  return {
+    async analyze({ query, evidence }) {
+      const requestOptions = {};
+      if (options.timeoutMs != null) requestOptions.timeoutMs = options.timeoutMs;
+      let text;
+      try {
+        text = (await provider.complete({ system: ANALYSIS_SYSTEM, prompt: buildAnalysisPrompt(query, evidence), responseFormat: "json" }, requestOptions)).text;
+      } catch {
+        return [];
+      }
+      return parseAnalysisClaims(text).map((claim) => ({ kind: claim.kind, text: claim.text, explanation: claim.explanation }));
+    }
+  };
+}
+
 // src/ask-ai/llmSynthesis.ts
 var LlmSynthesisError = class extends Error {
   constructor(message, options) {
@@ -1878,8 +1952,8 @@ function createLlmAskAILanguageModel(provider, options = {}) {
 }
 
 // src/ask-ai/citations.ts
-var import_node_crypto3 = require("node:crypto");
-var stableId2 = (value) => `aic_${(0, import_node_crypto3.createHash)("sha256").update(value).digest("hex").slice(0, 24)}`;
+var import_node_crypto4 = require("node:crypto");
+var stableId3 = (value) => `aic_${(0, import_node_crypto4.createHash)("sha256").update(value).digest("hex").slice(0, 24)}`;
 function buildCitations(evidence) {
   const seen = /* @__PURE__ */ new Set();
   return evidence.filter((item) => {
@@ -1887,7 +1961,7 @@ function buildCitations(evidence) {
     seen.add(item.evidencePointerId);
     return true;
   }).map((item, index) => ({
-    id: stableId2(item.evidencePointerId),
+    id: stableId3(item.evidencePointerId),
     label: `[${index + 1}]`,
     evidencePointerId: item.evidencePointerId,
     sourcePointerId: item.sourcePointerId,
@@ -1900,8 +1974,8 @@ function buildCitations(evidence) {
 var renderCitation = (citation) => `${citation.label}(${citation.clickbackUri})`;
 
 // src/ask-ai/answerRendering.ts
-function renderAnswer(input) {
-  if (input.confidence === "no_evidence" || !input.claims.length) return "I don't have enough transcript-backed evidence to answer that.";
+var REFUSAL = "I don't have enough transcript-backed evidence to answer that.";
+function renderFactual(input) {
   const citations = new Map(input.citations.map((item) => [item.id, item]));
   const lines = input.claims.map((claim) => {
     const links2 = claim.citationIds.map((id) => citations.get(id)).filter((item) => item != null).map(renderCitation);
@@ -1913,6 +1987,25 @@ function renderAnswer(input) {
   return `${intro}
 
 ${lines.join("\n\n")}`;
+}
+function renderAnalysisClaim(claim) {
+  const label = `**${claim.kind[0].toUpperCase()}${claim.kind.slice(1)}:** `;
+  return `${label}${claim.text}`;
+}
+function renderAnswer(input) {
+  const analysis = input.analysis ?? [];
+  const hasFactual = input.confidence !== "no_evidence" && input.claims.length > 0;
+  const factual = hasFactual ? renderFactual(input) : "";
+  if (!analysis.length) {
+    return hasFactual ? factual : REFUSAL;
+  }
+  const lead = hasFactual ? factual : "I don't have transcript-backed evidence for this, so the following is AI analysis, not from your transcripts.";
+  const analysisBlock = `## AI analysis \u2014 not from your transcripts
+
+${analysis.map(renderAnalysisClaim).join("\n\n")}`;
+  return `${lead}
+
+${analysisBlock}`;
 }
 
 // src/ask-ai/followups.ts
@@ -2019,8 +2112,8 @@ function resolveSourcePointer(db, pointerUri) {
 }
 
 // src/provenance/utils.ts
-var import_node_crypto4 = require("node:crypto");
-var stableProvenanceId = (prefix, value) => `${prefix}${(0, import_node_crypto4.createHash)("sha256").update(value).digest("hex").slice(0, 24)}`;
+var import_node_crypto5 = require("node:crypto");
+var stableProvenanceId = (prefix, value) => `${prefix}${(0, import_node_crypto5.createHash)("sha256").update(value).digest("hex").slice(0, 24)}`;
 function validateScore(value, name) {
   if (value != null && (!Number.isFinite(value) || value < 0 || value > 1)) throw new ValidationError(`${name} must be between 0 and 1`);
 }
@@ -3141,7 +3234,7 @@ function saveEvidenceScoreRun(db, assessment, options) {
 }
 
 // src/retrieval/embeddingProvider.ts
-var import_node_crypto5 = require("node:crypto");
+var import_node_crypto6 = require("node:crypto");
 var DeterministicTestEmbeddingProvider = class {
   constructor(dimensions = 32) {
     this.dimensions = dimensions;
@@ -3153,7 +3246,7 @@ var DeterministicTestEmbeddingProvider = class {
     return texts.map((text) => {
       const vector = Array(this.dimensions).fill(0);
       for (const token of text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []) {
-        const hash = (0, import_node_crypto5.createHash)("sha256").update(token).digest();
+        const hash = (0, import_node_crypto6.createHash)("sha256").update(token).digest();
         vector[hash[0] % this.dimensions] += hash[1] % 2 ? 1 : -1;
       }
       return vector;
@@ -4341,6 +4434,7 @@ function createDatabaseAskAIDependencies(db, options = {}) {
     db,
     now: options.now,
     llm: options.llm,
+    analysis: options.analysis,
     synthesisInfo: options.synthesisInfo,
     requireLlm: options.requireLlm,
     retrieveCandidates: (query) => retrieve(db, query),
@@ -4393,10 +4487,16 @@ async function askAI(request, deps) {
   const usedPointers = new Set(claims.flatMap((claim) => claim.evidencePointerIds));
   const finalEvidence = selectedEvidence.filter((item) => usedPointers.has(item.evidencePointerId));
   const finalCitations = citations.filter((item) => usedPointers.has(item.evidencePointerId));
+  const contract = query.answerContract;
+  const allowAnalysis = (contract.allowGeneralReasoning || contract.allowRecommendations || contract.allowDrafting) && !contract.refuseIfNoEvidence;
+  let analysis = [];
+  if (allowAnalysis && deps.analysis) {
+    analysis = (await deps.analysis.analyze({ query, evidence: selectedEvidence })).map((item, index) => buildAnalysisClaim(index, item));
+  }
   const response = {
     id: createId("ask_"),
     question: request.question,
-    answerMarkdown: addConflictContext(renderAnswer({ confidence, claims, citations: finalCitations }), conflicts),
+    answerMarkdown: addConflictContext(renderAnswer({ confidence, claims, citations: finalCitations, analysis }), conflicts),
     evidenceConfidence: confidence,
     claims,
     citations: finalCitations,
@@ -4406,7 +4506,8 @@ async function askAI(request, deps) {
     createdAt: timestamp.toISOString(),
     queryUnderstanding: query,
     conflicts,
-    synthesis: resolveAnswerSynthesis(deps, actualMode)
+    synthesis: resolveAnswerSynthesis(deps, actualMode),
+    ...analysis.length ? { analysis, hasAnalysis: true } : {}
   };
   if (deps.persistAnswer) await deps.persistAnswer(response);
   else if (deps.db) {
@@ -4622,9 +4723,9 @@ function createSpansFromTurns(rawText, turns) {
 }
 
 // src/ingest/importTranscript.ts
-var import_node_crypto6 = require("node:crypto");
-function stableId3(prefix, value, length = 24) {
-  return `${prefix}${(0, import_node_crypto6.createHash)("sha256").update(value).digest("hex").slice(0, length)}`;
+var import_node_crypto7 = require("node:crypto");
+function stableId4(prefix, value, length = 24) {
+  return `${prefix}${(0, import_node_crypto7.createHash)("sha256").update(value).digest("hex").slice(0, length)}`;
 }
 function sourceTypeForDatabase(sourceType) {
   if (sourceType === "paste" || sourceType === "test") return "pasted_text";
@@ -4637,7 +4738,7 @@ function insertTurns(db, transcriptId, rawText, turns) {
   for (const turn of turns) {
     if (turn.rawText !== rawText.slice(turn.startChar, turn.endChar)) throw new ValidationError("Turn text does not match its raw transcript offsets");
     statement.run({
-      id: stableId3("turn_", `${transcriptId}:${turn.turnIndex}:${turn.startChar}:${turn.endChar}`),
+      id: stableId4("turn_", `${transcriptId}:${turn.turnIndex}:${turn.startChar}:${turn.endChar}`),
       transcript_id: transcriptId,
       turn_index: turn.turnIndex,
       speaker_label: turn.speakerLabel,
@@ -4667,12 +4768,12 @@ function insertSpans(db, transcriptId, sourceId, rawText, spans) {
     if (span.text !== rawText.slice(span.startChar, span.endChar)) throw new ValidationError("Span text does not match its raw transcript offsets");
     let speakerId = null;
     if (span.speakerLabel) {
-      speakerId = speakerIds.get(span.speakerLabel) ?? stableId3("spk_", `${transcriptId}:${span.speakerLabel}`);
+      speakerId = speakerIds.get(span.speakerLabel) ?? stableId4("spk_", `${transcriptId}:${span.speakerLabel}`);
       speakerIds.set(span.speakerLabel, speakerId);
       speakerInsert.run(speakerId, transcriptId, span.speakerLabel);
     }
     statement.run({
-      id: stableId3("sp_", `${transcriptId}:${span.kind}:${span.startChar}:${span.endChar}`),
+      id: stableId4("sp_", `${transcriptId}:${span.kind}:${span.startChar}:${span.endChar}`),
       transcript_id: transcriptId,
       source_id: sourceId,
       speaker_id: speakerId,
@@ -4753,7 +4854,7 @@ function importTranscript(db, input) {
 }
 
 // src/obsidian/graphBuilder.ts
-var import_node_crypto7 = require("node:crypto");
+var import_node_crypto8 = require("node:crypto");
 
 // src/obsidian/liveEvidence.ts
 var MEMORY_HAS_GRAPH_EVIDENCE_SQL = `EXISTS (
@@ -4801,7 +4902,7 @@ var stripMd = (path) => path.replace(/\.md$/i, "");
 var wikiLink = (path, label, anchor) => `[[${stripMd(path)}${anchor ? `#${anchor}` : ""}${label ? `|${label}` : ""}]]`;
 
 // src/obsidian/graphBuilder.ts
-var edgeId = (source, target, type, evidence = "") => `ov_edge_${(0, import_node_crypto7.createHash)("sha256").update(`${source}:${target}:${type}:${evidence}`).digest("hex").slice(0, 24)}`;
+var edgeId = (source, target, type, evidence = "") => `ov_edge_${(0, import_node_crypto8.createHash)("sha256").update(`${source}:${target}:${type}:${evidence}`).digest("hex").slice(0, 24)}`;
 var mapEdgeType = (value) => value === "contradicts" ? "contradicts" : value === "updates" ? "updates" : value === "mentions" ? "mentions" : value === "supports" ? "supports" : value === "derived_from" ? "derived_from" : "about";
 var memoryNodeId = (id) => `memory:${id}`;
 var evidenceNodeId = (id) => `evidence:${id}`;
@@ -5223,12 +5324,12 @@ function createSqliteFrontendApi(db, options = {}) {
     async ask(question, askOptions) {
       const synth = options.getSynthesis?.();
       if (options.llmRequired && !synth?.llm) throw new SynthesisSetupRequiredError();
-      return askAI({ question, transcriptIds: askOptions?.transcriptIds, maxEvidenceItems: askOptions?.maxEvidence }, createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, synthesisInfo: synth?.info, requireLlm: options.llmRequired }));
+      return askAI({ question, transcriptIds: askOptions?.transcriptIds, maxEvidenceItems: askOptions?.maxEvidence }, createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, analysis: synth?.analysis, synthesisInfo: synth?.info, requireLlm: options.llmRequired }));
     },
     async askAI(question, askOptions) {
       const synth = options.getSynthesis?.();
       if (options.llmRequired && !synth?.llm) throw new SynthesisSetupRequiredError();
-      return askAI({ question, transcriptIds: askOptions?.transcriptIds, maxEvidenceItems: askOptions?.maxEvidence }, createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, synthesisInfo: synth?.info, requireLlm: options.llmRequired }));
+      return askAI({ question, transcriptIds: askOptions?.transcriptIds, maxEvidenceItems: askOptions?.maxEvidence }, createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, analysis: synth?.analysis, synthesisInfo: synth?.info, requireLlm: options.llmRequired }));
     },
     async getAnswer(id) {
       try {
@@ -7090,6 +7191,7 @@ function askAiSynthesisFromSettings(settings, options = {}) {
   if (!provider) return void 0;
   return {
     llm: createLlmAskAILanguageModel(provider),
+    analysis: createLlmAskAIAnalysisModel(provider),
     info: { mode: "external_llm", provider: provider.id, model: provider.model, usedFallback: false }
   };
 }

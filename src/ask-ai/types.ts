@@ -111,6 +111,36 @@ export interface AskAICitation {
   clickbackUri: string;
 }
 
+/** Fixed disclaimer carried by every AI-analysis item. */
+export const AI_ANALYSIS_WARNING = "AI analysis — not from transcript evidence";
+
+/**
+ * A LIVE-ONLY, non-transcript-backed analysis/recommendation item (Step 2 Option A). It is intentionally a
+ * SEPARATE type from {@link AskAIClaim} and lives in {@link AskAIResponse.analysis}, never in `claims`, so it
+ * can never be persisted as a supported answer claim, never carries citations/evidence pointers, and can
+ * never be promoted into memory/evidence. `supportStatus` is the literal "ai_analysis" marker.
+ */
+export interface AskAIAnalysisClaim {
+  id: string;
+  kind: ClaimKind;
+  text: string;
+  supportStatus: "ai_analysis";
+  /** Always empty — analysis is never grounded in transcript evidence. */
+  evidencePointerIds: never[];
+  /** Always empty — analysis is never cited. */
+  citationIds: never[];
+  warning: typeof AI_ANALYSIS_WARNING;
+  explanation?: string;
+}
+
+/**
+ * Live-only seam that produces non-transcript AI analysis. Requires an external LLM provider; the live
+ * wiring only injects it when one is configured. Never fabricates or cites transcript facts.
+ */
+export interface AskAIAnalysisModel {
+  analyze(input: { query: QueryUnderstanding; evidence: AskAIEvidenceItem[] }): Promise<Array<{ kind: ClaimKind; text: string; explanation?: string }>>;
+}
+
 /** Non-secret description of how the answer's claims were synthesized. No keys/prompts/provider objects. */
 export type SynthesisActualMode = "external_llm" | "deterministic" | "conflict";
 
@@ -143,12 +173,21 @@ export interface AskAIResponse {
   citations: AskAICitation[];
   evidence: AskAIEvidenceItem[];
   suggestedFollowups: string[];
+  /** True when there are no transcript-backed claims (unchanged meaning; analysis does NOT flip this). */
   notEnoughEvidence: boolean;
   createdAt: string;
   queryUnderstanding: QueryUnderstanding;
   conflicts: ConflictAssessment[];
   scoreRunId?: string;
   synthesis?: AnswerSynthesis;
+  /**
+   * LIVE-ONLY, non-transcript AI analysis (Step 2 Option A). Present only in the in-memory response of a
+   * fresh `askAI` call when the answer contract permits reasoning; NEVER persisted, so a reconstructed
+   * answer (`getAskAIResponse`) has this empty/undefined and is transcript-fact-only until Step 3.
+   */
+  analysis?: AskAIAnalysisClaim[];
+  /** True when live AI analysis was produced for this response (live-only; not reconstructed). */
+  hasAnalysis?: boolean;
 }
 
 export interface AskAILanguageModel {
@@ -162,6 +201,8 @@ export interface AskAIDependencies {
   findConflicts?: (evidence: AskAIEvidenceItem[]) => Promise<ConflictAssessment[]>;
   persistAnswer?: (answer: AskAIResponse) => Promise<void>;
   llm?: AskAILanguageModel;
+  /** Live-only AI-analysis seam (Step 2). Injected only when an external LLM is configured. */
+  analysis?: AskAIAnalysisModel;
   /** Non-secret configured-synthesis summary, recorded with the answer. */
   synthesisInfo?: SynthesisInfo;
   /** Live app: require an LLM for synthesis (no deterministic fallback). Throws typed errors instead. */

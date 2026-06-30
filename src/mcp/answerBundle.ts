@@ -27,6 +27,14 @@ export interface AnswerBundleClaim {
   citation_ids: string[];
   warning?: string;
 }
+/** A LIVE-ONLY, non-transcript AI analysis item. Never cited; never transcript-backed (Step 2). */
+export interface AnswerBundleAnalysisItem {
+  analysis_id: string;
+  text: string;
+  kind: string;
+  support_state: "ai_analysis";
+  warning: string;
+}
 export interface AnswerBundleCitation {
   citation_id: string;
   label: string;
@@ -84,6 +92,9 @@ export interface AnswerBundle {
   evidence_confidence: string;
   not_enough_evidence: boolean;
   claims: AnswerBundleClaim[];
+  /** Live-only AI analysis (uncited, not transcript-backed). Present only on fresh ask_vault responses. */
+  analysis?: AnswerBundleAnalysisItem[];
+  has_analysis?: boolean;
   citations: AnswerBundleCitation[];
   evidence: AnswerBundleEvidence[];
   warnings: string[];
@@ -143,15 +154,23 @@ export function toAnswerBundle(response: AskAIResponse, options: { brokenCitatio
     ...(claimWarning(claim.supportStatus) ? { warning: claimWarning(claim.supportStatus) } : {}),
   }));
 
+  // Live-only AI analysis (Step 2): uncited, never transcript-backed. Projected as-is; never promoted.
+  const analysis: AnswerBundleAnalysisItem[] = (response.analysis ?? []).map((a) => ({
+    analysis_id: a.id, text: a.text, kind: a.kind, support_state: a.supportStatus, warning: a.warning,
+  }));
+
   const warnings: string[] = [];
   if (response.notEnoughEvidence || response.evidenceConfidence === "no_evidence") {
-    warnings.push("No supporting transcript evidence was found; this is a refusal, not an answer.");
+    warnings.push(analysis.length
+      ? "No transcript evidence was found; the AI analysis below is reasoning, not transcript-backed evidence."
+      : "No supporting transcript evidence was found; this is a refusal, not an answer.");
   } else if (response.evidenceConfidence === "weak") {
     warnings.push("Evidence is weak; do not treat this as strong truth.");
   } else if (response.evidenceConfidence === "conflicting") {
     warnings.push("Sources conflict; both sides are preserved with citations.");
   }
   if (broken.size > 0) warnings.push(`${broken.size} citation pointer(s) no longer resolve.`);
+  if (analysis.length) warnings.push("This answer includes AI analysis that is not from your transcripts and is not cited evidence.");
 
   const conflicts: AnswerBundleConflict[] = response.conflicts.map((conflict) => ({
     summary: conflict.summary,
@@ -169,6 +188,7 @@ export function toAnswerBundle(response: AskAIResponse, options: { brokenCitatio
     evidence_confidence: response.evidenceConfidence,
     not_enough_evidence: response.notEnoughEvidence,
     claims,
+    ...(analysis.length ? { analysis, has_analysis: true } : {}),
     citations,
     evidence,
     warnings,
