@@ -3,6 +3,10 @@ import type { RouteId, RouteMatch } from "./types.js";
 const patterns: Array<{ id: RouteId; pattern: RegExp; names?: string[] }> = [
   { id: "dashboard", pattern: /^\/(?:dashboard\/?)?$/ },
   { id: "upload", pattern: /^\/upload\/?$/ },
+  // The transcripts LIST route must be matched before the transcript DETAIL route below, otherwise
+  // `/transcripts` would be swallowed by the `:id` pattern (it wouldn't — the detail pattern requires a
+  // segment — but ordering keeps the intent explicit and robust to future pattern edits).
+  { id: "transcripts", pattern: /^\/transcripts\/?$/ },
   { id: "transcript", pattern: /^\/transcripts\/([^/]+)\/?$/, names: ["id"] },
   { id: "ask", pattern: /^\/ask\/?$/ },
   { id: "answer", pattern: /^\/answers\/([^/]+)\/?$/, names: ["id"] },
@@ -67,6 +71,7 @@ export function obsidianRouteFromProtocol(params: Record<string, string>, opts: 
 export const routeHref = {
   dashboard: () => "mv://dashboard",
   upload: () => "mv://upload",
+  transcripts: () => "mv://transcripts",
   ask: () => "mv://ask",
   graph: (query = "") => `mv://graph${query}`,
   search: (query = "") => `mv://search${query}`,

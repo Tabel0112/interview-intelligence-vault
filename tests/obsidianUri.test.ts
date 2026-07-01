@@ -86,7 +86,7 @@ describe("obsidianRouteFromProtocol", () => {
   });
 
   it("rejects mv:// strings that do not resolve to a known route", () => {
-    for (const route of ["mv://nope", "mv://transcripts", "mv://evidence/", "mv://answers"]) {
+    for (const route of ["mv://nope", "mv://memory", "mv://evidence/", "mv://answers"]) {
       expect(obsidianRouteFromProtocol({ route })).toBeNull();
     }
   });
@@ -110,6 +110,7 @@ describe("obsidian:// protocol handler contract (navigation-only)", () => {
   const makeNav = () => ({
     openDashboard: vi.fn(async () => undefined),
     openUpload: vi.fn(async () => undefined),
+    openTranscripts: vi.fn(async () => undefined),
     openTranscript: vi.fn(async () => undefined),
     openAskAI: vi.fn(async () => undefined),
     openAnswer: vi.fn(async () => undefined),

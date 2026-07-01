@@ -231,7 +231,7 @@ describe("deleteTranscript frontend wiring", () => {
     const imported = importTranscript(db, { filename: "Handler.txt", rawText: "Alex: Delete via the app handler." });
     const api = createSqliteFrontendApi(db);
     const navigation = {
-      openDashboard: vi.fn(async () => undefined), openUpload: vi.fn(async () => undefined), openTranscript: vi.fn(async () => undefined),
+      openDashboard: vi.fn(async () => undefined), openUpload: vi.fn(async () => undefined), openTranscripts: vi.fn(async () => undefined), openTranscript: vi.fn(async () => undefined),
       openAskAI: vi.fn(async () => undefined), openAnswer: vi.fn(async () => undefined), openEvidence: vi.fn(async () => undefined),
       openMemoryObject: vi.fn(async () => undefined), openGraph: vi.fn(async () => undefined), openSearch: vi.fn(async () => undefined), openReviewQueue: vi.fn(async () => undefined),
     } satisfies ObsidianNavigation;

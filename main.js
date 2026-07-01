@@ -1463,6 +1463,10 @@ var DEGRADED_MEMORY_REASON = "Evidence was removed or no longer resolves, possib
 var patterns = [
   { id: "dashboard", pattern: /^\/(?:dashboard\/?)?$/ },
   { id: "upload", pattern: /^\/upload\/?$/ },
+  // The transcripts LIST route must be matched before the transcript DETAIL route below, otherwise
+  // `/transcripts` would be swallowed by the `:id` pattern (it wouldn't — the detail pattern requires a
+  // segment — but ordering keeps the intent explicit and robust to future pattern edits).
+  { id: "transcripts", pattern: /^\/transcripts\/?$/ },
   { id: "transcript", pattern: /^\/transcripts\/([^/]+)\/?$/, names: ["id"] },
   { id: "ask", pattern: /^\/ask\/?$/ },
   { id: "answer", pattern: /^\/answers\/([^/]+)\/?$/, names: ["id"] },
@@ -1505,6 +1509,7 @@ function obsidianRouteFromProtocol(params, opts = {}) {
 var routeHref = {
   dashboard: () => "mv://dashboard",
   upload: () => "mv://upload",
+  transcripts: () => "mv://transcripts",
   ask: () => "mv://ask",
   graph: (query = "") => `mv://graph${query}`,
   search: (query = "") => `mv://search${query}`,
@@ -1524,6 +1529,8 @@ async function navigateInternal(navigation, target) {
       return navigation.openDashboard();
     case "upload":
       return navigation.openUpload();
+    case "transcripts":
+      return navigation.openTranscripts();
     case "transcript":
       return navigation.openTranscript(route.params.id, { spanId: route.query.get("span") ?? void 0 });
     case "ask":
@@ -1576,8 +1583,8 @@ function routeButton(target, label, className = "route-action") {
 function appShell(title, body) {
   return `<div class="transcript-memory-vault vault-app">
     <header class="app-header">${routeButton("mv://dashboard", "Interview Intelligence Vault", "route-action brand")}<nav aria-label="Primary">
-      ${routeButton("mv://dashboard", "Dashboard")}${routeButton("mv://search", "Search")}${routeButton("mv://graph", "Graph")}${routeButton("mv://review", "Review")}
-      <details class="nav-advanced"><summary>Advanced</summary><div class="nav-advanced-items">${routeButton("mv://upload", "Upload")}${routeButton("mv://ask", "Ask AI")}</div></details>
+      ${routeButton("mv://dashboard", "Dashboard")}${routeButton("mv://upload", "Upload")}${routeButton("mv://review", "Review")}${routeButton("mv://graph", "Graph")}${routeButton("mv://search", "Search")}${routeButton("mv://transcripts", "Transcripts")}
+      <details class="nav-advanced"><summary>Advanced</summary><div class="nav-advanced-items">${routeButton("mv://ask", "Internal Ask AI")}${routeButton("mv://dashboard", "Settings & health")}</div></details>
     </nav></header>
     <main><header class="page-header"><h1>${escapeHtml(title)}</h1></header>${body}</main>
   </div>`;
@@ -5860,6 +5867,17 @@ async function renderPage(context) {
         <form data-action="upload"><label>Transcript file (.txt, .md, .srt, .vtt) <input name="file" type="file" accept=".txt,.md,.srt,.vtt" required></label>
         <p data-file-status>No file selected.</p><input name="filename" type="hidden"><textarea name="rawText" hidden></textarea>
         <button type="submit">Import transcript</button></form><p data-loading-message hidden>Importing immutable transcript source...</p><div data-form-result></div>`) };
+    case "transcripts": {
+      const transcripts = await api.listTranscripts();
+      const list = transcripts.map((item) => `<article class="transcript-list-item">
+        <h3><a href="${escapeHtml(routeHref.transcript(item.id))}">${escapeHtml(item.title)}</a></h3>
+        <p>${trustBadge(item.processingStatus === "ready" ? "strong" : item.processingStatus === "failed" ? "broken" : "needs_review", item.processingStatus)} ${item.spanCount} spans \xB7 ${item.speakerCount} speaker(s) \xB7 ${escapeHtml(item.sourceType)} \xB7 imported ${escapeHtml(item.importedAt)}</p>
+      </article>`).join("");
+      const body = `<aside class="immutable-notice">Imported raw transcript sources are immutable. This is a read-only list; open one to view its spans or delete it.</aside>
+        ${transcripts.length ? section(`${transcripts.length} transcript(s)`, list) : emptyState("No transcripts yet", "Upload a transcript to begin building the evidence vault.", { href: routeHref.upload(), label: "Upload transcript" })}
+        ${links([{ href: routeHref.upload(), label: "Upload transcript" }])}`;
+      return { title: "Transcripts", html: appShell("Transcripts", body) };
+    }
     case "transcript": {
       const view = await api.getTranscript(route.params.id);
       if (!view) return { title: "Transcript not found", html: appShell("Transcript not found", emptyState("Transcript not found", "The requested immutable source is unavailable.")) };
@@ -5873,7 +5891,8 @@ async function renderPage(context) {
     }
     case "ask": {
       const llm = await api.getLlmStatus();
-      const claudeDesktopBanner = `<aside class="immutable-notice claude-desktop-banner">Claude Desktop (via MCP) is the recommended chat UI; this page runs the same evidence-grounded, LLM-required pipeline.</aside>`;
+      const internalDebugCallout = `<aside class="trust-warning ask-internal-callout">Internal Ask AI \u2014 for debugging. Use Claude Desktop for normal chat.</aside>`;
+      const claudeDesktopBanner = `${internalDebugCallout}<aside class="immutable-notice claude-desktop-banner">Claude Desktop (via MCP) is the recommended chat UI; this page runs the same evidence-grounded, LLM-required pipeline.</aside>`;
       if (llm.required && !llm.ready) {
         return { title: "Ask AI", html: appShell("Ask AI", `${claudeDesktopBanner}<section class="trust-warning ask-setup-required">${trustBadge("no_evidence", "LLM required")}<h2>Set up an LLM to use Ask AI</h2>
           <p>Ask AI answers only from your transcripts, with citations \u2014 but it needs a configured external LLM to generate the answer. Add a provider, model, and API key in the plugin Settings.</p>
@@ -6082,6 +6101,7 @@ async function performReviewAction(api, memoryId, decision, refresh, currentTarg
 var OBSIDIAN_VIEW_TYPES = {
   dashboard: "transcript-memory-dashboard",
   upload: "transcript-memory-upload",
+  transcripts: "transcript-memory-transcripts",
   transcript: "transcript-memory-transcript",
   ask: "transcript-memory-ask",
   answer: "transcript-memory-answer",
@@ -6107,6 +6127,7 @@ var GENERATED_VAULT_FOLDER = "Transcript Memory Vault";
 var viewTitle = (type) => ({
   [OBSIDIAN_VIEW_TYPES.dashboard]: "Transcript Memory Dashboard",
   [OBSIDIAN_VIEW_TYPES.upload]: "Upload Transcript",
+  [OBSIDIAN_VIEW_TYPES.transcripts]: "Transcripts",
   [OBSIDIAN_VIEW_TYPES.transcript]: "Transcript Source",
   [OBSIDIAN_VIEW_TYPES.ask]: "Ask AI",
   [OBSIDIAN_VIEW_TYPES.answer]: "AI Answer",
@@ -6119,6 +6140,7 @@ var viewTitle = (type) => ({
 var defaultTarget = (type) => ({
   [OBSIDIAN_VIEW_TYPES.dashboard]: "mv://dashboard",
   [OBSIDIAN_VIEW_TYPES.upload]: "mv://upload",
+  [OBSIDIAN_VIEW_TYPES.transcripts]: "mv://transcripts",
   [OBSIDIAN_VIEW_TYPES.transcript]: "mv://transcripts/missing",
   [OBSIDIAN_VIEW_TYPES.ask]: "mv://ask",
   [OBSIDIAN_VIEW_TYPES.answer]: "mv://answers/missing",
@@ -6139,6 +6161,7 @@ function createObsidianNavigation(app) {
   return {
     openDashboard: () => open(OBSIDIAN_VIEW_TYPES.dashboard, "mv://dashboard"),
     openUpload: () => open(OBSIDIAN_VIEW_TYPES.upload, "mv://upload"),
+    openTranscripts: () => open(OBSIDIAN_VIEW_TYPES.transcripts, "mv://transcripts"),
     openTranscript: (id, options) => open(OBSIDIAN_VIEW_TYPES.transcript, `mv://transcripts/${encodeURIComponent(id)}${options?.spanId ? `?span=${encodeURIComponent(options.spanId)}` : ""}`),
     openAskAI: (options) => open(OBSIDIAN_VIEW_TYPES.ask, `mv://ask${options?.transcriptIds?.length ? `?transcriptIds=${options.transcriptIds.map(encodeURIComponent).join(",")}` : ""}`),
     openAnswer: (id) => open(OBSIDIAN_VIEW_TYPES.answer, `mv://answers/${encodeURIComponent(id)}`),
@@ -7756,6 +7779,7 @@ var TranscriptMemoryVaultPlugin = class extends import_obsidian5.Plugin {
 };
 function navigationForView(navigation, viewType) {
   if (viewType === OBSIDIAN_VIEW_TYPES.upload) return navigation.openUpload();
+  if (viewType === OBSIDIAN_VIEW_TYPES.transcripts) return navigation.openTranscripts();
   if (viewType === OBSIDIAN_VIEW_TYPES.ask) return navigation.openAskAI();
   if (viewType === OBSIDIAN_VIEW_TYPES.search) return navigation.openSearch();
   if (viewType === OBSIDIAN_VIEW_TYPES.graph) return navigation.openGraph();

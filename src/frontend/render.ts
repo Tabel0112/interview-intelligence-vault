@@ -222,6 +222,21 @@ export async function renderPage(context: PageContext): Promise<RenderedPage> {
         <form data-action="upload"><label>Transcript file (.txt, .md, .srt, .vtt) <input name="file" type="file" accept=".txt,.md,.srt,.vtt" required></label>
         <p data-file-status>No file selected.</p><input name="filename" type="hidden"><textarea name="rawText" hidden></textarea>
         <button type="submit">Import transcript</button></form><p data-loading-message hidden>Importing immutable transcript source...</p><div data-form-result></div>`) };
+    case "transcripts": {
+      // Viewer-mode Transcripts list: a read-only projection of listTranscripts(). No new backend behavior;
+      // each item links to the existing immutable transcript detail route.
+      const transcripts = await api.listTranscripts();
+      const list = transcripts.map((item) => `<article class="transcript-list-item">
+        <h3><a href="${escapeHtml(routeHref.transcript(item.id))}">${escapeHtml(item.title)}</a></h3>
+        <p>${trustBadge(item.processingStatus === "ready" ? "strong" : item.processingStatus === "failed" ? "broken" : "needs_review", item.processingStatus)} ${item.spanCount} spans · ${item.speakerCount} speaker(s) · ${escapeHtml(item.sourceType)} · imported ${escapeHtml(item.importedAt)}</p>
+      </article>`).join("");
+      const body = `<aside class="immutable-notice">Imported raw transcript sources are immutable. This is a read-only list; open one to view its spans or delete it.</aside>
+        ${transcripts.length
+          ? section(`${transcripts.length} transcript(s)`, list)
+          : emptyState("No transcripts yet", "Upload a transcript to begin building the evidence vault.", { href: routeHref.upload(), label: "Upload transcript" })}
+        ${links([{ href: routeHref.upload(), label: "Upload transcript" }])}`;
+      return { title: "Transcripts", html: appShell("Transcripts", body) };
+    }
     case "transcript": {
       const view = await api.getTranscript(route.params.id);
       if (!view) return { title: "Transcript not found", html: appShell("Transcript not found", emptyState("Transcript not found", "The requested immutable source is unavailable.")) };
@@ -237,9 +252,11 @@ export async function renderPage(context: PageContext): Promise<RenderedPage> {
     }
     case "ask": {
       const llm = await api.getLlmStatus();
-      // Viewer-mode: Ask AI stays fully functional, but Claude Desktop (MCP) is the recommended chat UI.
-      // This is the SAME evidence-grounded, LLM-required pipeline — not a legacy or local mode.
-      const claudeDesktopBanner = `<aside class="immutable-notice claude-desktop-banner">Claude Desktop (via MCP) is the recommended chat UI; this page runs the same evidence-grounded, LLM-required pipeline.</aside>`;
+      // Viewer-mode: Ask AI is DEMOTED to an internal/debug tool (reached via Advanced), but stays fully
+      // functional. Claude Desktop (MCP) is the recommended chat UI. This is the SAME evidence-grounded,
+      // LLM-required pipeline — not a legacy or local mode.
+      const internalDebugCallout = `<aside class="trust-warning ask-internal-callout">Internal Ask AI — for debugging. Use Claude Desktop for normal chat.</aside>`;
+      const claudeDesktopBanner = `${internalDebugCallout}<aside class="immutable-notice claude-desktop-banner">Claude Desktop (via MCP) is the recommended chat UI; this page runs the same evidence-grounded, LLM-required pipeline.</aside>`;
       if (llm.required && !llm.ready) {
         return { title: "Ask AI", html: appShell("Ask AI", `${claudeDesktopBanner}<section class="trust-warning ask-setup-required">${trustBadge("no_evidence", "LLM required")}<h2>Set up an LLM to use Ask AI</h2>
           <p>Ask AI answers only from your transcripts, with citations — but it needs a configured external LLM to generate the answer. Add a provider, model, and API key in the plugin Settings.</p>

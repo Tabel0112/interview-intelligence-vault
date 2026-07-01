@@ -11,7 +11,7 @@ export type { DeleteTranscriptSummary };
 export interface DeleteTranscriptResult { status: "deleted"; summary: DeleteTranscriptSummary; }
 
 export type TrustState = "strong" | "mixed" | "weak" | "conflicting" | "no_evidence" | "broken" | "needs_review" | "rejected" | "superseded";
-export type RouteId = "dashboard" | "upload" | "transcript" | "ask" | "answer" | "evidence" | "memory" | "graph" | "search" | "review" | "review_detail" | "not_found";
+export type RouteId = "dashboard" | "upload" | "transcripts" | "transcript" | "ask" | "answer" | "evidence" | "memory" | "graph" | "search" | "review" | "review_detail" | "not_found";
 
 export interface RouteMatch {
   id: RouteId;

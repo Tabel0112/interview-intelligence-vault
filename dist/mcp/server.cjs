@@ -680,6 +680,7 @@ function toObsidianUri(mvUri, opts = {}) {
 var routeHref = {
   dashboard: () => "mv://dashboard",
   upload: () => "mv://upload",
+  transcripts: () => "mv://transcripts",
   ask: () => "mv://ask",
   graph: (query = "") => `mv://graph${query}`,
   search: (query = "") => `mv://search${query}`,

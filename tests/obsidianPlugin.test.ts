@@ -34,7 +34,7 @@ async function fixture() {
 describe("Obsidian plugin registration contract", () => {
   it("declares all required views, commands, and dashboard ribbon action", () => {
     expect(Object.values(OBSIDIAN_VIEW_TYPES)).toEqual([
-      "transcript-memory-dashboard", "transcript-memory-upload", "transcript-memory-transcript", "transcript-memory-ask",
+      "transcript-memory-dashboard", "transcript-memory-upload", "transcript-memory-transcripts", "transcript-memory-transcript", "transcript-memory-ask",
       "transcript-memory-answer", "transcript-memory-evidence", "transcript-memory-memory-object", "transcript-memory-graph",
       "transcript-memory-search", "transcript-memory-review",
     ]);
@@ -59,23 +59,24 @@ describe("Obsidian plugin registration contract", () => {
 });
 
 describe("Obsidian internal provenance navigation", () => {
-  it("renders keyboard-accessible nav with authoring demoted to Advanced, all routes reachable", async () => {
+  it("renders keyboard-accessible viewer nav with the workflow primary and Ask AI demoted to Advanced", async () => {
     const html = await renderRoute(createSqliteFrontendApi(db, { now }), routeHref.dashboard());
-    for (const target of [routeHref.upload(), routeHref.ask(), routeHref.search(), routeHref.graph(), routeHref.reviewQueue()]) {
+    for (const target of [routeHref.upload(), routeHref.transcripts(), routeHref.ask(), routeHref.search(), routeHref.graph(), routeHref.reviewQueue()]) {
       expect(html).toContain(`data-route="${target}"`); // every route still reachable from the viewer dashboard/nav
       expect(isInternalNavigationTarget(target)).toBe(true);
     }
-    // Primary nav (before the Advanced disclosure) leads with Search/Graph/Review and EXCLUDES Upload/Ask AI.
+    // Viewer-mode primary nav (before the Advanced disclosure) leads with the vault workflow —
+    // Upload/Review/Graph/Search/Transcripts — and EXCLUDES the demoted Ask AI.
     const navPrimary = html.slice(html.indexOf('aria-label="Primary"'), html.indexOf('<details class="nav-advanced"'));
-    expect(navPrimary).toContain(`data-route="${routeHref.search()}"`);
-    expect(navPrimary).toContain(`data-route="${routeHref.graph()}"`);
-    expect(navPrimary).toContain(`data-route="${routeHref.reviewQueue()}"`);
-    expect(navPrimary).not.toContain(`data-route="${routeHref.upload()}"`);
+    for (const target of [routeHref.upload(), routeHref.reviewQueue(), routeHref.graph(), routeHref.search(), routeHref.transcripts()]) {
+      expect(navPrimary).toContain(`data-route="${target}"`);
+    }
     expect(navPrimary).not.toContain(`data-route="${routeHref.ask()}"`);
-    // The Advanced disclosure holds Upload + Ask AI, both still navigable internal routes.
+    // The Advanced disclosure holds the demoted "Internal Ask AI" (route preserved), NOT Upload.
     const advanced = html.slice(html.indexOf('<details class="nav-advanced"'), html.indexOf("</details>"));
-    expect(advanced).toContain(`data-route="${routeHref.upload()}"`);
     expect(advanced).toContain(`data-route="${routeHref.ask()}"`);
+    expect(advanced).toContain("Internal Ask AI");
+    expect(advanced).not.toContain(`data-route="${routeHref.upload()}"`);
     expect(isInternalNavigationTarget("https://example.com")).toBe(false);
   });
 
@@ -83,6 +84,7 @@ describe("Obsidian internal provenance navigation", () => {
     const navigation = {
       openDashboard: vi.fn(async () => undefined),
       openUpload: vi.fn(async () => undefined),
+      openTranscripts: vi.fn(async () => undefined),
       openTranscript: vi.fn(async () => undefined),
       openAskAI: vi.fn(async () => undefined),
       openAnswer: vi.fn(async () => undefined),
@@ -94,12 +96,14 @@ describe("Obsidian internal provenance navigation", () => {
     };
     await navigateInternal(navigation, routeHref.dashboard());
     await navigateInternal(navigation, routeHref.upload());
+    await navigateInternal(navigation, routeHref.transcripts());
     await navigateInternal(navigation, routeHref.ask());
     await navigateInternal(navigation, routeHref.search());
     await navigateInternal(navigation, routeHref.graph());
     await navigateInternal(navigation, routeHref.reviewQueue());
     expect(navigation.openDashboard).toHaveBeenCalledOnce();
     expect(navigation.openUpload).toHaveBeenCalledOnce();
+    expect(navigation.openTranscripts).toHaveBeenCalledOnce();
     expect(navigation.openAskAI).toHaveBeenCalledOnce();
     expect(navigation.openSearch).toHaveBeenCalledOnce();
     expect(navigation.openGraph).toHaveBeenCalledOnce();
@@ -120,7 +124,7 @@ describe("Obsidian internal provenance navigation", () => {
 
     const openTranscript = vi.fn(async () => undefined);
     await navigateInternal({
-      openDashboard: async () => undefined, openUpload: async () => undefined, openTranscript,
+      openDashboard: async () => undefined, openUpload: async () => undefined, openTranscripts: async () => undefined, openTranscript,
       openAskAI: async () => undefined, openAnswer: async () => undefined, openEvidence: async () => undefined,
       openMemoryObject: async () => undefined, openGraph: async () => undefined, openSearch: async () => undefined,
       openReviewQueue: async () => undefined,
@@ -156,7 +160,7 @@ describe("Obsidian UI mount does not stack duplicate listeners", () => {
     const host = new FakeHost();
     const navigation = {
       openDashboard: vi.fn(async () => undefined), openUpload: vi.fn(async () => undefined),
-      openTranscript: vi.fn(async () => undefined), openAskAI: vi.fn(async () => undefined),
+      openTranscripts: vi.fn(async () => undefined), openTranscript: vi.fn(async () => undefined), openAskAI: vi.fn(async () => undefined),
       openAnswer: vi.fn(async () => undefined), openEvidence: vi.fn(async () => undefined),
       openMemoryObject: vi.fn(async () => undefined), openGraph: vi.fn(async () => undefined),
       openSearch: vi.fn(async () => undefined), openReviewQueue: vi.fn(async () => undefined),

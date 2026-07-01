@@ -263,6 +263,7 @@ export default class TranscriptMemoryVaultPlugin extends Plugin {
 
 function navigationForView(navigation: ReturnType<typeof createObsidianNavigation>, viewType: TranscriptMemoryViewType): Promise<void> {
   if (viewType === OBSIDIAN_VIEW_TYPES.upload) return navigation.openUpload();
+  if (viewType === OBSIDIAN_VIEW_TYPES.transcripts) return navigation.openTranscripts();
   if (viewType === OBSIDIAN_VIEW_TYPES.ask) return navigation.openAskAI();
   if (viewType === OBSIDIAN_VIEW_TYPES.search) return navigation.openSearch();
   if (viewType === OBSIDIAN_VIEW_TYPES.graph) return navigation.openGraph();

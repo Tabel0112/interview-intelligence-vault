@@ -1,6 +1,7 @@
 export const OBSIDIAN_VIEW_TYPES = {
   dashboard: "transcript-memory-dashboard",
   upload: "transcript-memory-upload",
+  transcripts: "transcript-memory-transcripts",
   transcript: "transcript-memory-transcript",
   ask: "transcript-memory-ask",
   answer: "transcript-memory-answer",
@@ -40,6 +41,7 @@ export const GENERATED_VAULT_FOLDER = "Transcript Memory Vault" as const;
 export const viewTitle = (type: TranscriptMemoryViewType): string => ({
   [OBSIDIAN_VIEW_TYPES.dashboard]: "Transcript Memory Dashboard",
   [OBSIDIAN_VIEW_TYPES.upload]: "Upload Transcript",
+  [OBSIDIAN_VIEW_TYPES.transcripts]: "Transcripts",
   [OBSIDIAN_VIEW_TYPES.transcript]: "Transcript Source",
   [OBSIDIAN_VIEW_TYPES.ask]: "Ask AI",
   [OBSIDIAN_VIEW_TYPES.answer]: "AI Answer",
@@ -53,6 +55,7 @@ export const viewTitle = (type: TranscriptMemoryViewType): string => ({
 export const defaultTarget = (type: TranscriptMemoryViewType): string => ({
   [OBSIDIAN_VIEW_TYPES.dashboard]: "mv://dashboard",
   [OBSIDIAN_VIEW_TYPES.upload]: "mv://upload",
+  [OBSIDIAN_VIEW_TYPES.transcripts]: "mv://transcripts",
   [OBSIDIAN_VIEW_TYPES.transcript]: "mv://transcripts/missing",
   [OBSIDIAN_VIEW_TYPES.ask]: "mv://ask",
   [OBSIDIAN_VIEW_TYPES.answer]: "mv://answers/missing",
