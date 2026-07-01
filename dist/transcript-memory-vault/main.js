@@ -111,8 +111,8 @@ var require_bindings = __commonJS({
     var fs = require("fs");
     var path = require("path");
     var fileURLToPath2 = require_file_uri_to_path();
-    var join4 = path.join;
-    var dirname3 = path.dirname;
+    var join5 = path.join;
+    var dirname4 = path.dirname;
     var exists = fs.accessSync && function(path2) {
       try {
         fs.accessSync(path2);
@@ -171,7 +171,7 @@ var require_bindings = __commonJS({
       var requireFunc = typeof __webpack_require__ === "function" ? __non_webpack_require__ : require;
       var tries = [], i = 0, l = opts.try.length, n, b, err;
       for (; i < l; i++) {
-        n = join4.apply(
+        n = join5.apply(
           null,
           opts.try[i].map(function(p) {
             return opts[p] || p;
@@ -227,12 +227,12 @@ var require_bindings = __commonJS({
       return fileName;
     };
     exports2.getRoot = function getRoot(file) {
-      var dir = dirname3(file), prev;
+      var dir = dirname4(file), prev;
       while (true) {
         if (dir === ".") {
           dir = process.cwd();
         }
-        if (exists(join4(dir, "package.json")) || exists(join4(dir, "node_modules"))) {
+        if (exists(join5(dir, "package.json")) || exists(join5(dir, "node_modules"))) {
           return dir;
         }
         if (prev === dir) {
@@ -241,7 +241,7 @@ var require_bindings = __commonJS({
           );
         }
         prev = dir;
-        dir = join4(dir, "..");
+        dir = join5(dir, "..");
       }
     };
   }
@@ -816,7 +816,7 @@ module.exports = __toCommonJS(main_exports);
 // src/obsidian/Plugin.ts
 var import_obsidian5 = require("obsidian");
 var import_node_fs3 = require("node:fs");
-var import_node_path6 = require("node:path");
+var import_node_path7 = require("node:path");
 
 // src/db/connection.ts
 var import_better_sqlite3 = __toESM(require_lib(), 1);
@@ -5560,6 +5560,9 @@ function createSqliteFrontendApi(db, options = {}) {
       const health = options.getEmbeddingHealth?.();
       return { required, state: required ? health?.state ?? "setup_required" : "ok", reason: health?.reason };
     },
+    async getSetupSummary() {
+      return options.getSetupSummary?.() ?? null;
+    },
     async getAnswer(id) {
       try {
         const answer = getAskAIResponse(db, id);
@@ -5822,6 +5825,67 @@ function healthView(health) {
     <dt>Packaged native targets</dt><dd>${escapeHtml(health.packagedNativeTargets.join(", ") || "none")}</dd>
   </dl></article>`, "database-health-section");
 }
+var SUPPORTED_UPLOAD_FORMATS = ".txt \xB7 .md \xB7 .srt \xB7 .vtt";
+function uploadNextSteps() {
+  return `<details class="tmv-advanced upload-next-steps"><summary>After importing \u2014 recommended next steps</summary>
+    <ol class="upload-next-list">
+      <li>Import stores the immutable raw transcript in local SQLite (the source of truth).</li>
+      <li>Run <strong>AI extraction</strong> if the transcript was imported before an LLM was configured (command: "Run AI extraction", or open the transcript).</li>
+      <li>Rebuild the <strong>embedding index</strong> after changing embedding settings (command: "Rebuild Embedding Index").</li>
+      <li>Sync <strong>generated graph notes</strong> for Obsidian's native graph (the "Native Obsidian graph" card below, or command: "Sync generated graph notes").</li>
+      <li>Chat in <strong>Claude Desktop</strong> (via MCP) \u2014 the recommended Ask AI experience.</li>
+    </ol></details>`;
+}
+function uploadCard() {
+  return `<p><strong>Drag a transcript file here, or choose one.</strong> Imported raw sources are immutable; re-uploading identical content reuses the existing transcript.</p>
+    <form data-action="upload" class="tmv-dropzone" data-dropzone>
+      <p class="tmv-badge">Supported formats: ${SUPPORTED_UPLOAD_FORMATS}</p>
+      <label class="upload-choose tmv-btn tmv-btn-primary">Choose transcript<input name="file" type="file" accept=".txt,.md,.srt,.vtt" required></label>
+      <p data-file-status>No file selected.</p>
+      <input name="filename" type="hidden"><textarea name="rawText" hidden></textarea>
+      <button type="submit" class="tmv-btn tmv-btn-primary">Upload transcript</button>
+    </form>
+    <p data-loading-message hidden>Importing immutable transcript source\u2026</p><div data-form-result></div>
+    ${uploadNextSteps()}`;
+}
+function mcpConfigSnippet(dbPath) {
+  return `{
+  "mcpServers": {
+    "transcript-memory-vault": {
+      "command": "node",
+      "args": ["<path-to-plugin-checkout>/dist/mcp/server.cjs"],
+      "env": {
+        "TMV_DB_PATH": "${dbPath ?? "<path-to>/transcript-memory.sqlite"}"
+      }
+    }
+  }
+}`;
+}
+function setupCard(setup, fallbackDbPath) {
+  const yn = (value) => value ? "yes" : "no";
+  const healthTrust = (state) => state === "ok" ? "strong" : state === "reindex_required" ? "conflicting" : "no_evidence";
+  const statusGrid = setup ? `<div class="tmv-grid setup-grid">
+        <span class="tmv-badge">LLM configured: ${yn(setup.llmConfigured)}</span>
+        ${setup.llmProvider ? `<span class="tmv-badge">LLM: ${escapeHtml(setup.llmProvider)}${setup.llmModel ? ` / ${escapeHtml(setup.llmModel)}` : ""}</span>` : ""}
+        <span class="tmv-badge">Embeddings configured: ${yn(setup.embeddingConfigured)}</span>
+        ${setup.embeddingProvider ? `<span class="tmv-badge">Embedding: ${escapeHtml(setup.embeddingProvider)}${setup.embeddingModel ? ` / ${escapeHtml(setup.embeddingModel)}` : ""}${setup.embeddingDimensions ? ` / ${setup.embeddingDimensions}d` : ""}</span>` : ""}
+        ${trustBadge(healthTrust(setup.embeddingHealth), `embedding: ${setup.embeddingHealth}`)}
+        <span class="tmv-badge">Reindex needed: ${yn(setup.reindexNeeded)}</span>
+      </div>` : `<p class="tmv-callout tmv-callout--info">Detailed setup status appears inside the Obsidian plugin.</p>`;
+  const dbPath = setup?.databasePath ?? fallbackDbPath;
+  const snippet = mcpConfigSnippet(dbPath);
+  return `<p class="tmv-callout tmv-callout--info">Use Claude Desktop for normal chat. This Obsidian plugin stores, indexes, reviews, and visualizes the evidence vault.</p>
+    <p><strong>SQLite is the source of truth.</strong> Imported raw transcript snapshots are immutable; generated Markdown is a disposable view layer for Obsidian's native graph.</p>
+    ${statusGrid}
+    ${dbPath ? `<p>Point Claude Desktop's <code>TMV_DB_PATH</code> at this vault's database:</p>
+        <p class="mcp-db-path"><code class="tmv-code">${escapeHtml(dbPath)}</code></p>
+        <button type="button" class="tmv-btn tmv-btn-secondary" data-copy="${escapeHtml(dbPath)}">Copy TMV_DB_PATH</button>` : `<p><code>TMV_DB_PATH</code> will appear here once the database has initialized.</p>`}
+    ${setup?.settingsPath ? `<p>Plugin settings file (data.json): <code class="tmv-code">${escapeHtml(setup.settingsPath)}</code></p>` : ""}
+    <p>Claude Desktop MCP config (no API keys \u2014 the key stays in the plugin's data.json):</p>
+    <pre class="tmv-code mcp-config-snippet">${escapeHtml(snippet)}</pre>
+    <button type="button" class="tmv-btn tmv-btn-secondary" data-copy="${escapeHtml(snippet)}">Copy MCP config</button>
+    <p>See <code>docs/MCP.md</code> for the full Claude Desktop / MCP setup. Opening Claude Desktop is a manual step.</p>`;
+}
 async function renderPage(context) {
   const { api, route } = context;
   switch (route.id) {
@@ -5833,40 +5897,44 @@ async function renderPage(context) {
       const sync = view.generatedSync;
       const syncStatusLine = !sync ? "Generated graph notes status is unavailable in this context." : !sync.synced ? "Never synced \u2014 Obsidian's native graph has no generated notes yet. Sync after importing transcripts, running AI extraction, or asking AI." : `Last synced ${escapeHtml(sync.lastSyncedAt ?? "unknown")} \xB7 ${sync.fileCount ?? 0} files \xB7 ${sync.graphNodeCount ?? 0} nodes \xB7 ${sync.graphEdgeCount ?? 0} edges.`;
       const syncWarn = sync?.status === "failed" ? `<aside class="trust-warning">${trustBadge("broken", "last sync had errors")} ${escapeHtml(sync.error ?? "Some generated files could not be written.")}</aside>` : "";
-      const generatedNotesSection = section("Native Obsidian graph", `<p>These generated Markdown notes power Obsidian's <strong>native (ribbon) graph</strong>. The plugin's own Graph page reads SQLite live; the native graph only sees Markdown files and wiki links, so it needs these notes. SQLite stays the source of truth \u2014 editing a generated note never changes memory.</p>
-        <p class="generated-sync-status">${syncStatusLine}</p>${syncWarn}
-        <form data-action="sync-graph"><button type="submit">Sync Obsidian graph notes</button></form>
-        <p data-loading-message hidden>Generating Markdown graph notes\u2026</p><div data-form-result></div>`, "generated-notes-section");
-      const vaultStatus = section("Vault status", `<p><strong>SQLite is the source of truth.</strong> Imported raw transcript snapshots are immutable; generated Markdown is a disposable view layer for Obsidian's native graph.</p>
-        <div class="metric-grid"><span>${view.totalTranscriptCount} transcripts</span>${routeButton(routeHref.reviewQueue(), `${view.reviewCount} review items`, "route-action metric-action")}<span>${view.weakCount} weak/review</span><span>${view.conflictCount} conflicts</span><span>${view.brokenCount} broken pointers</span></div>
-        ${view.health ? healthView(view.health) : ""}`, "vault-status-section");
-      const dbPath = view.health?.databasePath;
-      const mcpCard = section("Use Claude Desktop (MCP)", `<p><strong>Claude Desktop is the recommended chat UI.</strong> It connects to this vault through a local MCP server and answers from the same evidence-first pipeline. This plugin is your evidence viewer, graph browser, transcript/memory navigator, and review/control panel.</p>
-        ${dbPath ? `<p>Point Claude Desktop's <code>TMV_DB_PATH</code> at this vault's database:</p><p class="mcp-db-path"><code>${escapeHtml(dbPath)}</code></p>` : `<p><code>TMV_DB_PATH</code> will appear here once the plugin has initialized its database.</p>`}
-        <p>See <code>docs/MCP.md</code> for the full Claude Desktop / MCP setup. (Opening Claude Desktop is a manual step \u2014 there is no in-app launcher.)</p>`, "mcp-card");
+      const dbPath = view.health?.databasePath ?? void 0;
+      const setup = await api.getSetupSummary?.() ?? null;
+      const uploadSection = section("Upload a transcript", uploadCard(), "upload-section tmv-card--primary");
+      const setupSection = section("Use Claude Desktop with this vault", setupCard(setup, dbPath), "mcp-card tmv-card");
+      const reviewSection = section("Review queue", `<div class="metric-grid tmv-grid">
+          ${routeButton(routeHref.reviewQueue(), `${view.reviewCount} review items`, "route-action metric-action")}
+          <span class="tmv-badge">${view.weakCount} weak/review</span><span class="tmv-badge">${view.conflictCount} conflicts</span><span class="tmv-badge">${view.brokenCount} broken pointers</span><span class="tmv-badge">${view.totalTranscriptCount} transcripts</span>
+        </div>
+        <p>${view.reviewCount} open review item(s)${view.conflictCount ? `, including ${view.conflictCount} conflict(s)` : ""}.</p>${links([{ href: routeHref.reviewQueue(), label: "Open review queue" }])}`, "review-summary-section");
       const attention = view.attention ?? [];
       const attentionSection = section("Evidence needing attention", attention.length ? attention.map((item) => `<article class="attention-item">${trustBadge(item.trustState)} <a href="${escapeHtml(item.href)}">${escapeHtml(item.title)}</a> <small>${escapeHtml(item.detail)}</small></article>`).join("") : emptyState("Nothing needs attention", "No weak, broken, or conflicting evidence right now."), "attention-section");
-      const recentAnswers = section("Recent answers", view.recentAnswers.map((item) => `<article>${trustBadge(item.confidence)} <a href="${escapeHtml(routeHref.answer(item.id))}">${escapeHtml(item.question)}</a></article>`).join("") || emptyState("No answers yet", "Ask in Claude Desktop, or use the Ask AI page under Advanced.", { href: routeHref.ask(), label: "Ask AI" }), "recent-answers-section");
-      const reviewSection = section("Review queue / conflicts", `<p>${view.reviewCount} open review item(s)${view.conflictCount ? `, including ${view.conflictCount} conflict(s)` : ""}.</p>${links([{ href: routeHref.reviewQueue(), label: "Open review queue" }])}`, "review-summary-section");
-      const transcriptsSection = section("Transcripts", `${view.transcripts.map((item) => `<article><a href="${escapeHtml(routeHref.transcript(item.id))}">${escapeHtml(item.title)}</a> \xB7 ${item.spanCount} spans</article>`).join("") || emptyState("No transcripts", "Import a transcript to begin.")}
-        ${links([{ href: routeHref.upload(), label: "Upload transcript" }])}`, "transcripts-section");
-      const searchSection = section("Search vault", `<p>Find transcripts, spans, memory objects, answers, and evidence.</p>${links([{ href: routeHref.search(), label: "Search vault" }])}`, "search-section");
+      const graphSection = section("Native Obsidian graph", `<p>These generated Markdown notes power Obsidian's <strong>native (ribbon) graph</strong>. The plugin's own Graph page reads SQLite live; the native graph only sees Markdown files and wiki links, so it needs these notes. SQLite stays the source of truth \u2014 editing a generated note never changes memory.</p>
+        <p class="generated-sync-status">${syncStatusLine}</p>${syncWarn}
+        <form data-action="sync-graph"><button type="submit" class="tmv-btn tmv-btn-secondary">Sync Obsidian graph notes</button></form>
+        <p data-loading-message hidden>Generating Markdown graph notes\u2026</p><div data-form-result></div>
+        ${links([{ href: routeHref.graph(), label: "Open graph & evidence viewer" }])}`, "generated-notes-section");
+      const transcriptsSection = section("Transcripts", `${view.transcripts.map((item) => `<article><a href="${escapeHtml(routeHref.transcript(item.id))}">${escapeHtml(item.title)}</a> \xB7 ${item.spanCount} spans</article>`).join("") || emptyState("No transcripts", "Upload a transcript to begin.", { href: routeHref.upload(), label: "Upload transcript" })}
+        ${links([{ href: routeHref.transcripts(), label: "All transcripts" }, { href: routeHref.upload(), label: "Upload transcript" }])}`, "transcripts-section");
+      const recentAnswers = section("Recent answers", view.recentAnswers.map((item) => `<article>${trustBadge(item.confidence)} <a href="${escapeHtml(routeHref.answer(item.id))}">${escapeHtml(item.question)}</a></article>`).join("") || emptyState("No answers yet", "Ask in Claude Desktop for chat. Answers run there \u2014 or via Internal Ask AI under Advanced tools \u2014 appear here."), "recent-answers-section");
+      const advancedSection = section("Advanced / Internal tools", `<details class="tmv-advanced advanced-tools"><summary>Show advanced / internal tools</summary>
+        <p>Debugging and inspection tools. For normal chat, use Claude Desktop.</p>
+        ${links([{ href: routeHref.search(), label: "Search vault" }, { href: routeHref.ask(), label: "Internal Ask AI" }])}
+        ${view.health ? healthView(view.health) : ""}
+      </details>`, "advanced-tools-section");
       const body = `${readyStatus}${startupProblem}${llmBanner}
-        ${vaultStatus}
-        ${mcpCard}
-        ${attentionSection}
-        ${recentAnswers}
+        ${uploadSection}
+        ${setupSection}
         ${reviewSection}
-        ${generatedNotesSection}
+        ${attentionSection}
+        ${graphSection}
         ${transcriptsSection}
-        ${searchSection}`;
+        ${recentAnswers}
+        ${advancedSection}`;
       return { title: "Dashboard", html: appShell("Dashboard", body) };
     }
     case "upload":
       return { title: "Upload transcript", html: appShell("Upload transcript", `<aside class="immutable-notice">Uploads become immutable raw transcript sources. Re-uploading identical content reuses the existing transcript.</aside>
-        <form data-action="upload"><label>Transcript file (.txt, .md, .srt, .vtt) <input name="file" type="file" accept=".txt,.md,.srt,.vtt" required></label>
-        <p data-file-status>No file selected.</p><input name="filename" type="hidden"><textarea name="rawText" hidden></textarea>
-        <button type="submit">Import transcript</button></form><p data-loading-message hidden>Importing immutable transcript source...</p><div data-form-result></div>`) };
+        ${section("Upload a transcript", uploadCard(), "upload-section tmv-card--primary")}`) };
     case "transcripts": {
       const transcripts = await api.listTranscripts();
       const list = transcripts.map((item) => `<article class="transcript-list-item">
@@ -5998,6 +6066,12 @@ async function mountObsidianUi(root, api, navigation, initialTarget, onMutation,
       copy.textContent = "Quote copied";
       return;
     }
+    const copyValue = event.target.closest("[data-copy]");
+    if (copyValue) {
+      void navigator.clipboard?.writeText(copyValue.dataset.copy ?? "");
+      copyValue.textContent = "Copied";
+      return;
+    }
     const routeControl = event.target.closest("[data-route], a[href]");
     const target = routeControl?.dataset.route ?? routeControl?.getAttribute("href");
     if (!isInternalNavigationTarget(target)) return;
@@ -6007,17 +6081,36 @@ async function mountObsidianUi(root, api, navigation, initialTarget, onMutation,
   }, { signal });
   root.addEventListener("change", (event) => {
     const input = event.target;
-    if (input.name !== "file" || !input.files?.[0]) return;
-    const file = input.files[0];
-    const form = input.form;
-    const status = form?.querySelector("[data-file-status]") ?? form?.parentElement?.querySelector("[data-file-status]");
-    if (status) status.textContent = `${file.name} \xB7 ${file.size} bytes`;
-    void file.text().then((text) => {
-      const filename = form?.elements.namedItem("filename");
-      const rawText = form?.elements.namedItem("rawText");
-      if (filename) filename.value = file.name;
-      if (rawText) rawText.value = text;
-    });
+    if (input.name !== "file" || !input.files?.[0] || !input.form) return;
+    populateUploadForm(input.form, input.files[0]);
+  }, { signal });
+  root.addEventListener("dragover", (event) => {
+    const zone = event.target.closest("[data-dropzone]");
+    if (!zone) return;
+    event.preventDefault();
+    zone.classList.add("is-dragover");
+  }, { signal });
+  root.addEventListener("dragleave", (event) => {
+    const zone = event.target.closest("[data-dropzone]");
+    if (zone && !zone.contains(event.relatedTarget)) zone.classList.remove("is-dragover");
+  }, { signal });
+  root.addEventListener("drop", (event) => {
+    const zone = event.target.closest("[data-dropzone]");
+    if (!zone) return;
+    event.preventDefault();
+    zone.classList.remove("is-dragover");
+    const file = event.dataTransfer?.files?.[0];
+    if (!file) return;
+    const input = zone.querySelector('input[type="file"]');
+    if (input) {
+      try {
+        const transfer = new DataTransfer();
+        transfer.items.add(file);
+        input.files = transfer.files;
+      } catch {
+      }
+    }
+    populateUploadForm(zone, file);
   }, { signal });
   root.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -6079,6 +6172,16 @@ async function mountObsidianUi(root, api, navigation, initialTarget, onMutation,
 }
 function isInternalNavigationTarget(target) {
   return target?.startsWith("mv://") ?? false;
+}
+function populateUploadForm(form, file) {
+  const status = form.querySelector("[data-file-status]") ?? form.parentElement?.querySelector("[data-file-status]");
+  if (status) status.textContent = `${file.name} \xB7 ${file.size} bytes`;
+  void file.text().then((text) => {
+    const filename = form.elements.namedItem("filename");
+    const rawText = form.elements.namedItem("rawText");
+    if (filename) filename.value = file.name;
+    if (rawText) rawText.value = text;
+  });
 }
 function renderSyncSummary(summary) {
   if (!summary || summary.status === "unavailable") {
@@ -7109,7 +7212,8 @@ function createObsidianAppApi(db, vault, health, getSynthesis, getMemoryExtracto
     syncGeneratedViews: options?.syncGeneratedViews,
     embeddingsRequired: options?.embeddingsRequired,
     getEmbeddingHealth: options?.getEmbeddingHealth,
-    getEmbeddingProvider: options?.getEmbeddingProvider
+    getEmbeddingProvider: options?.getEmbeddingProvider,
+    getSetupSummary: options?.getSetupSummary
   });
   return {
     ...api,
@@ -7281,6 +7385,29 @@ function askAiEmbeddingHealth(db, settings) {
 function productionEmbeddingProvider(settings, options = {}) {
   const resolution = resolveEmbeddingProviderFromSettings(settings, options);
   return resolution.usedFallback ? void 0 : resolution.provider;
+}
+
+// src/obsidian/setupSummary.ts
+var import_node_path6 = require("node:path");
+function buildSetupSummary(db, settings, databasePath) {
+  const health = askAiEmbeddingHealth(db, settings);
+  const external = externalEmbeddingConfigFromSettings(settings);
+  const llmConfigured = isLlmConfigured(settings);
+  return {
+    llmConfigured,
+    // Provider/model are non-secret selections; only surface them when actually configured.
+    llmProvider: llmConfigured ? settings.llm.provider : void 0,
+    llmModel: llmConfigured && settings.llm.model.trim() ? settings.llm.model : void 0,
+    embeddingConfigured: external != null,
+    embeddingProvider: external?.provider ?? (settings.embedding.provider || void 0),
+    embeddingModel: external?.model ?? (settings.embedding.model || void 0),
+    embeddingDimensions: external?.dimensions ?? settings.embedding.dimensions,
+    embeddingHealth: health.state,
+    reindexNeeded: health.state === "reindex_required",
+    databasePath,
+    // The plugin's data.json lives next to the SQLite database (same plugin directory).
+    settingsPath: databasePath ? (0, import_node_path6.join)((0, import_node_path6.dirname)(databasePath), "data.json") : void 0
+  };
 }
 
 // src/obsidian/embeddingTransport.ts
@@ -7573,9 +7700,9 @@ var TranscriptMemoryVaultPlugin = class extends import_obsidian5.Plugin {
       return;
     }
     this.vaultBasePath = fileSystemAdapter.getBasePath();
-    const pluginDirectory = (0, import_node_path6.join)(this.vaultBasePath, this.app.vault.configDir, "plugins", this.manifest.id);
-    const databasePath = (0, import_node_path6.join)(pluginDirectory, "transcript-memory.sqlite");
-    const migrationDirectory = (0, import_node_path6.join)(pluginDirectory, "migrations");
+    const pluginDirectory = (0, import_node_path7.join)(this.vaultBasePath, this.app.vault.configDir, "plugins", this.manifest.id);
+    const databasePath = (0, import_node_path7.join)(pluginDirectory, "transcript-memory.sqlite");
+    const migrationDirectory = (0, import_node_path7.join)(pluginDirectory, "migrations");
     const nativeBinding = resolveNativeBinding(pluginDirectory);
     this.health = {
       ...this.health,
@@ -7624,7 +7751,9 @@ var TranscriptMemoryVaultPlugin = class extends import_obsidian5.Plugin {
           // Production Ask AI requires API embeddings + a matching index; never falls back to token-hash-v1.
           embeddingsRequired: true,
           getEmbeddingHealth: () => askAiEmbeddingHealth(this.db, this.pluginSettings),
-          getEmbeddingProvider: () => productionEmbeddingProvider(this.pluginSettings, { transport: createObsidianEmbeddingTransport() })
+          getEmbeddingProvider: () => productionEmbeddingProvider(this.pluginSettings, { transport: createObsidianEmbeddingTransport() }),
+          // Non-secret, display-only setup summary for the Claude/MCP dashboard card (no API keys).
+          getSetupSummary: () => buildSetupSummary(this.db, this.pluginSettings, this.health.databasePath ?? void 0)
         }
       );
       this.refreshReindexStatus();
@@ -7722,7 +7851,7 @@ var TranscriptMemoryVaultPlugin = class extends import_obsidian5.Plugin {
   async runGeneratedVaultSync() {
     if (!this.db || this.health.status !== "ready") throw new Error("Transcript Memory Vault is not ready.");
     if (!this.vaultBasePath) throw new Error("Vault filesystem path is unavailable.");
-    return generateObsidianVault(this.db, { outputRoot: (0, import_node_path6.join)(this.vaultBasePath, GENERATED_VAULT_FOLDER), cleanBeforeWrite: true });
+    return generateObsidianVault(this.db, { outputRoot: (0, import_node_path7.join)(this.vaultBasePath, GENERATED_VAULT_FOLDER), cleanBeforeWrite: true });
   }
   /** EXPLICIT manual action (command palette). Writes generated graph notes and reports via Notices. */
   async syncGeneratedGraphNotesCommand() {

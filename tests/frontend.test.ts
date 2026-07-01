@@ -236,6 +236,6 @@ describe("SQLite frontend adapter", () => {
     const dashboard = await api.getDashboard();
     expect(dashboard.totalTranscriptCount).toBe(12);
     expect(dashboard.transcripts).toHaveLength(10);
-    expect(await renderRoute(api, "/")).toContain("Vault status");
+    expect(await renderRoute(api, "/")).toContain("Upload a transcript");
   });
 });

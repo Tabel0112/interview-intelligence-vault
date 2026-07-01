@@ -4515,6 +4515,9 @@ function createSqliteFrontendApi(db, options = {}) {
       const health = options.getEmbeddingHealth?.();
       return { required, state: required ? health?.state ?? "setup_required" : "ok", reason: health?.reason };
     },
+    async getSetupSummary() {
+      return options.getSetupSummary?.() ?? null;
+    },
     async getAnswer(id) {
       try {
         const answer = getAskAIResponse(db, id);

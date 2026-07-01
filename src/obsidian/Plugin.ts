@@ -16,6 +16,7 @@ import { GENERATED_VAULT_FOLDER, OBSIDIAN_COMMANDS, OBSIDIAN_DEDUPE_COMMAND, OBS
 import { createUnavailableFrontendApi, DESKTOP_ONLY_MESSAGE, initialPluginHealth, readableStartupError, startupSupport, type PluginHealth } from "./startup.js";
 import { DEFAULT_SETTINGS, isLlmConfigured, normalizeSettings, settingsHealthSummary, type TranscriptMemorySettings } from "./settings.js";
 import { askAiEmbeddingHealth, embeddingReindexStatus, productionEmbeddingProvider, runEmbeddingReindex } from "./embeddingSettings.js";
+import { buildSetupSummary } from "./setupSummary.js";
 import { createObsidianEmbeddingTransport } from "./embeddingTransport.js";
 import { askAiSynthesisFromSettings, memoryExtractorFromSettings } from "./llmSettings.js";
 import { createObsidianLlmTransport } from "./llmTransport.js";
@@ -109,6 +110,8 @@ export default class TranscriptMemoryVaultPlugin extends Plugin {
           embeddingsRequired: true,
           getEmbeddingHealth: () => askAiEmbeddingHealth(this.db!, this.pluginSettings),
           getEmbeddingProvider: () => productionEmbeddingProvider(this.pluginSettings, { transport: createObsidianEmbeddingTransport() }),
+          // Non-secret, display-only setup summary for the Claude/MCP dashboard card (no API keys).
+          getSetupSummary: () => buildSetupSummary(this.db!, this.pluginSettings, this.health.databasePath ?? undefined),
         });
       this.refreshReindexStatus();
       if (firstRun) new Notice("Transcript Memory Vault is ready. Upload a transcript to begin.");

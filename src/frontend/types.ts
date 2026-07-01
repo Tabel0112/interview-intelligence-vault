@@ -164,6 +164,26 @@ export interface UploadInput {
   rawText: string;
 }
 
+/**
+ * Non-secret, display-only summary of the LLM + embedding + database setup for the dashboard's
+ * "Use Claude Desktop with this vault" card. NEVER contains API key material — only key PRESENCE
+ * (the `*Configured` booleans) and non-secret provider/model/dimension/path metadata. Read-only:
+ * building it performs no DB writes and no network calls.
+ */
+export interface SetupSummary {
+  llmConfigured: boolean;
+  llmProvider?: string;
+  llmModel?: string;
+  embeddingConfigured: boolean;
+  embeddingProvider?: string;
+  embeddingModel?: string;
+  embeddingDimensions?: number;
+  embeddingHealth: "ok" | "setup_required" | "reindex_required";
+  reindexNeeded: boolean;
+  databasePath?: string;
+  settingsPath?: string;
+}
+
 export interface FrontendApi {
   getDashboard(): Promise<DashboardView>;
   listTranscripts(): Promise<TranscriptListItem[]>;
@@ -188,6 +208,11 @@ export interface FrontendApi {
   getLlmStatus(): Promise<{ required: boolean; ready: boolean }>;
   /** Production Ask AI embedding readiness: setup-required / reindex-required / ok. Optional (headless: ok). */
   getEmbeddingStatus?(): Promise<{ required: boolean; state: "ok" | "setup_required" | "reindex_required"; reason?: string }>;
+  /**
+   * Non-secret setup summary for the Claude/MCP dashboard card. Returns null when not wired (headless/MCP
+   * or dev contexts that never inject it). NEVER returns API key material — presence booleans only.
+   */
+  getSetupSummary?(): Promise<SetupSummary | null>;
   /** Run AI extraction for a transcript that has no completed run yet (e.g. imported before LLM setup). */
   runExtraction(transcriptId: string): Promise<{ status: "extracted" | "skipped" | "setup_required" | "failed"; warning?: string }>;
   /**

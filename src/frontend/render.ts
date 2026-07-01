@@ -1,7 +1,7 @@
 import { appShell, emptyState, escapeHtml, routeButton, score, trustBadge } from "./html.js";
 import { routeHref } from "./router.js";
 import { DEGRADED_MEMORY_REASON } from "./types.js";
-import type { EvidenceView, FrontendAnswerView, MemoryView, PageContext, RenderedPage, ReviewItemView, SearchResultView, TranscriptView, TrustState } from "./types.js";
+import type { EvidenceView, FrontendAnswerView, MemoryView, PageContext, RenderedPage, ReviewItemView, SearchResultView, SetupSummary, TranscriptView, TrustState } from "./types.js";
 
 const section = (title: string, body: string, className = "") => `<section class="vault-section${className ? ` ${escapeHtml(className)}` : ""}"><h2>${escapeHtml(title)}</h2>${body}</section>`;
 const links = (items: Array<{ href: string; label: string }>) => `<div class="route-actions">${items.map((item) => routeButton(item.href, item.label)).join("")}</div>`;
@@ -156,6 +156,89 @@ function healthView(health: NonNullable<Awaited<ReturnType<PageContext["api"]["g
   </dl></article>`, "database-health-section");
 }
 
+const SUPPORTED_UPLOAD_FORMATS = ".txt · .md · .srt · .vtt";
+
+/** Post-import guidance (informational; no new backend behavior). Collapsed so it never crowds the CTA. */
+function uploadNextSteps(): string {
+  return `<details class="tmv-advanced upload-next-steps"><summary>After importing — recommended next steps</summary>
+    <ol class="upload-next-list">
+      <li>Import stores the immutable raw transcript in local SQLite (the source of truth).</li>
+      <li>Run <strong>AI extraction</strong> if the transcript was imported before an LLM was configured (command: "Run AI extraction", or open the transcript).</li>
+      <li>Rebuild the <strong>embedding index</strong> after changing embedding settings (command: "Rebuild Embedding Index").</li>
+      <li>Sync <strong>generated graph notes</strong> for Obsidian's native graph (the "Native Obsidian graph" card below, or command: "Sync generated graph notes").</li>
+      <li>Chat in <strong>Claude Desktop</strong> (via MCP) — the recommended Ask AI experience.</li>
+    </ol></details>`;
+}
+
+/**
+ * The obvious, primary upload surface — a drop-zone form reused by the dashboard and the /upload route.
+ * Uses the EXISTING `data-action="upload"` form + hidden filename/rawText fields, so upload/ingest backend
+ * behavior is unchanged; `data-dropzone` only adds a drag visual + drop-to-fill in app.ts.
+ */
+function uploadCard(): string {
+  return `<p><strong>Drag a transcript file here, or choose one.</strong> Imported raw sources are immutable; re-uploading identical content reuses the existing transcript.</p>
+    <form data-action="upload" class="tmv-dropzone" data-dropzone>
+      <p class="tmv-badge">Supported formats: ${SUPPORTED_UPLOAD_FORMATS}</p>
+      <label class="upload-choose tmv-btn tmv-btn-primary">Choose transcript<input name="file" type="file" accept=".txt,.md,.srt,.vtt" required></label>
+      <p data-file-status>No file selected.</p>
+      <input name="filename" type="hidden"><textarea name="rawText" hidden></textarea>
+      <button type="submit" class="tmv-btn tmv-btn-primary">Upload transcript</button>
+    </form>
+    <p data-loading-message hidden>Importing immutable transcript source…</p><div data-form-result></div>
+    ${uploadNextSteps()}`;
+}
+
+/** Non-secret Claude Desktop MCP config snippet. NEVER contains an API key (the key stays in data.json). */
+function mcpConfigSnippet(dbPath?: string): string {
+  return `{
+  "mcpServers": {
+    "transcript-memory-vault": {
+      "command": "node",
+      "args": ["<path-to-plugin-checkout>/dist/mcp/server.cjs"],
+      "env": {
+        "TMV_DB_PATH": "${dbPath ?? "<path-to>/transcript-memory.sqlite"}"
+      }
+    }
+  }
+}`;
+}
+
+/**
+ * The Claude/MCP setup-status card. Renders ONLY the non-secret `SetupSummary` (key PRESENCE + provider/
+ * model/dimensions/paths) — never an API key value. Falls back to a minimal message when the summary is
+ * not wired (headless/dev). Copy buttons carry only non-secret paths/snippets.
+ */
+function setupCard(setup: SetupSummary | null, fallbackDbPath?: string): string {
+  const yn = (value: boolean) => (value ? "yes" : "no");
+  const healthTrust = (state: SetupSummary["embeddingHealth"]): TrustState =>
+    state === "ok" ? "strong" : state === "reindex_required" ? "conflicting" : "no_evidence";
+  const statusGrid = setup
+    ? `<div class="tmv-grid setup-grid">
+        <span class="tmv-badge">LLM configured: ${yn(setup.llmConfigured)}</span>
+        ${setup.llmProvider ? `<span class="tmv-badge">LLM: ${escapeHtml(setup.llmProvider)}${setup.llmModel ? ` / ${escapeHtml(setup.llmModel)}` : ""}</span>` : ""}
+        <span class="tmv-badge">Embeddings configured: ${yn(setup.embeddingConfigured)}</span>
+        ${setup.embeddingProvider ? `<span class="tmv-badge">Embedding: ${escapeHtml(setup.embeddingProvider)}${setup.embeddingModel ? ` / ${escapeHtml(setup.embeddingModel)}` : ""}${setup.embeddingDimensions ? ` / ${setup.embeddingDimensions}d` : ""}</span>` : ""}
+        ${trustBadge(healthTrust(setup.embeddingHealth), `embedding: ${setup.embeddingHealth}`)}
+        <span class="tmv-badge">Reindex needed: ${yn(setup.reindexNeeded)}</span>
+      </div>`
+    : `<p class="tmv-callout tmv-callout--info">Detailed setup status appears inside the Obsidian plugin.</p>`;
+  const dbPath = setup?.databasePath ?? fallbackDbPath;
+  const snippet = mcpConfigSnippet(dbPath);
+  return `<p class="tmv-callout tmv-callout--info">Use Claude Desktop for normal chat. This Obsidian plugin stores, indexes, reviews, and visualizes the evidence vault.</p>
+    <p><strong>SQLite is the source of truth.</strong> Imported raw transcript snapshots are immutable; generated Markdown is a disposable view layer for Obsidian's native graph.</p>
+    ${statusGrid}
+    ${dbPath
+      ? `<p>Point Claude Desktop's <code>TMV_DB_PATH</code> at this vault's database:</p>
+        <p class="mcp-db-path"><code class="tmv-code">${escapeHtml(dbPath)}</code></p>
+        <button type="button" class="tmv-btn tmv-btn-secondary" data-copy="${escapeHtml(dbPath)}">Copy TMV_DB_PATH</button>`
+      : `<p><code>TMV_DB_PATH</code> will appear here once the database has initialized.</p>`}
+    ${setup?.settingsPath ? `<p>Plugin settings file (data.json): <code class="tmv-code">${escapeHtml(setup.settingsPath)}</code></p>` : ""}
+    <p>Claude Desktop MCP config (no API keys — the key stays in the plugin's data.json):</p>
+    <pre class="tmv-code mcp-config-snippet">${escapeHtml(snippet)}</pre>
+    <button type="button" class="tmv-btn tmv-btn-secondary" data-copy="${escapeHtml(snippet)}">Copy MCP config</button>
+    <p>See <code>docs/MCP.md</code> for the full Claude Desktop / MCP setup. Opening Claude Desktop is a manual step.</p>`;
+}
+
 export async function renderPage(context: PageContext): Promise<RenderedPage> {
   const { api, route } = context;
   switch (route.id) {
@@ -176,52 +259,63 @@ export async function renderPage(context: PageContext): Promise<RenderedPage> {
           : `Last synced ${escapeHtml(sync.lastSyncedAt ?? "unknown")} · ${sync.fileCount ?? 0} files · ${sync.graphNodeCount ?? 0} nodes · ${sync.graphEdgeCount ?? 0} edges.`;
       const syncWarn = sync?.status === "failed"
         ? `<aside class="trust-warning">${trustBadge("broken", "last sync had errors")} ${escapeHtml(sync.error ?? "Some generated files could not be written.")}</aside>` : "";
-      // Native Obsidian graph (the disposable-Markdown sync card — elevated as a first-class viewer surface).
-      const generatedNotesSection = section("Native Obsidian graph", `<p>These generated Markdown notes power Obsidian's <strong>native (ribbon) graph</strong>. The plugin's own Graph page reads SQLite live; the native graph only sees Markdown files and wiki links, so it needs these notes. SQLite stays the source of truth — editing a generated note never changes memory.</p>
-        <p class="generated-sync-status">${syncStatusLine}</p>${syncWarn}
-        <form data-action="sync-graph"><button type="submit">Sync Obsidian graph notes</button></form>
-        <p data-loading-message hidden>Generating Markdown graph notes…</p><div data-form-result></div>`, "generated-notes-section");
 
-      const vaultStatus = section("Vault status", `<p><strong>SQLite is the source of truth.</strong> Imported raw transcript snapshots are immutable; generated Markdown is a disposable view layer for Obsidian's native graph.</p>
-        <div class="metric-grid"><span>${view.totalTranscriptCount} transcripts</span>${routeButton(routeHref.reviewQueue(), `${view.reviewCount} review items`, "route-action metric-action")}<span>${view.weakCount} weak/review</span><span>${view.conflictCount} conflicts</span><span>${view.brokenCount} broken pointers</span></div>
-        ${view.health ? healthView(view.health) : ""}`, "vault-status-section");
+      const dbPath = view.health?.databasePath ?? undefined;
+      const setup = (await api.getSetupSummary?.()) ?? null;
 
-      const dbPath = view.health?.databasePath;
-      const mcpCard = section("Use Claude Desktop (MCP)", `<p><strong>Claude Desktop is the recommended chat UI.</strong> It connects to this vault through a local MCP server and answers from the same evidence-first pipeline. This plugin is your evidence viewer, graph browser, transcript/memory navigator, and review/control panel.</p>
-        ${dbPath ? `<p>Point Claude Desktop's <code>TMV_DB_PATH</code> at this vault's database:</p><p class="mcp-db-path"><code>${escapeHtml(dbPath)}</code></p>` : `<p><code>TMV_DB_PATH</code> will appear here once the plugin has initialized its database.</p>`}
-        <p>See <code>docs/MCP.md</code> for the full Claude Desktop / MCP setup. (Opening Claude Desktop is a manual step — there is no in-app launcher.)</p>`, "mcp-card");
+      // 1. Upload — the most obvious, primary first action.
+      const uploadSection = section("Upload a transcript", uploadCard(), "upload-section tmv-card--primary");
 
+      // 2. Claude Desktop / MCP setup + status (non-secret setup summary).
+      const setupSection = section("Use Claude Desktop with this vault", setupCard(setup, dbPath), "mcp-card tmv-card");
+
+      // 3. Review queue + vault metrics, then evidence needing attention.
+      const reviewSection = section("Review queue", `<div class="metric-grid tmv-grid">
+          ${routeButton(routeHref.reviewQueue(), `${view.reviewCount} review items`, "route-action metric-action")}
+          <span class="tmv-badge">${view.weakCount} weak/review</span><span class="tmv-badge">${view.conflictCount} conflicts</span><span class="tmv-badge">${view.brokenCount} broken pointers</span><span class="tmv-badge">${view.totalTranscriptCount} transcripts</span>
+        </div>
+        <p>${view.reviewCount} open review item(s)${view.conflictCount ? `, including ${view.conflictCount} conflict(s)` : ""}.</p>${links([{ href: routeHref.reviewQueue(), label: "Open review queue" }])}`, "review-summary-section");
       const attention = view.attention ?? [];
       const attentionSection = section("Evidence needing attention", attention.length
         ? attention.map((item) => `<article class="attention-item">${trustBadge(item.trustState)} <a href="${escapeHtml(item.href)}">${escapeHtml(item.title)}</a> <small>${escapeHtml(item.detail)}</small></article>`).join("")
         : emptyState("Nothing needs attention", "No weak, broken, or conflicting evidence right now."), "attention-section");
 
+      // 4. Graph / evidence viewer (generated notes + a link to the live plugin graph).
+      const graphSection = section("Native Obsidian graph", `<p>These generated Markdown notes power Obsidian's <strong>native (ribbon) graph</strong>. The plugin's own Graph page reads SQLite live; the native graph only sees Markdown files and wiki links, so it needs these notes. SQLite stays the source of truth — editing a generated note never changes memory.</p>
+        <p class="generated-sync-status">${syncStatusLine}</p>${syncWarn}
+        <form data-action="sync-graph"><button type="submit" class="tmv-btn tmv-btn-secondary">Sync Obsidian graph notes</button></form>
+        <p data-loading-message hidden>Generating Markdown graph notes…</p><div data-form-result></div>
+        ${links([{ href: routeHref.graph(), label: "Open graph & evidence viewer" }])}`, "generated-notes-section");
+
+      // 5. Recent transcripts (links to the full Transcripts route).
+      const transcriptsSection = section("Transcripts", `${view.transcripts.map((item) => `<article><a href="${escapeHtml(routeHref.transcript(item.id))}">${escapeHtml(item.title)}</a> · ${item.spanCount} spans</article>`).join("") || emptyState("No transcripts", "Upload a transcript to begin.", { href: routeHref.upload(), label: "Upload transcript" })}
+        ${links([{ href: routeHref.transcripts(), label: "All transcripts" }, { href: routeHref.upload(), label: "Upload transcript" }])}`, "transcripts-section");
+
+      // 6. Recent answers/evidence.
       const recentAnswers = section("Recent answers", view.recentAnswers.map((item) => `<article>${trustBadge(item.confidence)} <a href="${escapeHtml(routeHref.answer(item.id))}">${escapeHtml(item.question)}</a></article>`).join("")
-        || emptyState("No answers yet", "Ask in Claude Desktop, or use the Ask AI page under Advanced.", { href: routeHref.ask(), label: "Ask AI" }), "recent-answers-section");
+        || emptyState("No answers yet", "Ask in Claude Desktop for chat. Answers run there — or via Internal Ask AI under Advanced tools — appear here."), "recent-answers-section");
 
-      const reviewSection = section("Review queue / conflicts", `<p>${view.reviewCount} open review item(s)${view.conflictCount ? `, including ${view.conflictCount} conflict(s)` : ""}.</p>${links([{ href: routeHref.reviewQueue(), label: "Open review queue" }])}`, "review-summary-section");
-
-      const transcriptsSection = section("Transcripts", `${view.transcripts.map((item) => `<article><a href="${escapeHtml(routeHref.transcript(item.id))}">${escapeHtml(item.title)}</a> · ${item.spanCount} spans</article>`).join("") || emptyState("No transcripts", "Import a transcript to begin.")}
-        ${links([{ href: routeHref.upload(), label: "Upload transcript" }])}`, "transcripts-section");
-
-      const searchSection = section("Search vault", `<p>Find transcripts, spans, memory objects, answers, and evidence.</p>${links([{ href: routeHref.search(), label: "Search vault" }])}`, "search-section");
+      // 7. Advanced / internal tools — collapsed, low prominence.
+      const advancedSection = section("Advanced / Internal tools", `<details class="tmv-advanced advanced-tools"><summary>Show advanced / internal tools</summary>
+        <p>Debugging and inspection tools. For normal chat, use Claude Desktop.</p>
+        ${links([{ href: routeHref.search(), label: "Search vault" }, { href: routeHref.ask(), label: "Internal Ask AI" }])}
+        ${view.health ? healthView(view.health) : ""}
+      </details>`, "advanced-tools-section");
 
       const body = `${readyStatus}${startupProblem}${llmBanner}
-        ${vaultStatus}
-        ${mcpCard}
-        ${attentionSection}
-        ${recentAnswers}
+        ${uploadSection}
+        ${setupSection}
         ${reviewSection}
-        ${generatedNotesSection}
+        ${attentionSection}
+        ${graphSection}
         ${transcriptsSection}
-        ${searchSection}`;
+        ${recentAnswers}
+        ${advancedSection}`;
       return { title: "Dashboard", html: appShell("Dashboard", body) };
     }
     case "upload":
       return { title: "Upload transcript", html: appShell("Upload transcript", `<aside class="immutable-notice">Uploads become immutable raw transcript sources. Re-uploading identical content reuses the existing transcript.</aside>
-        <form data-action="upload"><label>Transcript file (.txt, .md, .srt, .vtt) <input name="file" type="file" accept=".txt,.md,.srt,.vtt" required></label>
-        <p data-file-status>No file selected.</p><input name="filename" type="hidden"><textarea name="rawText" hidden></textarea>
-        <button type="submit">Import transcript</button></form><p data-loading-message hidden>Importing immutable transcript source...</p><div data-form-result></div>`) };
+        ${section("Upload a transcript", uploadCard(), "upload-section tmv-card--primary")}`) };
     case "transcripts": {
       // Viewer-mode Transcripts list: a read-only projection of listTranscripts(). No new backend behavior;
       // each item links to the existing immutable transcript detail route.

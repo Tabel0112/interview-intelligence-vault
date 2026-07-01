@@ -19,7 +19,7 @@ import { resolveEvidencePointer, type EvidencePointer } from "../provenance/inde
 import { routeHref } from "./router.js";
 import { DEGRADED_MEMORY_REASON } from "./types.js";
 import type {
-  DashboardView, EvidenceView, FrontendApi, GeneratedSyncResult, GeneratedSyncStatus, MemoryView, ReviewItemView, SearchResultView, TranscriptListItem, TranscriptView, TrustState,
+  DashboardView, EvidenceView, FrontendApi, GeneratedSyncResult, GeneratedSyncStatus, MemoryView, ReviewItemView, SearchResultView, SetupSummary, TranscriptListItem, TranscriptView, TrustState,
 } from "./types.js";
 
 /**
@@ -242,6 +242,11 @@ export function createSqliteFrontendApi(
     /** The live external embedding provider for retrieval (never the token-hash fallback). Undefined => none. */
     getEmbeddingProvider?: () => EmbeddingProvider | undefined;
     /**
+     * Non-secret setup summary for the Claude/MCP dashboard card. Injected by the Obsidian plugin (which
+     * has the settings + database path). Read-only, no secrets — presence booleans + provider/model/paths.
+     */
+    getSetupSummary?: () => SetupSummary;
+    /**
      * Injected by the Obsidian plugin (which knows the on-disk vault path) to write the generated
      * Markdown view layer. Headless/MCP callers leave this unset -> syncGeneratedGraphNotes is unavailable.
      */
@@ -346,6 +351,10 @@ export function createSqliteFrontendApi(
       const required = !!options.embeddingsRequired;
       const health = options.getEmbeddingHealth?.();
       return { required, state: required ? (health?.state ?? "setup_required") : "ok", reason: health?.reason };
+    },
+    async getSetupSummary() {
+      // Display-only; returns null when not wired (headless/MCP/dev). Never carries secrets.
+      return options.getSetupSummary?.() ?? null;
     },
     async getAnswer(id) {
       try {

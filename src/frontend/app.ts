@@ -45,6 +45,14 @@ export async function mountObsidianUi(root: HTMLElement, api: FrontendApi, navig
       copy.textContent = "Quote copied";
       return;
     }
+    // Generic copy for non-secret snippets/paths (MCP config, TMV_DB_PATH). Value is a plain, key-free
+    // string carried in data-copy; never an API key.
+    const copyValue = (event.target as Element).closest<HTMLElement>("[data-copy]");
+    if (copyValue) {
+      void navigator.clipboard?.writeText(copyValue.dataset.copy ?? "");
+      copyValue.textContent = "Copied";
+      return;
+    }
     const routeControl = (event.target as Element).closest<HTMLElement>("[data-route], a[href]");
     const target = routeControl?.dataset.route ?? routeControl?.getAttribute("href");
     if (!isInternalNavigationTarget(target)) return;
@@ -56,17 +64,34 @@ export async function mountObsidianUi(root: HTMLElement, api: FrontendApi, navig
   }, { signal });
   root.addEventListener("change", (event) => {
     const input = event.target as HTMLInputElement;
-    if (input.name !== "file" || !input.files?.[0]) return;
-    const file = input.files[0];
-    const form = input.form;
-    const status = form?.querySelector<HTMLElement>("[data-file-status]") ?? form?.parentElement?.querySelector<HTMLElement>("[data-file-status]");
-    if (status) status.textContent = `${file.name} · ${file.size} bytes`;
-    void file.text().then((text) => {
-      const filename = form?.elements.namedItem("filename") as HTMLInputElement | null;
-      const rawText = form?.elements.namedItem("rawText") as HTMLTextAreaElement | null;
-      if (filename) filename.value = file.name;
-      if (rawText) rawText.value = text;
-    });
+    if (input.name !== "file" || !input.files?.[0] || !input.form) return;
+    populateUploadForm(input.form, input.files[0]);
+  }, { signal });
+  // Drop-zone: visual drag state + drop-to-fill the existing upload form. Ingestion/backend is unchanged;
+  // this only sets the file input + hidden fields the upload submit already reads.
+  root.addEventListener("dragover", (event) => {
+    const zone = (event.target as Element).closest<HTMLElement>("[data-dropzone]");
+    if (!zone) return;
+    event.preventDefault();
+    zone.classList.add("is-dragover");
+  }, { signal });
+  root.addEventListener("dragleave", (event) => {
+    const zone = (event.target as Element).closest<HTMLElement>("[data-dropzone]");
+    if (zone && !zone.contains((event as DragEvent).relatedTarget as Node)) zone.classList.remove("is-dragover");
+  }, { signal });
+  root.addEventListener("drop", (event) => {
+    const zone = (event.target as Element).closest<HTMLFormElement>("[data-dropzone]");
+    if (!zone) return;
+    event.preventDefault();
+    zone.classList.remove("is-dragover");
+    const file = (event as DragEvent).dataTransfer?.files?.[0];
+    if (!file) return;
+    // Put the dropped file into the file input so its `required` constraint is satisfied on submit.
+    const input = zone.querySelector<HTMLInputElement>('input[type="file"]');
+    if (input) {
+      try { const transfer = new DataTransfer(); transfer.items.add(file); input.files = transfer.files; } catch { /* engine without DataTransfer file assignment: hidden fields below still carry the content */ }
+    }
+    populateUploadForm(zone, file);
   }, { signal });
   root.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -134,6 +159,18 @@ export async function mountObsidianUi(root: HTMLElement, api: FrontendApi, navig
 
 export function isInternalNavigationTarget(target: string | null | undefined): target is string {
   return target?.startsWith("mv://") ?? false;
+}
+
+/** Fill the upload form's status + hidden filename/rawText fields from a chosen or dropped file. */
+function populateUploadForm(form: HTMLFormElement, file: File): void {
+  const status = form.querySelector<HTMLElement>("[data-file-status]") ?? form.parentElement?.querySelector<HTMLElement>("[data-file-status]");
+  if (status) status.textContent = `${file.name} · ${file.size} bytes`;
+  void file.text().then((text) => {
+    const filename = form.elements.namedItem("filename") as HTMLInputElement | null;
+    const rawText = form.elements.namedItem("rawText") as HTMLTextAreaElement | null;
+    if (filename) filename.value = file.name;
+    if (rawText) rawText.value = text;
+  });
 }
 
 /** Inline result of a dashboard "Sync Obsidian graph notes" action. Navigation/view layer only — no truth. */
