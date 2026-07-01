@@ -289,6 +289,88 @@
 }
 .transcript-memory-vault .tmv-fade-in { animation: tmv-fade-in var(--tmv-transition) both; }
 
+/* Light status chip: small muted pill with a state dot. The TEXT carries the state (never color alone);
+   the dot is a supplementary cue. Replaces heavy bordered badges in the setup + review summaries. */
+.transcript-memory-vault .tmv-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--size-2-2);
+  padding: 1px var(--size-4-2);
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  white-space: nowrap;
+}
+.transcript-memory-vault .tmv-status::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+.transcript-memory-vault .tmv-status--ok::before { background: var(--color-green); }
+.transcript-memory-vault .tmv-status--warn::before { background: var(--color-yellow); }
+.transcript-memory-vault .tmv-status--error::before { background: var(--color-red); }
+
+/* Upload card: compact and product-like. A Choose button + inline filename on one row, quiet formats
+   helper text, and a secondary Upload submit. Drag/drop is an enhancement — the whole form is the drop
+   target, styled only while dragging (no permanent dashed box). The native file input is visually hidden
+   inside the styled label (no absolute positioning) but stays keyboard-focusable and `required`. */
+.transcript-memory-vault .upload-form { display: flex; flex-direction: column; gap: var(--size-4-2); }
+.transcript-memory-vault .upload-form.is-dragover {
+  outline: 2px dashed var(--interactive-accent);
+  outline-offset: var(--size-4-2);
+  background: var(--background-modifier-hover);
+  border-radius: var(--radius-m);
+}
+.transcript-memory-vault .upload-desc { color: var(--text-muted); margin: 0; }
+.transcript-memory-vault .upload-row { display: flex; align-items: center; gap: var(--size-4-2); flex-wrap: wrap; }
+.transcript-memory-vault .upload-file-input { width: 0.1px; height: 0.1px; opacity: 0; overflow: hidden; }
+.transcript-memory-vault .upload-choose { display: inline-flex; align-items: center; cursor: pointer; }
+.transcript-memory-vault .upload-choose:focus-within {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
+.transcript-memory-vault .upload-formats,
+.transcript-memory-vault .upload-file-status,
+.transcript-memory-vault .upload-drop-hint {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+.transcript-memory-vault .upload-actions { display: flex; align-items: center; gap: var(--size-4-2); flex-wrap: wrap; }
+
+/* Claude/MCP setup card: calm default (intro + status chips + one muted metadata line + Copy DB path).
+   All paths + the full MCP JSON live only inside the collapsed "Setup details". */
+.transcript-memory-vault .setup-intro { margin: 0; }
+.transcript-memory-vault .setup-status,
+.transcript-memory-vault .review-metrics { display: flex; flex-wrap: wrap; gap: var(--size-2-2); }
+.transcript-memory-vault .setup-meta,
+.transcript-memory-vault .setup-detail-label { margin: 0; color: var(--text-muted); font-size: var(--font-ui-small); }
+.transcript-memory-vault .setup-detail-label { font-weight: var(--font-semibold); margin-block-start: var(--size-4-2); }
+.transcript-memory-vault .setup-actions,
+.transcript-memory-vault .setup-detail-actions { display: flex; gap: var(--size-4-2); flex-wrap: wrap; }
+.transcript-memory-vault .mcp-config-snippet { max-height: 220px; overflow: auto; font-size: var(--font-ui-smaller); }
+.transcript-memory-vault .attention-list { margin: 0; padding-inline-start: 0; list-style: none; display: flex; flex-direction: column; gap: var(--size-2-2); }
+
+/* Lighter primary nav: smaller, calmer link buttons; Advanced reads as a quiet disclosure, not a peer item. */
+.transcript-memory-vault .app-header nav { gap: var(--size-4-2); }
+.transcript-memory-vault nav .route-action { font-size: var(--font-ui-small); }
+.transcript-memory-vault nav details.nav-advanced > summary { color: var(--text-muted); font-size: var(--font-ui-small); }
+
+/* General density + calmer empty states: tighter, consistent internal spacing; empty states read as
+   soft muted help text (dashed, borderless-feeling) rather than another heavy bordered box. */
+.transcript-memory-vault .vault-section > :not(:first-child) { margin-block-start: var(--size-4-2); }
+.transcript-memory-vault .empty-state {
+  border-style: dashed;
+  border-color: var(--background-modifier-border);
+  background: transparent;
+  color: var(--text-muted);
+  text-align: center;
+}
+.transcript-memory-vault .empty-state h3 { color: var(--text-normal); }
+
 /* Polish for existing shared components (no markup churn) */
 .transcript-memory-vault .vault-section { transition: border-color var(--tmv-transition); }
 .transcript-memory-vault .vault-section:hover { border-color: var(--background-modifier-border-hover, var(--interactive-accent)); }

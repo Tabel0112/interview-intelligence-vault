@@ -19,12 +19,34 @@ describe("Pass 2: scoped design system", () => {
     }
   });
 
+  it("defines a light status chip whose state is not conveyed by color alone", async () => {
+    const css = await readFile("styles.css", "utf8");
+    expect(css).toContain(".transcript-memory-vault .tmv-status");
+    expect(css).toContain(".tmv-status--ok::before");
+    expect(css).toContain(".tmv-status--warn::before");
+    expect(css).toContain(".tmv-status--error::before");
+    // The dot is a supplementary cue; the chip label carries the state as text (asserted in dashboard tests).
+  });
+
   it("uses namespaced keyframes and applies subtle animation only via transform/opacity", async () => {
     const css = await readFile("styles.css", "utf8");
     expect(css).toContain("@keyframes tmv-fade-in");
     expect(css).toContain("@keyframes tmv-pulse");
     // No motion primitive relies on positioning that could escape the plugin surface.
     expect(css).not.toMatch(/\bposition:\s*(?:absolute|fixed)\b/);
+  });
+
+  it("hides the native upload file input accessibly (no absolute positioning) with a focus-visible control", async () => {
+    const css = await readFile("styles.css", "utf8");
+    // The input is visually hidden but keyboard-focusable — hidden via size/opacity, NOT display:none or
+    // absolute positioning (which the CSS-boundary test forbids), so required-file validation still runs.
+    const rule = css.slice(css.indexOf(".transcript-memory-vault .upload-file-input"), css.indexOf(".transcript-memory-vault .upload-choose"));
+    expect(rule).toContain("opacity: 0");
+    expect(rule).not.toContain("display: none");
+    expect(rule).not.toMatch(/position:\s*(?:absolute|fixed)/);
+    // The wrapping label shows a focus ring when the hidden input is focused.
+    expect(css).toContain(".upload-choose:focus-within");
+    expect(css).toContain("outline");
   });
 
   it("ships a scoped reduced-motion escape hatch", async () => {

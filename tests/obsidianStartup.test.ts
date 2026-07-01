@@ -75,12 +75,10 @@ describe("migration packaging and first-run health", () => {
     const orderedContent = [
       'aria-label="Primary"',
       "<h1>Dashboard</h1>",
-      'class="immutable-notice status-banner"',
+      'class="status-banner',
       'class="vault-section upload-section',
       'class="vault-section mcp-card',
-      'class="vault-section review-summary-section"',
-      'class="metric-grid',
-      'class="vault-section attention-section"',
+      'class="vault-section review-summary-section', // now the merged "Review & attention" card
       'class="vault-section generated-notes-section"',
       'class="vault-section transcripts-section"',
       'class="vault-section recent-answers-section"',

@@ -5714,6 +5714,7 @@ function createSqliteFrontendApi(db, options = {}) {
 // src/frontend/render.ts
 var section = (title, body, className = "") => `<section class="vault-section${className ? ` ${escapeHtml(className)}` : ""}"><h2>${escapeHtml(title)}</h2>${body}</section>`;
 var links = (items) => `<div class="route-actions">${items.map((item) => routeButton(item.href, item.label)).join("")}</div>`;
+var statusChip = (state, label) => `<span class="tmv-status tmv-status--${state}">${escapeHtml(label)}</span>`;
 var correctionForm = (targetType, targetId) => ["memory_object", "answer_claim", "citation", "graph_node", "graph_edge", "evidence", "speaker", "answer", "span", "transcript"].includes(targetType) ? `<form data-action="correction"><input type="hidden" name="targetType" value="${escapeHtml(targetType)}"><input type="hidden" name="targetId" value="${escapeHtml(targetId)}">
       <label>Append-only correction <textarea name="correctionText" required></textarea></label><label>Reason <input name="reason"></label>
       <button type="submit">Submit correction</button></form><div data-form-result></div>` : `<p class="trust-warning">This target type does not yet have a backend correction record type. Use its owning memory, answer, or graph edge.</p>`;
@@ -5826,7 +5827,7 @@ function healthView(health) {
   </dl>
   <p class="tmv-callout tmv-callout--info">LLM and embedding providers, models, and API keys are configured in the Obsidian plugin <strong>Settings</strong> tab. Keys are never shown here or in generated notes.</p></article>`, "database-health-section");
 }
-var SUPPORTED_UPLOAD_FORMATS = ".txt \xB7 .md \xB7 .srt \xB7 .vtt";
+var SUPPORTED_UPLOAD_FORMATS = ".txt, .md, .srt, .vtt";
 function uploadNextSteps() {
   return `<details class="tmv-advanced upload-next-steps"><summary>After importing \u2014 recommended next steps</summary>
     <ol class="upload-next-list">
@@ -5838,13 +5839,15 @@ function uploadNextSteps() {
     </ol></details>`;
 }
 function uploadCard() {
-  return `<p><strong>Drag a transcript file here, or choose one.</strong> Imported raw sources are immutable; re-uploading identical content reuses the existing transcript.</p>
-    <form data-action="upload" class="tmv-dropzone" data-dropzone>
-      <p class="tmv-badge">Supported formats: ${SUPPORTED_UPLOAD_FORMATS}</p>
-      <label class="upload-choose tmv-btn tmv-btn-primary">Choose transcript<input name="file" type="file" accept=".txt,.md,.srt,.vtt" required></label>
-      <p data-file-status>No file selected.</p>
+  return `<p class="upload-desc">Import an immutable transcript source into the evidence vault.</p>
+    <form data-action="upload" class="upload-form" data-dropzone>
+      <div class="upload-row">
+        <label class="upload-choose tmv-btn tmv-btn-primary">Choose transcript<input class="upload-file-input" name="file" type="file" accept=".txt,.md,.srt,.vtt" required></label>
+        <span class="upload-file-status" data-file-status>No file selected</span>
+      </div>
+      <p class="upload-formats">Supports ${SUPPORTED_UPLOAD_FORMATS}</p>
       <input name="filename" type="hidden"><textarea name="rawText" hidden></textarea>
-      <button type="submit" class="tmv-btn tmv-btn-primary">Upload transcript</button>
+      <div class="upload-actions"><button type="submit" class="tmv-btn tmv-btn-secondary upload-submit">Upload transcript</button><span class="upload-drop-hint">or drag a file here</span></div>
     </form>
     <p data-loading-message hidden>Importing immutable transcript source\u2026</p><div data-form-result></div>
     ${uploadNextSteps()}`;
@@ -5863,36 +5866,41 @@ function mcpConfigSnippet(dbPath) {
 }`;
 }
 function setupCard(setup, fallbackDbPath) {
-  const yn = (value) => value ? "yes" : "no";
-  const healthTrust = (state) => state === "ok" ? "strong" : state === "reindex_required" ? "conflicting" : "no_evidence";
-  const statusGrid = setup ? `<div class="tmv-grid setup-grid">
-        <span class="tmv-badge">LLM configured: ${yn(setup.llmConfigured)}</span>
-        ${setup.llmProvider ? `<span class="tmv-badge">LLM: ${escapeHtml(setup.llmProvider)}${setup.llmModel ? ` / ${escapeHtml(setup.llmModel)}` : ""}</span>` : ""}
-        <span class="tmv-badge">Embeddings configured: ${yn(setup.embeddingConfigured)}</span>
-        ${setup.embeddingProvider ? `<span class="tmv-badge">Embedding: ${escapeHtml(setup.embeddingProvider)}${setup.embeddingModel ? ` / ${escapeHtml(setup.embeddingModel)}` : ""}${setup.embeddingDimensions ? ` / ${setup.embeddingDimensions}d` : ""}</span>` : ""}
-        ${trustBadge(healthTrust(setup.embeddingHealth), `embedding: ${setup.embeddingHealth}`)}
-        <span class="tmv-badge">Reindex needed: ${yn(setup.reindexNeeded)}</span>
-      </div>` : `<p class="tmv-callout tmv-callout--info">Detailed setup status appears inside the Obsidian plugin.</p>`;
   const dbPath = setup?.databasePath ?? fallbackDbPath;
   const snippet = mcpConfigSnippet(dbPath);
-  return `<p class="tmv-callout tmv-callout--info">Use Claude Desktop for normal chat. This Obsidian plugin stores, indexes, reviews, and visualizes the evidence vault.</p>
-    <p><strong>SQLite is the source of truth.</strong> Imported raw transcript snapshots are immutable; generated Markdown is a disposable view layer for Obsidian's native graph.</p>
-    ${statusGrid}
-    ${dbPath ? `<p>Point Claude Desktop's <code>TMV_DB_PATH</code> at this vault's database:</p>
-        <p class="mcp-db-path"><code class="tmv-code">${escapeHtml(dbPath)}</code></p>
-        <button type="button" class="tmv-btn tmv-btn-secondary" data-copy="${escapeHtml(dbPath)}">Copy TMV_DB_PATH</button>` : `<p><code>TMV_DB_PATH</code> will appear here once the database has initialized.</p>`}
-    ${setup?.settingsPath ? `<p>Plugin settings file (data.json): <code class="tmv-code">${escapeHtml(setup.settingsPath)}</code></p>` : ""}
-    <p>Claude Desktop MCP config (no API keys \u2014 the key stays in the plugin's data.json):</p>
-    <pre class="tmv-code mcp-config-snippet">${escapeHtml(snippet)}</pre>
-    <button type="button" class="tmv-btn tmv-btn-secondary" data-copy="${escapeHtml(snippet)}">Copy MCP config</button>
-    <p>See <code>docs/MCP.md</code> for the full Claude Desktop / MCP setup. Opening Claude Desktop is a manual step.</p>`;
+  const embeddingLabel = !setup ? "" : setup.embeddingHealth === "ok" ? "Embeddings OK" : setup.embeddingHealth === "reindex_required" ? "Reindex needed" : "Embeddings not set up";
+  const statusRow = setup ? `<div class="setup-status">
+        ${statusChip(setup.llmConfigured ? "ok" : "warn", setup.llmConfigured ? "LLM ready" : "LLM not configured")}
+        ${statusChip(setup.embeddingHealth === "ok" ? "ok" : "warn", embeddingLabel)}
+        ${statusChip(setup.reindexNeeded ? "warn" : "ok", setup.reindexNeeded ? "Reindex needed" : "Reindex not needed")}
+      </div>` : `<p class="setup-meta">Detailed setup status appears inside the Obsidian plugin.</p>`;
+  const metaBits = setup ? [
+    setup.llmProvider ? `${setup.llmProvider}${setup.llmModel ? ` / ${setup.llmModel}` : ""}` : "",
+    setup.embeddingProvider ? `${setup.embeddingProvider}${setup.embeddingModel ? ` / ${setup.embeddingModel}` : ""}${setup.embeddingDimensions ? ` / ${setup.embeddingDimensions}d` : ""}` : ""
+  ].filter(Boolean) : [];
+  const metaLine = metaBits.length ? `<p class="setup-meta">${metaBits.map(escapeHtml).join(" \xB7 ")}</p>` : "";
+  const setupDetails = `<details class="tmv-advanced setup-details"><summary>Setup details</summary>
+      ${dbPath ? `<p class="setup-detail-label">Database \u2014 <code>TMV_DB_PATH</code></p><p class="mcp-db-path"><code class="tmv-code">${escapeHtml(dbPath)}</code></p>` : `<p class="setup-meta"><code>TMV_DB_PATH</code> will appear once the database has initialized.</p>`}
+      ${setup?.settingsPath ? `<p class="setup-detail-label">Settings file \u2014 data.json</p><p><code class="tmv-code">${escapeHtml(setup.settingsPath)}</code></p>` : ""}
+      <p class="setup-detail-label">Claude Desktop MCP config <span class="setup-meta">(no API keys \u2014 the key stays in data.json)</span></p>
+      <pre class="tmv-code mcp-config-snippet">${escapeHtml(snippet)}</pre>
+      <div class="setup-detail-actions">${dbPath ? `<button type="button" class="tmv-btn tmv-btn-secondary" data-copy="${escapeHtml(snippet)}">Copy MCP config</button>` : ""}</div>
+      <p class="setup-meta">See <code>docs/MCP.md</code> for the full setup. API keys are configured in the Obsidian Settings tab and never shown here.</p>
+    </details>`;
+  return `<p class="setup-intro">Use Claude Desktop for normal chat. This plugin stores, indexes, reviews, and visualizes the evidence vault.</p>
+    ${statusRow}
+    ${metaLine}
+    <div class="setup-actions">
+      ${dbPath ? `<button type="button" class="tmv-btn tmv-btn-secondary" data-copy="${escapeHtml(dbPath)}">Copy DB path</button>` : ""}
+    </div>
+    ${setupDetails}`;
 }
 async function renderPage(context) {
   const { api, route } = context;
   switch (route.id) {
     case "dashboard": {
       const view = await api.getDashboard();
-      const readyStatus = view.health?.status === "ready" ? `<aside class="immutable-notice status-banner"><strong>Transcript Memory Vault is ready.</strong> ${view.health.firstRun ? "Upload a transcript to begin. " : ""}Imported raw transcript snapshots are immutable and stored in local SQLite at ${escapeHtml(view.health.databasePath)}.</aside>` : "";
+      const readyStatus = view.health?.status === "ready" ? `<aside class="status-banner tmv-callout tmv-callout--success">${statusChip("ok", "Vault ready")} <strong>Transcript Memory Vault is ready.</strong> ${view.health.firstRun ? "Upload a transcript to begin. " : ""}Imported raw transcript snapshots are immutable; SQLite is the source of truth.</aside>` : "";
       const startupProblem = view.health && view.health.status !== "ready" ? `<aside class="trust-warning">${view.health.status === "unsupported" ? trustBadge("no_evidence", "desktop only") : trustBadge("broken", "startup unavailable")} ${escapeHtml(view.health.lastInitializationError ?? "Database initialization has not completed.")}</aside>` : "";
       const llmBanner = view.llmRequired && view.llmReady === false ? `<aside class="trust-warning llm-setup-required">${trustBadge("no_evidence", "LLM required")} AI is not configured. Ask AI and AI memory extraction need an external LLM \u2014 open plugin Settings and add a provider, model, and API key. Transcripts still import; run the "Run AI extraction" command afterward.</aside>` : "";
       const sync = view.generatedSync;
@@ -5902,13 +5910,15 @@ async function renderPage(context) {
       const setup = await api.getSetupSummary?.() ?? null;
       const uploadSection = section("Upload a transcript", uploadCard(), "upload-section tmv-card--primary");
       const setupSection = section("Use Claude Desktop with this vault", setupCard(setup, dbPath), "mcp-card tmv-card");
-      const reviewSection = section("Review queue", `<div class="metric-grid tmv-grid">
-          ${routeButton(routeHref.reviewQueue(), `${view.reviewCount} review items`, "route-action metric-action")}
-          <span class="tmv-badge">${view.weakCount} weak/review</span><span class="tmv-badge">${view.conflictCount} conflicts</span><span class="tmv-badge">${view.brokenCount} broken pointers</span><span class="tmv-badge">${view.totalTranscriptCount} transcripts</span>
-        </div>
-        <p>${view.reviewCount} open review item(s)${view.conflictCount ? `, including ${view.conflictCount} conflict(s)` : ""}.</p>${links([{ href: routeHref.reviewQueue(), label: "Open review queue" }])}`, "review-summary-section");
       const attention = view.attention ?? [];
-      const attentionSection = section("Evidence needing attention", attention.length ? attention.map((item) => `<article class="attention-item">${trustBadge(item.trustState)} <a href="${escapeHtml(item.href)}">${escapeHtml(item.title)}</a> <small>${escapeHtml(item.detail)}</small></article>`).join("") : emptyState("Nothing needs attention", "No weak, broken, or conflicting evidence right now."), "attention-section");
+      const reviewMetrics = `<div class="review-metrics">
+          ${statusChip(view.reviewCount ? "warn" : "ok", `${view.reviewCount} to review`)}
+          ${view.conflictCount ? statusChip("warn", `${view.conflictCount} conflicts`) : ""}
+          ${view.brokenCount ? statusChip("error", `${view.brokenCount} broken pointers`) : ""}
+          ${statusChip("ok", `${view.totalTranscriptCount} transcripts`)}
+        </div>`;
+      const attentionList = attention.length ? `<ul class="attention-list">${attention.map((item) => `<li class="attention-item">${trustBadge(item.trustState)} <a href="${escapeHtml(item.href)}">${escapeHtml(item.title)}</a> <small>${escapeHtml(item.detail)}</small></li>`).join("")}</ul>` : `<p class="setup-meta">Nothing needs attention right now.</p>`;
+      const reviewSection = section("Review and attention", `${reviewMetrics}${attentionList}${links([{ href: routeHref.reviewQueue(), label: "Open review queue" }])}`, "review-summary-section attention-section");
       const graphSection = section("Native Obsidian graph", `<p>These generated Markdown notes power Obsidian's <strong>native (ribbon) graph</strong>. The plugin's own Graph page reads SQLite live; the native graph only sees Markdown files and wiki links, so it needs these notes. SQLite stays the source of truth \u2014 editing a generated note never changes memory.</p>
         <p class="generated-sync-status">${syncStatusLine}</p>${syncWarn}
         <form data-action="sync-graph"><button type="submit" class="tmv-btn tmv-btn-secondary">Sync Obsidian graph notes</button></form>
@@ -5926,7 +5936,6 @@ async function renderPage(context) {
         ${uploadSection}
         ${setupSection}
         ${reviewSection}
-        ${attentionSection}
         ${graphSection}
         ${transcriptsSection}
         ${recentAnswers}
@@ -6114,7 +6123,9 @@ async function mountObsidianUi(root, api, navigation, initialTarget, onMutation,
     zone.classList.remove("is-dragover");
     const file = event.dataTransfer?.files?.[0];
     if (!file) return;
-    const input = zone.querySelector('input[type="file"]');
+    const form = zone.closest("form") ?? (zone instanceof HTMLFormElement ? zone : null);
+    if (!form) return;
+    const input = form.querySelector('input[type="file"]');
     if (input) {
       try {
         const transfer = new DataTransfer();
@@ -6123,7 +6134,7 @@ async function mountObsidianUi(root, api, navigation, initialTarget, onMutation,
       } catch {
       }
     }
-    populateUploadForm(zone, file);
+    populateUploadForm(form, file);
   }, { signal });
   root.addEventListener("submit", (event) => {
     event.preventDefault();

@@ -80,18 +80,21 @@ export async function mountObsidianUi(root: HTMLElement, api: FrontendApi, navig
     if (zone && !zone.contains((event as DragEvent).relatedTarget as Node)) zone.classList.remove("is-dragover");
   }, { signal });
   root.addEventListener("drop", (event) => {
-    const zone = (event.target as Element).closest<HTMLFormElement>("[data-dropzone]");
+    const zone = (event.target as Element).closest<HTMLElement>("[data-dropzone]");
     if (!zone) return;
     event.preventDefault();
     zone.classList.remove("is-dragover");
     const file = (event as DragEvent).dataTransfer?.files?.[0];
     if (!file) return;
+    // The drop-zone may be an inner element; resolve the owning upload form (or the zone itself if it is one).
+    const form = zone.closest<HTMLFormElement>("form") ?? (zone instanceof HTMLFormElement ? zone : null);
+    if (!form) return;
     // Put the dropped file into the file input so its `required` constraint is satisfied on submit.
-    const input = zone.querySelector<HTMLInputElement>('input[type="file"]');
+    const input = form.querySelector<HTMLInputElement>('input[type="file"]');
     if (input) {
       try { const transfer = new DataTransfer(); transfer.items.add(file); input.files = transfer.files; } catch { /* engine without DataTransfer file assignment: hidden fields below still carry the content */ }
     }
-    populateUploadForm(zone, file);
+    populateUploadForm(form, file);
   }, { signal });
   root.addEventListener("submit", (event) => {
     event.preventDefault();

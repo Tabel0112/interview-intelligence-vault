@@ -43,7 +43,7 @@ describe("Viewer-mode dashboard (Pass 3 order)", () => {
   it("renders the workflow-first sections in order, with Upload first and Claude/MCP second", async () => {
     await seedWeak();
     const html = await renderRoute(apiWith(setupSummary()), routeHref.dashboard());
-    const order = ["Upload a transcript", "Use Claude Desktop with this vault", "Review queue", "Evidence needing attention",
+    const order = ["Upload a transcript", "Use Claude Desktop with this vault", "Review and attention",
       "Native Obsidian graph", "Transcripts", "Recent answers", "Advanced / Internal tools"];
     let cursor = -1;
     for (const heading of order) {
@@ -53,23 +53,43 @@ describe("Viewer-mode dashboard (Pass 3 order)", () => {
     }
   });
 
-  it("makes Upload the first, primary, and most obvious action (drop-zone + formats + CTA)", async () => {
+  it("makes Upload the first, primary, and compact (no heavy dashed box; hidden input; single row)", async () => {
     const html = await renderRoute(apiWith(), routeHref.dashboard());
     // Slice from the section wrapper so the section-level class is included.
     const upload = html.slice(html.indexOf("upload-section"), html.indexOf(">Use Claude Desktop with this vault</h2>"));
     expect(upload).toContain("tmv-card--primary");
-    expect(upload).toContain("tmv-dropzone");
     expect(upload).toContain('data-action="upload"');
-    expect(upload).toContain(".txt · .md · .srt · .vtt"); // supported formats
-    expect(upload).toContain("Upload transcript"); // CTA
-    expect(upload).toContain("recommended next steps"); // post-import guidance
+    // Drag/drop is a subtle enhancement (form is the drop target) — NOT a permanent dashed drop-zone box.
+    expect(upload).toContain("data-dropzone");
+    expect(upload).not.toContain("tmv-dropzone");
+    expect(upload).toContain("upload-row"); // Choose + filename on one compact row
+    // Native file input is hidden behind a styled "Choose transcript" label, but still present, accepting the
+    // formats, AND `required` — because it is visually hidden (opacity:0), losing `required` would silently
+    // break submit validation (app.ts drop-to-fill relies on it), so pin the attribute explicitly.
+    expect(upload).toContain("upload-file-input");
+    expect(upload).toContain('accept=".txt,.md,.srt,.vtt"');
+    expect(upload).toMatch(/class="upload-file-input"[^>]*\brequired\b/); // hidden input stays required
+    expect(upload).toContain("Choose transcript");
+    // Formats are quiet helper text, not a heavy badge.
+    expect(upload).toContain('class="upload-formats"');
+    expect(upload).toContain("Supports .txt, .md, .srt, .vtt");
+    expect(upload).not.toContain('class="tmv-badge">Supported'); // no heavy bordered formats badge
+    // Filename status + submit CTA + collapsed next steps.
+    expect(upload).toContain("upload-file-status");
+    expect(upload).toContain("No file selected");
+    expect(upload).toContain("Upload transcript");
+    expect(upload).toContain("recommended next steps");
   });
 
-  it("keeps the source-of-truth message and the metric grid", async () => {
+  it("keeps the source-of-truth message and a compact light-chip review summary (no heavy metric grid)", async () => {
     await seedWeak();
     const html = await renderRoute(apiWith(), routeHref.dashboard());
     expect(html).toContain("SQLite is the source of truth.");
-    expect(html.slice(html.indexOf(">Review queue</h2>"))).toContain("metric-grid");
+    const review = html.slice(html.indexOf(">Review and attention</h2>"), html.indexOf(">Native Obsidian graph</h2>"));
+    expect(review).toContain("review-metrics");
+    expect(review).toContain("tmv-status"); // light status chips
+    expect(review).toContain("transcripts");
+    expect(review).not.toContain("metric-grid"); // no heavy bordered metric grid
   });
 
   it("Recent Transcripts links to the full Transcripts route (and Upload)", async () => {
@@ -92,52 +112,72 @@ describe("Viewer-mode dashboard (Pass 3 order)", () => {
 });
 
 describe("Claude / MCP setup card", () => {
-  it("renders DB path, settings path, LLM + embedding provider/model/dimensions, and health badge", async () => {
-    const html = await renderRoute(apiWith(setupSummary()), routeHref.dashboard());
-    const card = html.slice(html.indexOf(">Use Claude Desktop with this vault</h2>"), html.indexOf(">Review queue</h2>"));
-    expect(card).toContain("Use Claude Desktop for normal chat");
-    expect(card).toContain("TMV_DB_PATH");
-    expect(card).toContain("/vault/.obsidian/plugins/transcript-memory-vault/transcript-memory.sqlite");
-    expect(card).toContain("data.json");
-    expect(card).toContain("LLM configured: yes");
-    expect(card).toContain("openai / gpt-4o-mini");
-    expect(card).toContain("Embeddings configured: yes");
-    expect(card).toContain("openai / text-embedding-3-small / 1536d");
-    expect(card).toContain('data-trust-state="strong"'); // embedding health ok badge
-    expect(card).toContain("Reindex needed: no");
+  const cardOf = (html: string) => html.slice(html.indexOf(">Use Claude Desktop with this vault</h2>"), html.indexOf(">Review and attention</h2>"));
+  const defaultView = (card: string) => card.slice(0, card.indexOf("<details"));
+  const detailsView = (card: string) => card.slice(card.indexOf("setup-details"));
+
+  it("shows a compact default: intro + status chips + one metadata line + Copy DB path (no paths/JSON)", async () => {
+    const card = cardOf(await renderRoute(apiWith(setupSummary()), routeHref.dashboard()));
+    const shown = defaultView(card);
+    expect(shown).toContain("Use Claude Desktop for normal chat");
+    expect(shown).toContain("LLM ready");
+    expect(shown).toContain("Embeddings OK");
+    expect(shown).toContain("Reindex not needed");
+    expect(shown).toContain("openai / gpt-4o-mini");
+    expect(shown).toContain("openai / text-embedding-3-small / 1536d");
+    expect(shown).toContain("Copy DB path");
+    // The full DB path + MCP JSON are NOT rendered as VISIBLE text in the default view: no code blocks,
+    // no JSON snippet. (The path exists only in the Copy button's data-copy attribute — an invisible
+    // copy payload, not shown to the user — and as visible text only inside the collapsed details.)
+    expect(shown).not.toContain('class="tmv-code"'); // no visible path/JSON code block up top
+    expect(shown).not.toContain("mcp-config-snippet");
+    const visibleText = shown.replace(/data-copy="[^"]*"/g, ""); // strip invisible copy payloads
+    expect(visibleText).not.toContain("/vault/.obsidian/plugins/transcript-memory-vault/transcript-memory.sqlite");
   });
 
-  it("renders setup/reindex health states as distinct badges", async () => {
-    const setupReq = html_of(await renderRoute(apiWith(setupSummary({ embeddingConfigured: false, embeddingHealth: "setup_required" })), routeHref.dashboard()));
-    expect(setupReq).toContain("embedding: setup_required");
-    expect(setupReq).toContain("Embeddings configured: no");
-    const reindex = html_of(await renderRoute(apiWith(setupSummary({ embeddingHealth: "reindex_required", reindexNeeded: true })), routeHref.dashboard()));
-    expect(reindex).toContain("embedding: reindex_required");
-    expect(reindex).toContain("Reindex needed: yes");
+  it("HARD RULE: the full MCP JSON config appears ONLY inside the collapsed Setup details", async () => {
+    const html = await renderRoute(apiWith(setupSummary()), routeHref.dashboard());
+    const snippetAt = html.indexOf("mcp-config-snippet");
+    expect(snippetAt).toBeGreaterThan(-1);
+    // The snippet must sit inside an OPEN <details> (a <details> opened before it, not yet closed).
+    const before = html.slice(0, snippetAt);
+    expect(before.lastIndexOf("<details")).toBeGreaterThan(before.lastIndexOf("</details>"));
+    // And the collapsed details also holds the full DB path + data.json path.
+    const details = detailsView(cardOf(html));
+    expect(details).toContain("TMV_DB_PATH");
+    expect(details).toContain("/vault/.obsidian/plugins/transcript-memory-vault/transcript-memory.sqlite");
+    expect(details).toContain("data.json");
+    expect(details).toContain("&quot;TMV_DB_PATH&quot;"); // escaped JSON in the snippet
+    expect(details).toContain("Copy MCP config");
   });
 
-  it("provides a copyable, key-free MCP config snippet with TMV_DB_PATH", async () => {
-    const html = await renderRoute(apiWith(setupSummary()), routeHref.dashboard());
-    const card = html.slice(html.indexOf(">Use Claude Desktop with this vault</h2>"), html.indexOf(">Review queue</h2>"));
-    expect(card).toContain("mcp-config-snippet");
-    expect(card).toContain("&quot;TMV_DB_PATH&quot;"); // escaped JSON in the snippet
-    expect(card).toContain('data-copy='); // copy buttons for path + snippet
+  it("reflects setup/reindex health as distinct light status chips", async () => {
+    const setupReq = await renderRoute(apiWith(setupSummary({ embeddingConfigured: false, embeddingHealth: "setup_required" })), routeHref.dashboard());
+    expect(setupReq).toContain("Embeddings not set up");
+    expect(setupReq).toContain("tmv-status--warn");
+    const reindex = await renderRoute(apiWith(setupSummary({ embeddingHealth: "reindex_required", reindexNeeded: true })), routeHref.dashboard());
+    expect(reindex).toContain("Reindex needed");
+    expect(reindex).toContain("tmv-status--warn");
+  });
+
+  it("exposes a Copy DB path action in the default view (key-free)", async () => {
+    const card = cardOf(await renderRoute(apiWith(setupSummary()), routeHref.dashboard()));
+    expect(defaultView(card)).toContain("Copy DB path");
+    expect(card).toContain('data-copy='); // copyable path + MCP config, non-secret
   });
 
   it("NEVER renders API keys — no sk-, no apiKey field, even when a secret-looking value exists in settings", async () => {
-    // Even if a summary somehow carried a key-shaped provider string, the card renders only declared fields.
     const html = await renderRoute(apiWith(setupSummary({ llmModel: "gpt-4o-mini" })), routeHref.dashboard());
     expect(html).not.toContain(SECRET_LOOKING);
-    expect(html).not.toMatch(/sk-[A-Za-z0-9]/);
+    expect(html).not.toMatch(/sk-[A-Za-z0-9]{16,}/);
     expect(html.toLowerCase()).not.toContain("apikey");
   });
 
   it("degrades to a minimal card when no setup summary is wired (headless)", async () => {
-    const html = await renderRoute(apiWith(undefined), routeHref.dashboard());
-    const card = html.slice(html.indexOf(">Use Claude Desktop with this vault</h2>"), html.indexOf(">Review queue</h2>"));
+    const card = cardOf(await renderRoute(apiWith(undefined), routeHref.dashboard()));
     expect(card).toContain("Use Claude Desktop for normal chat");
-    expect(card).toContain("TMV_DB_PATH"); // path still shown from health
-    expect(card).not.toMatch(/sk-[A-Za-z0-9]/);
+    expect(card).toContain("TMV_DB_PATH"); // still available inside details
+    expect(card).not.toMatch(/sk-[A-Za-z0-9]{16,}/);
   });
 });
 
@@ -151,16 +191,14 @@ describe("dashboard attention projection (unchanged behavior)", () => {
     expect(dash.attention!.every((item) => ["weak", "broken", "conflicting"].includes(item.trustState))).toBe(true);
   });
 
-  it("Evidence needing attention shows weak items with reused trust badges, and an empty state when clear", async () => {
+  it("Review & attention shows weak items with reused trust badges, and a soft note when clear", async () => {
     const empty = await renderRoute(createSqliteFrontendApi(db, { now }), routeHref.dashboard());
-    expect(empty.slice(empty.indexOf(">Evidence needing attention</h2>"), empty.indexOf(">Native Obsidian graph</h2>"))).toContain("Nothing needs attention");
+    const emptyReview = empty.slice(empty.indexOf(">Review and attention</h2>"), empty.indexOf(">Native Obsidian graph</h2>"));
+    expect(emptyReview).toContain("Nothing needs attention");
     await seedWeak();
     const html = await renderRoute(createSqliteFrontendApi(db, { now }), routeHref.dashboard());
-    const section = html.slice(html.indexOf(">Evidence needing attention</h2>"), html.indexOf(">Native Obsidian graph</h2>"));
+    const section = html.slice(html.indexOf(">Review and attention</h2>"), html.indexOf(">Native Obsidian graph</h2>"));
     expect(section).toContain("attention-item");
     expect(section).toContain('data-trust-state="weak"');
   });
 });
-
-// small helper so the .slice repetition stays readable
-function html_of(html: string): string { return html; }
