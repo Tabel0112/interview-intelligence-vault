@@ -49,8 +49,8 @@ describe("Pass 1: Transcripts list route renders", () => {
 
 describe("Pass 1: viewer-mode navigation", () => {
   const nav = async () => renderRoute(api(), routeHref.dashboard());
-  const primary = (html: string) => html.slice(html.indexOf('<nav aria-label="Primary">'), html.indexOf('<details class="nav-advanced">'));
-  const advanced = (html: string) => html.slice(html.indexOf('<details class="nav-advanced">'), html.indexOf("</nav>"));
+  const primary = (html: string) => html.slice(html.indexOf('<nav aria-label="Primary">'), html.indexOf('<details class="nav-advanced'));
+  const advanced = (html: string) => html.slice(html.indexOf('<details class="nav-advanced'), html.indexOf("</nav>"));
 
   it("primary nav includes Dashboard, Upload, Review, Graph, Search, and Transcripts", async () => {
     const p = primary(await nav());

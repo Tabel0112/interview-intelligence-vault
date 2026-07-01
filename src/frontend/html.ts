@@ -15,7 +15,7 @@ export function score(value: number | null | undefined): string {
 }
 
 export function emptyState(title: string, detail: string, action?: { href: string; label: string }): string {
-  return `<div class="empty-state"><h3>${escapeHtml(title)}</h3><p>${escapeHtml(detail)}</p>${action ? routeButton(action.href, action.label) : ""}</div>`;
+  return `<div class="empty-state tmv-fade-in"><h3>${escapeHtml(title)}</h3><p>${escapeHtml(detail)}</p>${action ? routeButton(action.href, action.label) : ""}</div>`;
 }
 
 export function routeButton(target: string, label: string, className = "route-action"): string {
@@ -30,7 +30,7 @@ export function appShell(title: string, body: string): string {
   return `<div class="transcript-memory-vault vault-app">
     <header class="app-header">${routeButton("mv://dashboard", "Interview Intelligence Vault", "route-action brand")}<nav aria-label="Primary">
       ${routeButton("mv://dashboard", "Dashboard")}${routeButton("mv://upload", "Upload")}${routeButton("mv://review", "Review")}${routeButton("mv://graph", "Graph")}${routeButton("mv://search", "Search")}${routeButton("mv://transcripts", "Transcripts")}
-      <details class="nav-advanced"><summary>Advanced</summary><div class="nav-advanced-items">${routeButton("mv://ask", "Internal Ask AI")}${routeButton("mv://dashboard", "Settings & health")}</div></details>
+      <details class="nav-advanced tmv-advanced"><summary>Advanced</summary><div class="nav-advanced-items">${routeButton("mv://ask", "Internal Ask AI")}${routeButton("mv://dashboard", "Settings & health")}</div></details>
     </nav></header>
     <main><header class="page-header"><h1>${escapeHtml(title)}</h1></header>${body}</main>
   </div>`;

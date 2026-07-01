@@ -1575,7 +1575,7 @@ function score(value) {
   return value == null ? "not scored" : `${Math.round(value * 100)}%`;
 }
 function emptyState(title, detail, action) {
-  return `<div class="empty-state"><h3>${escapeHtml(title)}</h3><p>${escapeHtml(detail)}</p>${action ? routeButton(action.href, action.label) : ""}</div>`;
+  return `<div class="empty-state tmv-fade-in"><h3>${escapeHtml(title)}</h3><p>${escapeHtml(detail)}</p>${action ? routeButton(action.href, action.label) : ""}</div>`;
 }
 function routeButton(target, label, className = "route-action") {
   return `<button type="button" class="${escapeHtml(className)}" data-route="${escapeHtml(target)}">${escapeHtml(label)}</button>`;
@@ -1584,7 +1584,7 @@ function appShell(title, body) {
   return `<div class="transcript-memory-vault vault-app">
     <header class="app-header">${routeButton("mv://dashboard", "Interview Intelligence Vault", "route-action brand")}<nav aria-label="Primary">
       ${routeButton("mv://dashboard", "Dashboard")}${routeButton("mv://upload", "Upload")}${routeButton("mv://review", "Review")}${routeButton("mv://graph", "Graph")}${routeButton("mv://search", "Search")}${routeButton("mv://transcripts", "Transcripts")}
-      <details class="nav-advanced"><summary>Advanced</summary><div class="nav-advanced-items">${routeButton("mv://ask", "Internal Ask AI")}${routeButton("mv://dashboard", "Settings & health")}</div></details>
+      <details class="nav-advanced tmv-advanced"><summary>Advanced</summary><div class="nav-advanced-items">${routeButton("mv://ask", "Internal Ask AI")}${routeButton("mv://dashboard", "Settings & health")}</div></details>
     </nav></header>
     <main><header class="page-header"><h1>${escapeHtml(title)}</h1></header>${body}</main>
   </div>`;

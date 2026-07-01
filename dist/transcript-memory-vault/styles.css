@@ -187,3 +187,172 @@
 .transcript-memory-vault .attention-item {
   display: block;
 }
+
+/* ===== Pass 2: scoped design system, subtle animation, reduced-motion =====
+   Every rule stays under .transcript-memory-vault. Motion is transform/opacity only — no absolute/fixed
+   positioning, no pointer-events:none, no negative margins — so it never escapes the plugin surface or
+   trips the CSS-boundary guards. Keyframe names are tmv- prefixed (keyframe names are global in CSS). */
+
+.transcript-memory-vault {
+  --tmv-transition: 160ms ease;
+  --tmv-transition-fast: 120ms ease;
+  --tmv-lift: translateY(-1px);
+}
+
+/* Design-system primitives (reusable; applied lightly in this pass, more in later passes). */
+.transcript-memory-vault .tmv-card {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  padding: var(--size-4-3);
+  background: var(--background-primary);
+  transition: border-color var(--tmv-transition), transform var(--tmv-transition);
+}
+.transcript-memory-vault .tmv-card:hover {
+  border-color: var(--interactive-accent);
+  transform: var(--tmv-lift);
+}
+.transcript-memory-vault .tmv-card--primary { border-inline-start: 3px solid var(--interactive-accent); }
+.transcript-memory-vault .tmv-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--size-4-3);
+}
+.transcript-memory-vault .tmv-btn,
+.transcript-memory-vault .tmv-btn-primary,
+.transcript-memory-vault .tmv-btn-secondary {
+  border-radius: var(--radius-s);
+  padding: var(--size-4-1) var(--size-4-3);
+  cursor: pointer;
+  transition: background-color var(--tmv-transition-fast), border-color var(--tmv-transition-fast), color var(--tmv-transition-fast);
+}
+.transcript-memory-vault .tmv-btn-primary {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border: 1px solid var(--interactive-accent);
+}
+.transcript-memory-vault .tmv-btn-primary:hover,
+.transcript-memory-vault .tmv-btn-primary:focus-visible {
+  background: var(--interactive-accent-hover);
+  border-color: var(--interactive-accent-hover);
+}
+.transcript-memory-vault .tmv-btn-secondary {
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  border: 1px solid var(--background-modifier-border);
+}
+.transcript-memory-vault .tmv-btn-secondary:hover,
+.transcript-memory-vault .tmv-btn-secondary:focus-visible { border-color: var(--interactive-accent); }
+.transcript-memory-vault .tmv-badge {
+  display: inline-block;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-s);
+  padding: 0 var(--size-4-2);
+  font-weight: var(--font-semibold);
+  transition: color var(--tmv-transition), background-color var(--tmv-transition), border-color var(--tmv-transition);
+}
+.transcript-memory-vault .tmv-callout {
+  border: 1px solid var(--background-modifier-border);
+  border-inline-start: 3px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  padding: var(--size-4-2) var(--size-4-3);
+}
+.transcript-memory-vault .tmv-callout--info { border-inline-start-color: var(--interactive-accent); }
+.transcript-memory-vault .tmv-callout--warning { border-inline-start-color: var(--color-orange); }
+.transcript-memory-vault .tmv-callout--success { border-inline-start-color: var(--color-green); }
+.transcript-memory-vault .tmv-empty {
+  text-align: center;
+  color: var(--text-muted);
+  padding: var(--size-4-4);
+  animation: tmv-fade-in var(--tmv-transition) both;
+}
+.transcript-memory-vault .tmv-section-header { font-weight: var(--font-semibold); color: var(--text-normal); }
+.transcript-memory-vault .tmv-code {
+  display: block;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  padding: var(--size-4-2);
+  font-family: var(--font-monospace);
+  word-break: break-all;
+}
+.transcript-memory-vault .tmv-advanced { border: 0; padding: 0; }
+.transcript-memory-vault .tmv-dropzone {
+  border: 2px dashed var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  padding: var(--size-4-4);
+  text-align: center;
+  transition: border-color var(--tmv-transition), background-color var(--tmv-transition);
+}
+.transcript-memory-vault .tmv-dropzone.is-dragover {
+  border-color: var(--interactive-accent);
+  background: var(--background-modifier-hover);
+}
+.transcript-memory-vault .tmv-fade-in { animation: tmv-fade-in var(--tmv-transition) both; }
+
+/* Polish for existing shared components (no markup churn) */
+.transcript-memory-vault .vault-section { transition: border-color var(--tmv-transition); }
+.transcript-memory-vault .vault-section:hover { border-color: var(--background-modifier-border-hover, var(--interactive-accent)); }
+.transcript-memory-vault .metric-grid > span,
+.transcript-memory-vault .metric-grid > .metric-action,
+.transcript-memory-vault .attention-item,
+.transcript-memory-vault .review-card,
+.transcript-memory-vault .search-result,
+.transcript-memory-vault .evidence-card {
+  transition: border-color var(--tmv-transition), transform var(--tmv-transition);
+}
+.transcript-memory-vault .metric-grid > span:hover,
+.transcript-memory-vault .metric-grid > .metric-action:hover,
+.transcript-memory-vault .attention-item:hover,
+.transcript-memory-vault .review-card:hover,
+.transcript-memory-vault .search-result:hover {
+  border-color: var(--interactive-accent);
+  transform: var(--tmv-lift);
+}
+.transcript-memory-vault button,
+.transcript-memory-vault .route-action { transition: color var(--tmv-transition-fast), background-color var(--tmv-transition-fast), border-color var(--tmv-transition-fast); }
+.transcript-memory-vault button:focus-visible,
+.transcript-memory-vault .route-action:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
+.transcript-memory-vault .trust-badge { transition: color var(--tmv-transition), background-color var(--tmv-transition), border-color var(--tmv-transition); }
+.transcript-memory-vault .immutable-notice { border-inline-start: 3px solid var(--interactive-accent); }
+.transcript-memory-vault .trust-warning { border-inline-start: 3px solid var(--color-orange); }
+.transcript-memory-vault .empty-state { animation: tmv-fade-in var(--tmv-transition) both; }
+.transcript-memory-vault .mcp-db-path code,
+.transcript-memory-vault .vault-status-section code {
+  display: inline-block;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  padding: 0 var(--size-4-1);
+}
+
+/* Advanced disclosure: fade items in when opened; subtle summary hover */
+.transcript-memory-vault details.nav-advanced[open] .nav-advanced-items,
+.transcript-memory-vault details.tmv-advanced[open] > :not(summary) { animation: tmv-fade-in var(--tmv-transition) both; }
+.transcript-memory-vault details.nav-advanced > summary { transition: color var(--tmv-transition-fast); }
+
+/* Loading / reindex pulse — only while the message is visible (not [hidden]) */
+.transcript-memory-vault [data-loading-message]:not([hidden]) { animation: tmv-pulse 1.2s ease-in-out infinite; }
+
+/* Namespaced keyframes (keyframe names are global — the tmv- prefix keeps them collision-safe). */
+@keyframes tmv-fade-in {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes tmv-pulse {
+  0% { opacity: 1; }
+  50% { opacity: 0.55; }
+  100% { opacity: 1; }
+}
+
+/* Respect reduced-motion: disable all animation/transition inside the plugin surface. */
+@media (prefers-reduced-motion: reduce) {
+  .transcript-memory-vault *,
+  .transcript-memory-vault *::before,
+  .transcript-memory-vault *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

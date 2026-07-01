@@ -67,13 +67,13 @@ describe("Obsidian internal provenance navigation", () => {
     }
     // Viewer-mode primary nav (before the Advanced disclosure) leads with the vault workflow —
     // Upload/Review/Graph/Search/Transcripts — and EXCLUDES the demoted Ask AI.
-    const navPrimary = html.slice(html.indexOf('aria-label="Primary"'), html.indexOf('<details class="nav-advanced"'));
+    const navPrimary = html.slice(html.indexOf('aria-label="Primary"'), html.indexOf('<details class="nav-advanced'));
     for (const target of [routeHref.upload(), routeHref.reviewQueue(), routeHref.graph(), routeHref.search(), routeHref.transcripts()]) {
       expect(navPrimary).toContain(`data-route="${target}"`);
     }
     expect(navPrimary).not.toContain(`data-route="${routeHref.ask()}"`);
     // The Advanced disclosure holds the demoted "Internal Ask AI" (route preserved), NOT Upload.
-    const advanced = html.slice(html.indexOf('<details class="nav-advanced"'), html.indexOf("</details>"));
+    const advanced = html.slice(html.indexOf('<details class="nav-advanced'), html.indexOf("</details>"));
     expect(advanced).toContain(`data-route="${routeHref.ask()}"`);
     expect(advanced).toContain("Internal Ask AI");
     expect(advanced).not.toContain(`data-route="${routeHref.upload()}"`);
