@@ -5784,10 +5784,10 @@ function memoryView(view) {
   ${section("Submit a correction", correctionForm("memory_object", memory.id))}`;
 }
 var memoryReviewControls = (memoryId, options = {}) => {
-  const warning = options.degradedReason ? `<aside class="trust-warning">${trustBadge("no_evidence", "Evidence removed")} ${escapeHtml(options.degradedReason)}</aside>` : "";
-  const approve = options.canApprove === false ? "" : `<button type="submit" name="decision" value="approve">Approve</button>`;
+  const warning = options.degradedReason ? `<aside class="trust-warning tmv-callout tmv-callout--warning">${trustBadge("no_evidence", "Evidence removed")} ${escapeHtml(options.degradedReason)} <em>Approve is unavailable because there is no live evidence to promote \u2014 you can still Reject / Dismiss.</em></aside>` : "";
+  const approve = options.canApprove === false ? "" : `<button type="submit" name="decision" value="approve" class="tmv-btn tmv-btn-primary">Approve</button>`;
   return `${warning}<form data-action="review" class="review-actions"><input type="hidden" name="memoryId" value="${escapeHtml(memoryId)}">
-      ${approve}<button type="submit" name="decision" value="reject">${options.canApprove === false ? "Reject / Dismiss" : "Reject"}</button></form><div data-form-result></div>`;
+      ${approve}<button type="submit" name="decision" value="reject" class="tmv-btn tmv-btn-secondary">${options.canApprove === false ? "Reject / Dismiss" : "Reject"}</button></form><div data-form-result></div>`;
 };
 var reviewActions = (item) => {
   if (item.targetType === "memory_object" && (item.type === "memory_needs_review" || item.type === "weak_evidence")) {
@@ -5799,7 +5799,7 @@ var reviewActions = (item) => {
   return "";
 };
 function reviewCard(item) {
-  return `<article class="review-card">${trustBadge(item.trustState)}<h3><a href="${escapeHtml(item.href)}">${escapeHtml(item.title)}</a></h3>
+  return `<article class="review-card tmv-card">${trustBadge(item.trustState)}<h3 class="tmv-section-header"><a href="${escapeHtml(item.href)}">${escapeHtml(item.title)}</a></h3>
     <p>${escapeHtml(item.detail)}</p><small>${escapeHtml(item.severity)} severity \xB7 ${escapeHtml(item.status)} \xB7 ${escapeHtml(item.type)} \xB7 ${escapeHtml(item.targetType)}:${escapeHtml(item.targetId)}</small>
     <a href="${escapeHtml(routeHref.review(item.id))}">Review and correct</a>${reviewActions(item)}</article>`;
 }
@@ -5814,16 +5814,17 @@ function graphNodeLink(nodeId) {
 }
 function healthView(health) {
   const status = health.status === "ready" ? trustBadge("strong", "database connected") : health.status === "unsupported" ? trustBadge("no_evidence", "desktop only") : health.status === "error" ? trustBadge("broken", "startup failed") : trustBadge("needs_review", "initializing");
-  return section("Database health", `<article class="database-health">${status}<dl>
+  return section("Database health", `<article class="database-health tmv-card">${status}<dl>
     <dt>SQLite storage</dt><dd>${health.realSqliteStorage ? "real local SQLite" : "not connected"}</dd>
     <dt>Migration status</dt><dd>${escapeHtml(health.migrationStatus)}</dd>
     <dt>Packaged migrations</dt><dd>${health.packagedMigrationCount}</dd>
     <dt>Applied migrations</dt><dd>${health.appliedMigrationCount}</dd>
-    <dt>Database location</dt><dd>${escapeHtml(health.databasePath ?? "unavailable")}</dd>
+    <dt>Database location</dt><dd><code class="tmv-code">${escapeHtml(health.databasePath ?? "unavailable")}</code></dd>
     <dt>Last initialization error</dt><dd>${escapeHtml(health.lastInitializationError ?? "none")}</dd>
     <dt>Native binding target</dt><dd>${escapeHtml(health.nativeBindingTarget ?? "unresolved")}</dd>
     <dt>Packaged native targets</dt><dd>${escapeHtml(health.packagedNativeTargets.join(", ") || "none")}</dd>
-  </dl></article>`, "database-health-section");
+  </dl>
+  <p class="tmv-callout tmv-callout--info">LLM and embedding providers, models, and API keys are configured in the Obsidian plugin <strong>Settings</strong> tab. Keys are never shown here or in generated notes.</p></article>`, "database-health-section");
 }
 var SUPPORTED_UPLOAD_FORMATS = ".txt \xB7 .md \xB7 .srt \xB7 .vtt";
 function uploadNextSteps() {
@@ -5986,7 +5987,8 @@ async function renderPage(context) {
     }
     case "evidence": {
       const evidence = await api.getEvidence(route.params.id);
-      const body = `${evidence.brokenReason ? `<aside class="trust-warning">${trustBadge("broken")} This pointer cannot be trusted until repaired.</aside>` : ""}
+      const statusCallout = evidence.brokenReason ? `<aside class="trust-warning tmv-callout tmv-callout--warning">${trustBadge("broken")} This pointer cannot be trusted until repaired: ${escapeHtml(evidence.brokenReason)}</aside>` : `<aside class="immutable-notice tmv-callout tmv-callout--success">${trustBadge(evidence.strength)} Transcript-backed evidence \u2014 it resolves to an immutable source span (open it below). Score ${score(evidence.finalScore ?? evidence.confidence)}.</aside>`;
+      const body = `${statusCallout}
         ${evidenceCard(evidence)}${section("Resolved transcript span", evidence.brokenReason ? emptyState("Resolution failed", evidence.brokenReason) : `<blockquote>${escapeHtml(evidence.spanText)}</blockquote><a href="${escapeHtml(routeHref.transcript(evidence.transcriptId, evidence.spanId))}">Open highlighted source span</a>`)}
         ${section("Submit a correction", correctionForm("evidence", evidence.id))}`;
       return { title: `Evidence ${evidence.id}`, html: appShell(`Evidence ${evidence.id}`, body) };
@@ -6007,8 +6009,11 @@ async function renderPage(context) {
       const selectedNode = graph.nodes.find((node) => node.id === route.query.get("selectedNode"));
       const selectedEdge = graph.edges.find((edge) => edge.id === route.query.get("selectedEdge"));
       const details = selectedNode ? section("Selected node", `<article><h3>${escapeHtml(selectedNode.label)}</h3><p>${escapeHtml(selectedNode.type)} \xB7 ${escapeHtml(selectedNode.supportStatus ?? "no status")} \xB7 confidence ${score(selectedNode.confidence)}</p><p>${graph.edges.filter((edge) => (edge.source === selectedNode.id || edge.target === selectedNode.id) && edge.evidencePointerId).length} evidence-linked edge(s)</p>${graphNodeLink(selectedNode.id) ? `<a href="${escapeHtml(graphNodeLink(selectedNode.id))}">Open related item</a>` : ""}</article>`) : selectedEdge ? section("Selected edge", `<article>${selectedEdge.type === "contradicts" || selectedEdge.type === "updates" ? trustBadge("conflicting", selectedEdge.type) : ""}<p>${escapeHtml(selectedEdge.source)} \u2192 ${escapeHtml(selectedEdge.target)}</p><p>${escapeHtml(selectedEdge.type)} \xB7 confidence ${score(selectedEdge.confidence)} \xB7 ${selectedEdge.evidencePointerId ? "1 evidence link" : "0 evidence links"}</p>${selectedEdge.evidencePointerId ? `<a href="${escapeHtml(routeHref.evidence(selectedEdge.evidencePointerId))}">Open linked evidence</a>` : ""}</article>`) : "";
-      return { title: "Graph", html: appShell("Graph", `<form data-action="filter" data-view="graph"><label>Filter graph <input name="q" value="${escapeHtml(query)}"></label><label>Node type <input name="type" value="${escapeHtml(type)}"></label><label>Limit (max 100) <input name="limit" type="number" min="1" max="100" value="${limit}"></label><button type="submit">Apply</button></form>
-        <p>Showing ${visibleNodes.length} of ${graph.nodes.length} nodes and ${visibleEdges.length} edges.</p>${warnings.length ? `<aside class="trust-warning">${warnings.map(escapeHtml).join("<br>")}</aside>` : ""}${details}${section("Nodes", `<ul>${nodes}</ul>`)}${section("Edges", `<ul>${edges}</ul>`)}`) };
+      const legend = `<aside class="tmv-callout tmv-callout--info graph-legend"><strong>What this shows.</strong> Nodes are memory objects, transcripts, and evidence pointers. Edges are relationships \u2014 <em>supports</em>, <em>contradicts</em>, <em>updates</em>. An edge tagged "inferred / no evidence link" has no backing evidence pointer, so it is not part of the clean provenance chain. This page reads SQLite live (the source of truth); Obsidian's native Markdown graph is a separate, disposable view.</aside>`;
+      const warningsCallout = warnings.length ? `<aside class="trust-warning tmv-callout tmv-callout--warning">${warnings.map(escapeHtml).join("<br>")}</aside>` : "";
+      const filterForm = `<form data-action="filter" data-view="graph"><label>Filter graph <input name="q" value="${escapeHtml(query)}"></label><label>Node type <input name="type" value="${escapeHtml(type)}"></label><label>Limit (max 100) <input name="limit" type="number" min="1" max="100" value="${limit}"></label><button type="submit" class="tmv-btn tmv-btn-secondary">Apply</button></form>`;
+      const listings = graph.nodes.length ? `<p>Showing ${visibleNodes.length} of ${graph.nodes.length} nodes and ${visibleEdges.length} edges.</p>${details}${section("Nodes", `<ul>${nodes}</ul>`)}${section("Edges", `<ul>${edges}</ul>`)}` : emptyState("Graph is empty", "No memory, transcript, or evidence nodes yet. Import a transcript and run AI extraction to populate the provenance graph.");
+      return { title: "Graph", html: appShell("Graph", `${legend}${filterForm}${warningsCallout}${listings}`) };
     }
     case "search": {
       const query = route.query.get("q") ?? "";
@@ -6022,7 +6027,15 @@ async function renderPage(context) {
     case "review": {
       const items = await api.listReviewItems(), type = route.query.get("type") ?? "all", status = route.query.get("status") ?? "open";
       const filtered = items.filter((item) => (type === "all" || item.type === type) && (status === "all" || item.status === status));
-      return { title: "Review queue", html: appShell("Review queue", `<form data-action="filter" data-view="review"><label>Item type <input name="type" value="${escapeHtml(type)}"></label><label>Status <select name="status"><option>${escapeHtml(status)}</option><option>open</option><option>resolved</option><option>dismissed</option><option>all</option></select></label><button type="submit">Filter items</button></form>${filtered.map(reviewCard).join("") || emptyState("Review queue is clear", "No weak, broken, conflicting, or review-only items were found.")}`) };
+      const intro = `<aside class="immutable-notice tmv-callout tmv-callout--info">Approving promotes a memory to active, citable evidence; Reject / Dismiss removes it from Ask AI and search. Both are append-only and never edit raw transcript text. Items with no live evidence cannot be approved \u2014 only dismissed.</aside>`;
+      const filterForm = `<form data-action="filter" data-view="review"><label>Item type <input name="type" value="${escapeHtml(type)}"></label><label>Status <select name="status"><option>${escapeHtml(status)}</option><option>open</option><option>resolved</option><option>dismissed</option><option>all</option></select></label><button type="submit" class="tmv-btn tmv-btn-secondary">Filter items</button></form>`;
+      const conflicts = filtered.filter((item) => item.type === "conflict");
+      const degraded = filtered.filter((item) => item.type !== "conflict" && item.canApprove === false);
+      const active = filtered.filter((item) => item.type !== "conflict" && item.canApprove !== false);
+      const group = (title, list, className) => list.length ? section(title, list.map(reviewCard).join(""), className) : "";
+      const groups = `${group("Needs review", active, "review-active-group")}${group("Conflicts / tensions", conflicts, "review-conflicts-group")}${group("Degraded \u2014 evidence missing", degraded, "review-degraded-group")}`;
+      const body = `${intro}${filterForm}${filtered.length ? groups : emptyState("Review queue is clear", "No weak, broken, conflicting, or review-only items were found.")}`;
+      return { title: "Review queue", html: appShell("Review queue", body) };
     }
     case "review_detail": {
       const item = await api.getReviewItem(route.params.id);
