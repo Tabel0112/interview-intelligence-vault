@@ -21,11 +21,15 @@ import { validateMemoryCandidate } from "./validator.js";
  * Conservative auto-activation guard: the memory body must be STRONGLY supported by its quoted transcript
  * span(s). The quote is the candidate's evidence-span text (the immutable raw span), which carries the
  * full negation/commitment/entity context — safer than the LLM-chosen substring. `uncertain`/`unsupported`
- * blocks auto-activation (-> needs_review). See assessBodyQuoteSupport.
+ * blocks auto-activation (-> needs_review) and the REASONS are returned so the Review queue can say why.
+ * See assessBodyQuoteSupport.
  */
-function bodyIsStronglySupported(candidate: ValidatedMemoryCandidate): boolean {
+function bodySupport(candidate: ValidatedMemoryCandidate): { strong: boolean; reason?: string } {
   const quote = candidate.evidenceSpans.map((span) => span.text).join(" ");
-  return assessBodyQuoteSupport(candidate.body, quote).status === "strong";
+  const support = assessBodyQuoteSupport(candidate.body, quote);
+  return support.status === "strong"
+    ? { strong: true }
+    : { strong: false, reason: `Claim wording is not strongly supported by its quoted transcript span (${support.reasons.join("; ") || "insufficient overlap"}).` };
 }
 
 function conflictsWithActiveMemory(db: SqliteDatabase, candidate: ValidatedMemoryCandidate): boolean {
@@ -108,13 +112,17 @@ export async function extractMemoryObjectsForTranscript(db: SqliteDatabase, opti
         try {
           // Auto-activation requires ALL gates: the calibrated status is `active`, the body is strongly
           // supported by its quoted span (conservative; uncertain/unsupported -> review), and it does not
-          // contradict an existing active memory. Any failure routes to needs_review (preserve both sides;
-          // never silently auto-activate an unsupported or contradicting statement).
-          const toStore = candidate.status === "active"
-            && bodyIsStronglySupported(candidate)
-            && !conflictsWithActiveMemory(db, candidate)
-            ? candidate
-            : candidate.status === "active" ? { ...candidate, status: "needs_review" as const } : candidate;
+          // contradict an existing active memory. Any failure routes to needs_review WITH the gate's reason
+          // (preserve both sides; never silently auto-activate an unsupported or contradicting statement).
+          let toStore = candidate;
+          if (candidate.status === "active") {
+            const support = bodySupport(candidate);
+            if (!support.strong) {
+              toStore = { ...candidate, status: "needs_review" as const, statusReason: support.reason };
+            } else if (conflictsWithActiveMemory(db, candidate)) {
+              toStore = { ...candidate, status: "needs_review" as const, statusReason: "Conflicts with an existing active memory — both sides are preserved for review." };
+            }
+          }
           storeMemoryObjectWithEvidence(db, runId, promptVersion, toStore);
           result.objectsInserted++;
           if (toStore.status !== "active") result.weakObjectsInserted++;

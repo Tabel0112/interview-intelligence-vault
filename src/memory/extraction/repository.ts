@@ -56,7 +56,7 @@ export function storeMemoryObjectWithEvidence(db: SqliteDatabase, runId: string,
       extraction_type,extraction_status,generated_by,generated_at,extraction_run_id,prompt_version,confidence_label,object_fingerprint,duplicate_of_id
     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'needs_review',?,?,?,?,?,?,?)`).run(
       id, legacyType[candidate.type], candidate.title, candidate.body, candidate.normalizedText, legacyStatus[candidate.status],
-      candidate.finalConfidence, "agent", timestamp, timestamp, json({ extraction_reason: candidate.reason ?? null }),
+      candidate.finalConfidence, "agent", timestamp, timestamp, json({ extraction_reason: candidate.reason ?? null, review_reason: candidate.statusReason ?? null }),
       candidate.type, "memory_extraction_pipeline", timestamp, runId, promptVersion, candidate.confidenceLabel, candidate.fingerprint, duplicateOfId,
     );
     for (const [index, span] of candidate.evidenceSpans.entries()) {
@@ -71,7 +71,8 @@ export function storeMemoryObjectWithEvidence(db: SqliteDatabase, runId: string,
 }
 
 export function markDuplicate(db: SqliteDatabase, candidate: ValidatedMemoryCandidate, existingObjectId: string, runId: string, promptVersion: string): StoredExtractedMemoryObject {
-  return storeMemoryObjectWithEvidence(db, runId, promptVersion, { ...candidate, status: "needs_review" }, existingObjectId);
+  return storeMemoryObjectWithEvidence(db, runId, promptVersion,
+    { ...candidate, status: "needs_review", statusReason: "Possible duplicate of an existing memory — review whether to merge or keep separately." }, existingObjectId);
 }
 
 /**

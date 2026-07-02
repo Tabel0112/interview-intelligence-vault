@@ -144,9 +144,9 @@ describe("full pipeline: LLM extraction stores needs_review with audit metadata"
     const extractor = llmExtractor((id, text) => [{ type: "decision", title: "Use SQLite as source of truth", body: "Chose SQLite.", evidenceSpanIds: [id], supportingQuote: text }]);
     const result = await extractMemoryObjectsForTranscript(db, { transcriptId, extractor });
     const run = db.prepare("SELECT prompt_version FROM extraction_runs WHERE id=?").get(result.extractionRunId) as { prompt_version: string };
-    expect(run.prompt_version).toBe("mvp-memory-extraction-llm-v1");
+    expect(run.prompt_version).toBe("mvp-memory-extraction-llm-v2");
     const object = db.prepare("SELECT prompt_version FROM memory_objects WHERE extraction_run_id=?").get(result.extractionRunId) as { prompt_version: string };
-    expect(object.prompt_version).toBe("mvp-memory-extraction-llm-v1");
+    expect(object.prompt_version).toBe("mvp-memory-extraction-llm-v2");
   });
 
   it("keeps the deterministic prompt version for deterministic extraction", async () => {

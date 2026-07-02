@@ -6,6 +6,8 @@ import {
   assessBodyQuoteSupport, createLlmMemoryExtractor, extractMemoryObjectsForTranscript, scoreCandidateConfidence,
   type ExtractedMemoryCandidate, type ExtractionWindow, type MemoryExtractor,
 } from "../src/memory/extraction/index.js";
+import { createLlmAskAILanguageModel } from "../src/ask-ai/index.js";
+import { ExternalLlmProvider, type LlmTransport } from "../src/llm/index.js";
 import { MockLlmProvider } from "../src/llm/testing.js";
 
 // A grounded LLM extractor whose JSON is derived from the transcript span text, mirroring the live path
@@ -188,6 +190,153 @@ describe("memory review-status calibration: review queue hygiene", () => {
     await extractMemoryObjectsForTranscript(db, { transcriptId, extractor });
     const after = await createSqliteFrontendApi(db).listReviewItems();
     expect(after.some((item) => item.type === "memory_needs_review")).toBe(true);
+  });
+});
+
+describe("calibration pass 2: grounded non-decision types and faithful wording auto-activate", () => {
+  it("a grounded topic with a short specific title becomes active (type/title no longer double-penalize)", async () => {
+    const transcriptId = importLine("Alex: Vector spaces must never be mixed across providers.");
+    const extractor = llmExtractorFor((id, text) => [{ type: "topic", title: "Vector spaces", body: "Vector spaces must never be mixed across providers.", evidenceSpanIds: [id], supportingQuote: text }]);
+    const result = await extractMemoryObjectsForTranscript(db, { transcriptId, extractor });
+    expect(statusOf(result.extractionRunId)?.extraction_status).toBe("active");
+  });
+
+  it("a grounded question becomes active when verbatim-supported", async () => {
+    const transcriptId = importLine("Sam: Should citations link back to exact transcript spans?");
+    const extractor = llmExtractorFor((id, text) => [{ type: "question", title: "Citation spans", body: "Should citations link back to exact transcript spans?", evidenceSpanIds: [id], supportingQuote: text }]);
+    const result = await extractMemoryObjectsForTranscript(db, { transcriptId, extractor });
+    expect(statusOf(result.extractionRunId)?.extraction_status).toBe("active");
+  });
+
+  it("a faithful light paraphrase (clean blockers, ~0.67 coverage) is strong -> active", () => {
+    // Two benign uncovered tokens ("data", "vault"); negation/commitment/entities/numbers all clean.
+    // Coverage 4/6 ≈ 0.67 — this used to be "uncertain" (band started at 0.75) and forced review.
+    expect(assessBodyQuoteSupport("We will keep the provenance data visible in the vault.", "We will keep provenance visible.").status).toBe("strong");
+  });
+
+  it("plural/singular wording differences no longer break coverage (stemming is comparison-only)", () => {
+    expect(assessBodyQuoteSupport("Generated Markdown views are disposable.", "Each generated Markdown view is disposable.").status).toBe("strong");
+  });
+});
+
+describe("calibration pass 2: overbroad/number-introducing claims still need review", () => {
+  it("a body that broadens the claim with quantifiers/absolutes is blocked from auto-activation", async () => {
+    const support = assessBodyQuoteSupport("We will always use SQLite for everything.", "We will use SQLite.");
+    expect(support.status).toBe("unsupported");
+    expect(support.reasons.join(" ")).toMatch(/broadens the claim/i);
+    // End-to-end: high-confidence, non-tentative, but overbroad -> needs_review with the reason persisted.
+    const transcriptId = importLine("Alex: We will use SQLite.");
+    const extractor = llmExtractorFor((id, text) => [{ type: "decision", title: "Always use SQLite", body: "We will always use SQLite for everything.", evidenceSpanIds: [id], supportingQuote: text }]);
+    const result = await extractMemoryObjectsForTranscript(db, { transcriptId, extractor });
+    expect(statusOf(result.extractionRunId)?.extraction_status).toBe("needs_review");
+    const meta = db.prepare("SELECT metadata_json FROM memory_objects WHERE extraction_run_id=?").get(result.extractionRunId) as { metadata_json: string };
+    expect(JSON.parse(meta.metadata_json).review_reason).toMatch(/broadens the claim/i);
+  });
+
+  it("a body that introduces a number absent from the quote is blocked from auto-activation", () => {
+    const support = assessBodyQuoteSupport("The deadline is in 3 days for the migration work.", "The deadline for the migration work is soon.");
+    expect(support.status).toBe("unsupported");
+    expect(support.reasons.join(" ")).toMatch(/numbers absent/i);
+  });
+});
+
+describe("calibration pass 2: the review queue explains WHY an item needs review", () => {
+  it("tentative wording surfaces its reason in the review item detail", async () => {
+    const transcriptId = importLine("Alex: Maybe we should use PostgreSQL instead.");
+    const extractor = llmExtractorFor((id, text) => [{ type: "decision", title: "Switch to PostgreSQL", body: "Maybe we should use PostgreSQL instead.", evidenceSpanIds: [id], supportingQuote: text }]);
+    await extractMemoryObjectsForTranscript(db, { transcriptId, extractor });
+    const item = (await createSqliteFrontendApi(db).listReviewItems()).find((entry) => entry.type === "memory_needs_review");
+    expect(item?.detail).toMatch(/tentative|hedged/i);
+  });
+
+  it("an unsupported-body demotion surfaces the support-gate reason", async () => {
+    const transcriptId = importLine("Alex: Generated Markdown is disposable.");
+    const extractor = llmExtractorFor((id, text) => [{ type: "decision", title: "SQLite is the source of truth", body: "SQLite is the source of truth.", evidenceSpanIds: [id], supportingQuote: text }]);
+    await extractMemoryObjectsForTranscript(db, { transcriptId, extractor });
+    const item = (await createSqliteFrontendApi(db).listReviewItems()).find((entry) => entry.type === "memory_needs_review");
+    expect(item?.detail).toMatch(/not strongly supported/i);
+  });
+
+  it("a near-duplicate surfaces the possible-duplicate reason", async () => {
+    expect(await extractDecision("Alex: We decided to use SQLite as the source of truth.", "Use SQLite as the source of truth", "We decided to use SQLite as the source of truth.")).toBe("active");
+    const transcriptId = importLine("Sam: We decided to use SQLite as our source of truth going forward.");
+    const extractor = llmExtractorFor((id, text) => [{ type: "decision", title: "Use SQLite as the source of truth", body: "We decided to use SQLite as our source of truth going forward.", evidenceSpanIds: [id], supportingQuote: text }]);
+    await extractMemoryObjectsForTranscript(db, { transcriptId, extractor });
+    const duplicates = (await createSqliteFrontendApi(db).listReviewItems()).filter((entry) => entry.type === "memory_needs_review");
+    if (duplicates.length) expect(duplicates.some((entry) => /duplicate/i.test(entry.detail))).toBe(true);
+  });
+});
+
+describe("calibration pass 2: review volume for a realistic grounded batch", () => {
+  it("most clearly-grounded items activate; only genuinely uncertain ones remain for review", async () => {
+    const RAW = [
+      "Alex: Let's confirm the architecture for the transcript memory vault.",
+      "Sam: The main rule is that SQLite is the source of truth.",
+      "Alex: Agreed. We decided to use SQLite as the source of truth.",
+      "Sam: I will write the onboarding documentation before launch.",
+      "Alex: The deadline for the migration work is Friday.",
+      "Sam: Maybe we should consider Postgres later for scale.",
+      "Alex: Action item: Sam owns the embedding reindex command documentation.",
+    ].join("\n");
+    const imported = importTranscript(db, { filename: "batch.txt", rawText: RAW, sourceType: "test" });
+    const extractor: MemoryExtractor = {
+      kind: "llm", model: "mock", promptVersion: "cal2",
+      async extract(window) {
+        const mk = (type: string, title: string, frag: string) => {
+          const span = window.spans.find((s) => s.text.includes(frag));
+          // Source-close body (prompt v2 behavior): reuse the span's own wording minus the speaker label.
+          return span ? [{ type: type as never, title, body: span.text.replace(/^[^:]{1,60}:\s*/, "").replace(/^Agreed\.\s*/, "").replace(/^Action item:\s*/i, ""), evidenceSpanIds: [span.spanId], confidence: 0.9 }] : [];
+        };
+        return [
+          ...mk("decision", "Use SQLite as source of truth", "We decided to use SQLite"),
+          ...mk("action_item", "Write onboarding documentation", "onboarding documentation before launch"),
+          ...mk("decision", "Migration deadline is Friday", "deadline for the migration"),
+          ...mk("advice_idea", "Consider Postgres later", "consider Postgres"),
+          ...mk("action_item", "Reindex docs ownership", "embedding reindex command"),
+        ];
+      },
+    };
+    await extractMemoryObjectsForTranscript(db, { transcriptId: imported.transcriptId, extractor });
+    const statuses = db.prepare("SELECT extraction_status st, COUNT(*) c FROM memory_objects GROUP BY extraction_status").all() as Array<{ st: string; c: number }>;
+    const byStatus = Object.fromEntries(statuses.map((row) => [row.st, row.c]));
+    expect(byStatus.active ?? 0).toBe(4); // all clearly grounded items auto-activate
+    expect(byStatus.needs_review ?? 0).toBe(1); // ONLY the tentative "maybe consider Postgres" needs review
+  });
+});
+
+describe("calibration pass 2: auto-activated memory is usable by Ask AI without manual approval", () => {
+  it("upload -> auto-active -> bridged evidence -> grounded cited answer (no review step)", async () => {
+    const extractionTransport: LlmTransport = async (req) => {
+      const messages = (JSON.parse(req.body) as { messages: Array<{ content: string }> }).messages;
+      const m = messages[messages.length - 1].content.match(/\[span_id=(\S+) speaker=[^\]]*\]\n([^\n]+)/);
+      const spanId = m?.[1] ?? "unknown", text = (m?.[2] ?? "").trim();
+      // Clear, non-tentative, source-close body -> auto-activates under the calibrated policy.
+      const content = JSON.stringify({ objects: [{ type: "decision", title: "Use SQLite as the source of truth", body: "We decided to use SQLite as the source of truth.", evidenceSpanIds: [spanId], supportingQuote: text }] });
+      return { status: 200, body: { choices: [{ message: { content }, finish_reason: "stop" }] } };
+    };
+    const synthesisTransport: LlmTransport = async (req) => {
+      const messages = (JSON.parse(req.body) as { messages: Array<{ content: string }> }).messages;
+      const m = messages[messages.length - 1].content.match(/pointerId:\s*(\S+)\n\s*quote:\s*(.+)/);
+      const content = JSON.stringify({ claims: [{ kind: "fact", text: "SQLite is the source of truth.", evidencePointerIds: [m?.[1] ?? "unknown"], supportingQuote: (m?.[2] ?? "").trim(), explanation: "From the cited span." }] });
+      return { status: 200, body: { choices: [{ message: { content }, finish_reason: "stop" }] } };
+    };
+    const api = createSqliteFrontendApi(db, {
+      llmRequired: true, getLlmReady: () => true,
+      getMemoryExtractor: () => createLlmMemoryExtractor(new ExternalLlmProvider({ id: "openai", model: "gpt-extract", apiKey: "sk-cal2-PLANTED-TEST-KEY-123456", transport: extractionTransport })),
+      getSynthesis: () => ({ llm: createLlmAskAILanguageModel(new ExternalLlmProvider({ id: "openai", model: "gpt-synth", apiKey: "sk-cal2-PLANTED-TEST-KEY-123456", transport: synthesisTransport })), info: { mode: "external_llm", provider: "openai", model: "gpt-synth", usedFallback: false } }),
+    });
+    const uploaded = await api.uploadTranscript({ filename: "auto.txt", rawText: "Alex: We decided to use SQLite as the source of truth." });
+    // Auto-activated (no review step) and bridged to evidence pointers (Policy A: active memory only).
+    const memory = db.prepare("SELECT extraction_status FROM memory_objects LIMIT 1").get() as { extraction_status: string };
+    expect(memory.extraction_status).toBe("active");
+    expect((db.prepare("SELECT COUNT(*) c FROM evidence_pointers").get() as { c: number }).c).toBeGreaterThan(0);
+    expect((await api.listReviewItems()).some((item) => item.type === "memory_needs_review")).toBe(false);
+    // Ask AI can answer from the auto-activated memory, with citations.
+    const answer = await api.ask("What is the source of truth?");
+    expect(answer.notEnoughEvidence).toBe(false);
+    expect(answer.claims.length).toBeGreaterThan(0);
+    expect(answer.citations.length).toBeGreaterThan(0);
+    expect(uploaded.status).toBe("imported");
   });
 });
 

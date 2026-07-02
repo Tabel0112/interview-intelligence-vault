@@ -59,7 +59,7 @@ describe("automatic extraction after upload", () => {
     const row = db.prepare("SELECT extraction_status, generated_text FROM memory_objects LIMIT 1").get() as { extraction_status: string; generated_text: string };
     expect(row.extraction_status).toBe("active"); // clear, direct, grounded decision -> active automatically
     expect(row.generated_text).toBe("We decided to use SQLite as the source of truth.");
-    expect((db.prepare("SELECT prompt_version FROM extraction_runs LIMIT 1").get() as { prompt_version: string }).prompt_version).toBe("mvp-memory-extraction-llm-v1");
+    expect((db.prepare("SELECT prompt_version FROM extraction_runs LIMIT 1").get() as { prompt_version: string }).prompt_version).toBe("mvp-memory-extraction-llm-v2");
   });
 
   it("does not extract for a duplicate upload and never extracts twice for the same transcript", async () => {

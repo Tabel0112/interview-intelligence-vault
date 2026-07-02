@@ -2914,12 +2914,12 @@ function dedupeCanonicalMemories(db, options = {}) {
 
 // src/memory/extraction/prompt.ts
 var MEMORY_EXTRACTION_PROMPT_VERSION = "mvp-memory-extraction-v1";
-var MEMORY_EXTRACTION_LLM_PROMPT_VERSION = "mvp-memory-extraction-llm-v1";
-var MEMORY_EXTRACTION_LLM_SYSTEM = "You extract source-backed memory objects strictly from the transcript spans provided. Use ONLY the listed spans; never invent facts or cite span_ids that are not listed. Every object must include a supportingQuote copied verbatim from one of the spans it cites. Prefer fewer high-quality objects. Respond with JSON only.";
+var MEMORY_EXTRACTION_LLM_PROMPT_VERSION = "mvp-memory-extraction-llm-v2";
+var MEMORY_EXTRACTION_LLM_SYSTEM = "You extract source-backed memory objects strictly from the transcript spans provided. Use ONLY the listed spans; never invent facts or cite span_ids that are not listed. Every object must include a supportingQuote copied verbatim from one of the spans it cites. Write each body using the speaker's own wording as closely as possible \u2014 do not add names, entities, numbers, quantifiers (all/every/always/only), or commitments the cited span does not state, and do not soften or strengthen what was said. Prefer fewer high-quality objects. Respond with JSON only.";
 function buildLlmMemoryExtractionPrompt(window) {
   return [
     'Extract memory objects as JSON: {"objects":[{"type":"topic|quote|question|decision|action_item|objection|advice_idea","title":"...","body":"...","evidenceSpanIds":["<span_id>"],"supportingQuote":"<verbatim substring of a cited span>"}]}',
-    'Cite only the span_ids below. Each object must include a supportingQuote copied verbatim from one cited span. If nothing is well supported, return {"objects":[]}.',
+    `Cite only the span_ids below. Each object must include a supportingQuote copied verbatim from one cited span. Keep each body close to the span's own wording \u2014 no added scope, entities, numbers, or stronger/weaker commitments. If nothing is well supported, return {"objects":[]}.`,
     "",
     "Spans:",
     window.text
@@ -3030,14 +3030,15 @@ function scoreCandidateConfidence(candidate, spans) {
   const coverage = Math.min(1, 0.8 + Math.max(0, spans.length - 1) * 0.1);
   const normalizedTitle = candidate.title.toLowerCase().trim();
   const titleWords = normalizedTitle.split(/\s+/).filter(Boolean).length;
-  const specificity = vague.has(normalizedTitle) || titleWords < 2 ? 0.3 : Math.min(1, 0.6 + titleWords * 0.07);
-  const typeRule = candidate.type === "quote" ? 1 : candidate.type === "decision" || candidate.type === "action_item" ? 0.95 : candidate.type === "objection" || candidate.type === "question" ? 0.85 : 0.8;
+  const specificity = vague.has(normalizedTitle) || titleWords < 2 ? 0.3 : Math.min(1, 0.7 + titleWords * 0.06);
+  const typeRule = candidate.type === "quote" ? 1 : candidate.type === "decision" || candidate.type === "action_item" ? 0.95 : 0.9;
   const finalConfidence = clamp(0.5 * extractor + 0.2 * coverage + 0.15 * specificity + 0.15 * typeRule);
   const confidenceLabel2 = finalConfidence >= 0.85 ? "high" : finalConfidence >= 0.6 ? "medium" : "low";
   const tentative = isTentativeStatement(candidate.title, candidate.body);
   const decisionLike = candidate.type === "decision" || candidate.type === "action_item";
   const status = tentative ? "needs_review" : confidenceLabel2 === "high" ? "active" : confidenceLabel2 === "medium" ? "needs_review" : decisionLike ? "needs_review" : "weak";
-  return { finalConfidence, confidenceLabel: confidenceLabel2, status };
+  const statusReason = status === "active" ? void 0 : tentative ? "Tentative/hedged phrasing \u2014 this reads as a proposal or possibility, not a settled statement." : confidenceLabel2 === "medium" ? "Medium extraction confidence \u2014 grounding signals are not strong enough to auto-activate." : "Low extraction confidence.";
+  return statusReason === void 0 ? { finalConfidence, confidenceLabel: confidenceLabel2, status } : { finalConfidence, confidenceLabel: confidenceLabel2, status, statusReason };
 }
 
 // src/memory/extraction/bodyQuoteSupport.ts
@@ -3102,6 +3103,22 @@ var STOPWORDS = /* @__PURE__ */ new Set([
 var NEGATIONS = /* @__PURE__ */ new Set(["not", "no", "never", "cannot", "without"]);
 var TENTATIVE2 = /* @__PURE__ */ new Set(["maybe", "might", "could", "consider", "considered", "considering", "discuss", "discussed", "discussing", "proposed", "propose", "possibly", "thinking"]);
 var COMMITMENT = /* @__PURE__ */ new Set(["decided", "decide", "agreed", "agree", "confirmed", "confirm", "will", "must", "needs", "need", "final"]);
+var OVERBROAD = /* @__PURE__ */ new Set([
+  "all",
+  "every",
+  "everyone",
+  "everything",
+  "everywhere",
+  "always",
+  "entire",
+  "forever",
+  "permanently",
+  "guarantee",
+  "guaranteed",
+  "unlimited",
+  "completely",
+  "only"
+]);
 var KNOWN_TECH = /* @__PURE__ */ new Set(["sqlite", "sql", "postgresql", "postgres", "mysql", "mongodb", "markdown", "mcp", "obsidian", "claude", "redis", "duckdb"]);
 var SAFE_EQUIVALENCES = [
   [/\bcannot be edited\b/g, "immutable"],
@@ -3163,16 +3180,23 @@ function assessBodyQuoteSupport(body, quote2) {
   const bodyEntities = entityTokens(body);
   const missingEntities = [...bodyEntities].filter((token) => !quoteSet.has(token));
   if (missingEntities.length) reasons.push(`body introduces entities absent from the quote: ${missingEntities.join(", ")}`);
+  const broadened = [...OVERBROAD].filter((token) => bodySet.has(token) && !quoteSet.has(token));
+  if (broadened.length) reasons.push(`body broadens the claim beyond the quote: ${broadened.join(", ")}`);
+  const missingNumbers = bodyTokens.filter((token) => /^\d+(\.\d+)?$/.test(token) && !quoteSet.has(token));
+  if (missingNumbers.length) reasons.push(`body introduces numbers absent from the quote: ${[...new Set(missingNumbers)].join(", ")}`);
+  const stem = (token) => token.length > 3 && token.endsWith("es") ? token.slice(0, -2) : token.length > 3 && token.endsWith("s") ? token.slice(0, -1) : token;
+  const quoteStems = new Set([...quoteSet].map(stem));
+  const matchesQuote = (token) => quoteSet.has(token) || quoteStems.has(stem(token));
   const bodyKeyTokens = bodyTokens.filter((token) => !STOPWORDS.has(token));
   const keyTokens = bodyKeyTokens.length ? bodyKeyTokens : bodyTokens;
-  const covered = keyTokens.filter((token) => quoteSet.has(token)).length;
+  const covered = keyTokens.filter(matchesQuote).length;
   const coverage = covered / keyTokens.length;
   if (reasons.length || coverage < 0.5) {
     if (coverage < 0.5) reasons.push(`body-key-token coverage ${coverage.toFixed(2)} below 0.50`);
     return { status: "unsupported", reasons };
   }
-  if (coverage >= 0.75) return { status: "strong", reasons: [] };
-  return { status: "uncertain", reasons: [`body-key-token coverage ${coverage.toFixed(2)} between 0.50 and 0.75`] };
+  if (coverage >= 0.65) return { status: "strong", reasons: [] };
+  return { status: "uncertain", reasons: [`body-key-token coverage ${coverage.toFixed(2)} between 0.50 and 0.65`] };
 }
 
 // src/memory/extraction/validator.ts
@@ -3280,7 +3304,7 @@ function storeMemoryObjectWithEvidence(db, runId, promptVersion, candidate, dupl
       "agent",
       timestamp,
       timestamp,
-      json({ extraction_reason: candidate.reason ?? null }),
+      json({ extraction_reason: candidate.reason ?? null, review_reason: candidate.statusReason ?? null }),
       candidate.type,
       "memory_extraction_pipeline",
       timestamp,
@@ -3301,7 +3325,13 @@ function storeMemoryObjectWithEvidence(db, runId, promptVersion, candidate, dupl
   })();
 }
 function markDuplicate(db, candidate, existingObjectId, runId, promptVersion) {
-  return storeMemoryObjectWithEvidence(db, runId, promptVersion, { ...candidate, status: "needs_review" }, existingObjectId);
+  return storeMemoryObjectWithEvidence(
+    db,
+    runId,
+    promptVersion,
+    { ...candidate, status: "needs_review", statusReason: "Possible duplicate of an existing memory \u2014 review whether to merge or keep separately." },
+    existingObjectId
+  );
 }
 function attachEvidenceToMemory(db, memoryId, candidate) {
   return db.transaction(() => {
@@ -3320,9 +3350,10 @@ function attachEvidenceToMemory(db, memoryId, candidate) {
 }
 
 // src/memory/extraction/pipeline.ts
-function bodyIsStronglySupported(candidate) {
+function bodySupport(candidate) {
   const quote2 = candidate.evidenceSpans.map((span) => span.text).join(" ");
-  return assessBodyQuoteSupport(candidate.body, quote2).status === "strong";
+  const support = assessBodyQuoteSupport(candidate.body, quote2);
+  return support.status === "strong" ? { strong: true } : { strong: false, reason: `Claim wording is not strongly supported by its quoted transcript span (${support.reasons.join("; ") || "insufficient overlap"}).` };
 }
 function conflictsWithActiveMemory(db, candidate) {
   const candidateText = `${candidate.title}. ${candidate.body}`;
@@ -3405,7 +3436,15 @@ async function extractMemoryObjectsForTranscript(db, options) {
           continue;
         }
         try {
-          const toStore = candidate.status === "active" && bodyIsStronglySupported(candidate) && !conflictsWithActiveMemory(db, candidate) ? candidate : candidate.status === "active" ? { ...candidate, status: "needs_review" } : candidate;
+          let toStore = candidate;
+          if (candidate.status === "active") {
+            const support = bodySupport(candidate);
+            if (!support.strong) {
+              toStore = { ...candidate, status: "needs_review", statusReason: support.reason };
+            } else if (conflictsWithActiveMemory(db, candidate)) {
+              toStore = { ...candidate, status: "needs_review", statusReason: "Conflicts with an existing active memory \u2014 both sides are preserved for review." };
+            }
+          }
           storeMemoryObjectWithEvidence(db, runId, promptVersion, toStore);
           result.objectsInserted++;
           if (toStore.status !== "active") result.weakObjectsInserted++;
@@ -5436,7 +5475,13 @@ function reviewItems(db) {
   }
   for (const memory of createMemoryObjectsRepo(db).listCanonicalMemoryObjects()) {
     if (memory.status === "needs_review" || memory.status === "weak") {
-      const row = db.prepare("SELECT created_at FROM memory_objects WHERE id=?").get(memory.id);
+      const row = db.prepare("SELECT created_at, metadata_json FROM memory_objects WHERE id=?").get(memory.id);
+      let reviewReason;
+      try {
+        const parsed = row.metadata_json ? JSON.parse(row.metadata_json) : void 0;
+        if (typeof parsed?.review_reason === "string" && parsed.review_reason.trim()) reviewReason = parsed.review_reason.trim();
+      } catch {
+      }
       const transcriptIds = db.prepare(`SELECT DISTINCT s.transcript_id FROM transcript_spans s
         WHERE s.id IN (SELECT span_id FROM memory_object_evidence WHERE memory_id=?) ORDER BY s.transcript_id`).all(memory.id).map((item) => item.transcript_id);
       const hasLiveEvidence = memoryHasLiveEvidenceForReview(db, memory.id);
@@ -5444,7 +5489,7 @@ function reviewItems(db) {
         id: `memory:${memory.id}`,
         type: "memory_needs_review",
         title: memory.title || memory.body,
-        detail: `${memory.status}; ${memory.evidenceSpanIds.length} evidence span(s)`,
+        detail: reviewReason ?? `${memory.status}; ${memory.evidenceSpanIds.length} evidence span(s)`,
         targetType: "memory_object",
         targetId: memory.id,
         trustState: memory.status,

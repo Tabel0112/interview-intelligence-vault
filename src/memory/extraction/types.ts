@@ -14,6 +14,8 @@ export interface ExtractedMemoryCandidate {
 export interface ValidatedMemoryCandidate extends ExtractedMemoryCandidate {
   transcriptId: string; normalizedText: string; fingerprint: string; confidenceLabel: ConfidenceLabel;
   status: "active" | "weak" | "needs_review"; finalConfidence: number; evidenceSpans: TranscriptSpanForExtraction[];
+  /** WHY a non-active status was chosen (tentative/medium/low/unsupported-body/conflict/duplicate). Persisted to metadata for the Review queue. */
+  statusReason?: string;
 }
 export interface MemoryExtractor {
   kind?: ExtractorKind; model?: string | null;

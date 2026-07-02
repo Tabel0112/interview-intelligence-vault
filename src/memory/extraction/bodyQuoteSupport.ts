@@ -24,6 +24,14 @@ const NEGATIONS = new Set(["not", "no", "never", "cannot", "without"]);
 const TENTATIVE = new Set(["maybe", "might", "could", "consider", "considered", "considering", "discuss", "discussed", "discussing", "proposed", "propose", "possibly", "thinking"]);
 const COMMITMENT = new Set(["decided", "decide", "agreed", "agree", "confirmed", "confirm", "will", "must", "needs", "need", "final"]);
 
+// Scope-broadening quantifiers/absolutes: a body that introduces one of these when the quote does not use
+// it is claiming MORE than the span says ("we will use SQLite" -> "we will always use SQLite for everything").
+// This is the deterministic "generated claim too broad for the cited span" review reason.
+const OVERBROAD = new Set([
+  "all", "every", "everyone", "everything", "everywhere", "always", "entire", "forever",
+  "permanently", "guarantee", "guaranteed", "unlimited", "completely", "only",
+]);
+
 // Lowercase tokens that must always be treated as entities (so a lowercase "sqlite" still counts), in
 // addition to acronyms and capitalized words detected from the original text.
 const KNOWN_TECH = new Set(["sqlite", "sql", "postgresql", "postgres", "mysql", "mongodb", "markdown", "mcp", "obsidian", "claude", "redis", "duckdb"]);
@@ -101,17 +109,33 @@ export function assessBodyQuoteSupport(body: string, quote: string): BodyQuoteSu
   const missingEntities = [...bodyEntities].filter((token) => !quoteSet.has(token));
   if (missingEntities.length) reasons.push(`body introduces entities absent from the quote: ${missingEntities.join(", ")}`);
 
+  // 5. Scope broadening: the body uses a quantifier/absolute the quote does not.
+  const broadened = [...OVERBROAD].filter((token) => bodySet.has(token) && !quoteSet.has(token));
+  if (broadened.length) reasons.push(`body broadens the claim beyond the quote: ${broadened.join(", ")}`);
+
+  // 6. Numbers: any number the body states must appear in the quote (amounts/dates/counts are high-risk).
+  const missingNumbers = bodyTokens.filter((token) => /^\d+(\.\d+)?$/.test(token) && !quoteSet.has(token));
+  if (missingNumbers.length) reasons.push(`body introduces numbers absent from the quote: ${[...new Set(missingNumbers)].join(", ")}`);
+
   // --- Soft coverage -------------------------------------------------------------------------------
   // Body key tokens = content tokens (stopwords removed; negation/tentative/commitment/entities kept).
+  // Coverage matching allows a LIGHT plural/suffix stem ("views"~"view", "stores"~"store") — comparison
+  // only; the entity/negation/broadening blockers above still require exact tokens.
+  const stem = (token: string): string => (token.length > 3 && token.endsWith("es") ? token.slice(0, -2) : token.length > 3 && token.endsWith("s") ? token.slice(0, -1) : token);
+  const quoteStems = new Set([...quoteSet].map(stem));
+  const matchesQuote = (token: string): boolean => quoteSet.has(token) || quoteStems.has(stem(token));
   const bodyKeyTokens = bodyTokens.filter((token) => !STOPWORDS.has(token));
   const keyTokens = bodyKeyTokens.length ? bodyKeyTokens : bodyTokens;
-  const covered = keyTokens.filter((token) => quoteSet.has(token)).length;
+  const covered = keyTokens.filter(matchesQuote).length;
   const coverage = covered / keyTokens.length;
 
   if (reasons.length || coverage < 0.5) {
     if (coverage < 0.5) reasons.push(`body-key-token coverage ${coverage.toFixed(2)} below 0.50`);
     return { status: "unsupported", reasons };
   }
-  if (coverage >= 0.75) return { status: "strong", reasons: [] };
-  return { status: "uncertain", reasons: [`body-key-token coverage ${coverage.toFixed(2)} between 0.50 and 0.75`] };
+  // With ALL hard blockers clean (negation, commitment, entities, broadening, numbers), the remaining
+  // uncovered tokens are connective prose/benign paraphrase — require 0.65 coverage for "strong" (was 0.75).
+  // The 0.50–0.65 band stays "uncertain" (-> review): too much of the body has no anchor in the quote.
+  if (coverage >= 0.65) return { status: "strong", reasons: [] };
+  return { status: "uncertain", reasons: [`body-key-token coverage ${coverage.toFixed(2)} between 0.50 and 0.65`] };
 }

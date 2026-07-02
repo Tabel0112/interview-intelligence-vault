@@ -129,7 +129,14 @@ function reviewItems(db: SqliteDatabase): ReviewItemView[] {
   }
   for (const memory of createMemoryObjectsRepo(db).listCanonicalMemoryObjects()) {
     if (memory.status === "needs_review" || memory.status === "weak") {
-      const row = db.prepare("SELECT created_at FROM memory_objects WHERE id=?").get(memory.id) as { created_at: string };
+      const row = db.prepare("SELECT created_at, metadata_json FROM memory_objects WHERE id=?").get(memory.id) as { created_at: string; metadata_json: string | null };
+      // The extraction pipeline persists WHY this item was routed to review (tentative wording, medium
+      // confidence, unsupported body, possible duplicate, conflict) — show it instead of a bare status.
+      let reviewReason: string | undefined;
+      try {
+        const parsed = row.metadata_json ? JSON.parse(row.metadata_json) as { review_reason?: unknown } : undefined;
+        if (typeof parsed?.review_reason === "string" && parsed.review_reason.trim()) reviewReason = parsed.review_reason.trim();
+      } catch { /* legacy/malformed metadata -> fall back to the generic detail */ }
       const transcriptIds = (db.prepare(`SELECT DISTINCT s.transcript_id FROM transcript_spans s
         WHERE s.id IN (SELECT span_id FROM memory_object_evidence WHERE memory_id=?) ORDER BY s.transcript_id`).all(memory.id) as Array<{ transcript_id: string }>).map((item) => item.transcript_id);
       // Live-evidence count mirrors the approve trust gate (memory_object_evidence + evidence_pointers).
@@ -138,7 +145,7 @@ function reviewItems(db: SqliteDatabase): ReviewItemView[] {
       const hasLiveEvidence = memoryHasLiveEvidenceForReview(db, memory.id);
       items.push({
         id: `memory:${memory.id}`, type: "memory_needs_review", title: memory.title || memory.body,
-        detail: `${memory.status}; ${memory.evidenceSpanIds.length} evidence span(s)`, targetType: "memory_object", targetId: memory.id,
+        detail: reviewReason ?? `${memory.status}; ${memory.evidenceSpanIds.length} evidence span(s)`, targetType: "memory_object", targetId: memory.id,
         trustState: memory.status, href: routeHref.memory(memory.id),
         createdAt: row.created_at, severity: "medium", status: "open", relatedTranscriptIds: transcriptIds, relatedEvidenceIds: [],
         hasLiveEvidence, canApprove: hasLiveEvidence, canReject: true,
