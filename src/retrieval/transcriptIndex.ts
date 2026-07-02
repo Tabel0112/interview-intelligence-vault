@@ -12,11 +12,21 @@
 import type { SqliteDatabase } from "../db/connection.js";
 import { createMemoryObjectsRepo } from "../db/repositories/memoryObjectsRepo.js";
 import { isUsableAsEvidence } from "../memory/index.js";
-import { linkMemoryObjectToSpan, type ProvenanceEvidenceRole } from "../provenance/index.js";
+import { linkMemoryObjectToSpan, type EvidenceStrength, type ProvenanceEvidenceRole } from "../provenance/index.js";
 import { rebuildRetrievalIndex } from "./indexer.js";
 
 const mapEvidenceRole = (role: string): ProvenanceEvidenceRole =>
   role === "contradicts" ? "opposition" : role === "qualifies" ? "conditional" : role === "context" ? "neutral" : "support";
+
+/**
+ * Derive the provenance strength of a bridged memory→span link from its calibrated extraction evidence
+ * score, using the SAME score bands the evidence-scoring layer uses (see evidence/rules.ts). Bridged
+ * pointers previously defaulted to "unknown", which the UI renders as WEAK and the Review queue lists as
+ * a weak-evidence item — so every high-score auto-activated memory wrongly produced a Review entry. The
+ * floor is "weak" (never "unknown"): a provenance-validated extraction link HAS been assessed, just weakly.
+ */
+export const strengthFromEvidenceScore = (score: number): EvidenceStrength =>
+  score >= 0.78 ? "strong" : score >= 0.55 ? "mixed" : "weak";
 
 export interface TranscriptIndexResult {
   transcriptId: string;
@@ -40,7 +50,11 @@ export async function indexTranscriptForRetrieval(db: SqliteDatabase, transcript
     const rows = db.prepare("SELECT span_id, role, evidence_score, transcript_id FROM memory_object_evidence WHERE memory_id=? AND transcript_id=?")
       .all(memory_id, transcriptId) as Array<{ span_id: string; role: string; evidence_score: number; transcript_id: string }>;
     for (const row of rows) {
-      linkMemoryObjectToSpan(db, { memoryObjectId: memory_id, transcriptId: row.transcript_id, spanId: row.span_id, evidenceRole: mapEvidenceRole(row.role), confidence: row.evidence_score });
+      linkMemoryObjectToSpan(db, {
+        memoryObjectId: memory_id, transcriptId: row.transcript_id, spanId: row.span_id,
+        evidenceRole: mapEvidenceRole(row.role), confidence: row.evidence_score,
+        evidenceStrength: strengthFromEvidenceScore(row.evidence_score),
+      });
       evidencePointersBridged++;
     }
   }

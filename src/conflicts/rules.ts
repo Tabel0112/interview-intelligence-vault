@@ -12,6 +12,40 @@ const tensionPairs = [
 
 const round = (value: number) => Math.round(Math.max(0, Math.min(1, value)) * 1000) / 1000;
 const tokens = (text: string) => new Set(text.toLowerCase().match(/[a-z0-9]+/g)?.filter((token) => token.length > 2 && !stopwords.has(token)) ?? []);
+
+// --- Predicate-aligned negation ------------------------------------------------------------------
+// A negation only creates a polarity OPPOSITION when the predicate it denies is actually asserted by
+// the other statement. "Never display API keys in generated notes" denies DISPLAYING keys — it does not
+// oppose "generated notes are a disposable view layer" merely because both mention "generated notes".
+const NEG_WORDS = new Set(["no", "not", "never", "avoid", "reject", "without", "cannot"]);
+const NEGATION_WINDOW = 6; // content tokens after the marker = the denied predicate phrase
+const lightStem = (token: string): string => (token.length > 3 && token.endsWith("s") ? token.slice(0, -1) : token);
+
+/**
+ * True when a negated predicate in `negatedText` aligns with `otherText`: the content tokens immediately
+ * following a negation marker (the denied action/property + its object) must be asserted by the other
+ * side — either its leading token (usually the verb/value being denied, e.g. "display", "Friday") or a
+ * majority of the denied phrase. Prevents topic-overlap-only "contradictions" between compatible
+ * statements that merely share a container/location token.
+ */
+function negatedPredicateAligns(negatedText: string, otherText: string): boolean {
+  const other = tokens(otherText);
+  const otherStems = new Set([...other].map(lightStem));
+  const inOther = (token: string) => other.has(token) || otherStems.has(lightStem(token));
+  const words = negatedText.toLowerCase().replace(/n't\b/g, " not").match(/[a-z0-9]+/g) ?? [];
+  for (let index = 0; index < words.length; index++) {
+    if (!NEG_WORDS.has(words[index])) continue;
+    const denied: string[] = [];
+    for (let next = index + 1; next < words.length && denied.length < NEGATION_WINDOW; next++) {
+      const word = words[next];
+      if (word.length > 2 && !stopwords.has(word) && !NEG_WORDS.has(word)) denied.push(word);
+    }
+    if (!denied.length) continue;
+    const matches = denied.filter(inOther).length;
+    if (inOther(denied[0]) || matches >= Math.ceil(denied.length / 2)) return true;
+  }
+  return false;
+}
 const overlap = (a: string, b: string) => {
   const left = tokens(a), right = tokens(b);
   const shared = [...left].filter((token) => right.has(token)).length;
@@ -52,7 +86,14 @@ export function scoreConflict(candidate: ConflictCandidate, kind: ConflictClassi
 export function classifyConflictCandidate(candidate: ConflictCandidate, options: ConflictClassificationOptions = {}): ConflictClassification {
   const topicOverlap = candidate.sharedEntities?.length || candidate.sharedTopics?.length ? 1 : overlap(candidate.leftText, candidate.rightText);
   const leftNegative = negative.test(candidate.leftText), rightNegative = negative.test(candidate.rightText);
-  const polarityOpposition = leftNegative !== rightNegative && assertion.test(candidate.leftText) && assertion.test(candidate.rightText) ? 1 : 0;
+  // Opposition requires: exactly one negated side, both sides asserting, AND the denied predicate must be
+  // asserted by the other side (predicate alignment). A negation about an unrelated action that merely
+  // shares a topic/location token ("generated notes") is NOT a contradiction.
+  const negatedSide = leftNegative && !rightNegative ? candidate.leftText : rightNegative && !leftNegative ? candidate.rightText : null;
+  const otherSide = leftNegative && !rightNegative ? candidate.rightText : candidate.leftText;
+  const polarityOpposition = negatedSide != null
+    && assertion.test(candidate.leftText) && assertion.test(candidate.rightText)
+    && negatedPredicateAligns(negatedSide, otherSide) ? 1 : 0;
   const conditionality = conditional.test(candidate.leftText) || conditional.test(candidate.rightText) ? 1 : 0;
   const temporalInfo = temporal(candidate);
   const validated = new Set(options.validatedEvidenceIds ?? [...candidate.leftEvidenceIds, ...candidate.rightEvidenceIds]);

@@ -1,7 +1,7 @@
 import { appShell, emptyState, escapeHtml, routeButton, score, trustBadge } from "./html.js";
 import { routeHref } from "./router.js";
 import { DEGRADED_MEMORY_REASON } from "./types.js";
-import type { EvidenceView, FrontendAnswerView, MemoryView, PageContext, RenderedPage, ReviewItemView, SearchResultView, SetupSummary, TranscriptView, TrustState } from "./types.js";
+import type { ConflictingSideView, EvidenceView, FrontendAnswerView, MemoryView, PageContext, RenderedPage, ReviewItemView, ReviewSupportSpanView, SearchResultView, SetupSummary, SupportSpanView, TranscriptView, TrustState } from "./types.js";
 
 const section = (title: string, body: string, className = "") => `<section class="vault-section${className ? ` ${escapeHtml(className)}` : ""}"><h2>${escapeHtml(title)}</h2>${body}</section>`;
 const links = (items: Array<{ href: string; label: string }>) => `<div class="route-actions">${items.map((item) => routeButton(item.href, item.label)).join("")}</div>`;
@@ -76,23 +76,80 @@ function transcriptView(transcript: TranscriptView, selectedSpanId?: string): st
     <div class="transcript-viewer" data-selected-span="${escapeHtml(selectedSpanId ?? "")}">${spans}</div>`;
 }
 
+/** A raw extraction support span (NOT citable evidence): quote + transcript label + open-span clickback. */
+const supportSpanCard = (span: SupportSpanView): string =>
+  `<article class="evidence-card support-span" data-support-span-id="${escapeHtml(span.spanId)}">
+    <header>${trustBadge("needs_review", "Support only")} <strong>${escapeHtml(span.role)}</strong> <span>${score(span.evidenceScore)}</span></header>
+    <blockquote>${escapeHtml(span.quote)}</blockquote>
+    <p>${escapeHtml(span.transcriptTitle)} · span ${escapeHtml(span.spanId)}</p>
+    <a class="transcript-clickback" href="${escapeHtml(routeHref.transcript(span.transcriptId, span.spanId))}">Open exact transcript span</a>
+  </article>`;
+
+/** The active memory a pending memory conflicts with, shown alongside its own source support quotes. */
+function conflictingSideCard(side: ConflictingSideView): string {
+  const spans = side.supportSpans.length
+    ? side.supportSpans.map(supportSpanCard).join("")
+    : emptyState("No source spans found", "This active memory has no resolvable source spans.");
+  return `<article class="conflict-side conflict-side--active tmv-card">
+    <p>${trustBadge("strong")} active memory · ${escapeHtml(side.type)} · confidence ${score(side.confidence)} (${escapeHtml(side.confidenceLabel)}) · status ${escapeHtml(side.status)}</p>
+    <h4>${escapeHtml(side.title)}</h4><p>${escapeHtml(side.body)}</p>
+    ${spans}
+    ${links([{ href: routeHref.memory(side.memoryId), label: "Open the active memory" }])}
+  </article>`;
+}
+
+function conflictReviewSection(view: MemoryView): string {
+  const conflict = view.conflictReview;
+  if (!conflict) return "";
+  const memory = view.memory;
+  const pendingSpans = view.supportSpans.length ? view.supportSpans.map(supportSpanCard).join("") : "";
+  const pendingSide = `<article class="conflict-side conflict-side--pending tmv-card">
+    <p>${trustBadge(view.trustState)} pending memory · ${escapeHtml(memory.type)} · confidence ${score(memory.confidence)} (${escapeHtml(memory.confidenceLabel)}) · status ${escapeHtml(memory.status)}</p>
+    <h4>${escapeHtml(memory.title || memory.type)}</h4><p>${escapeHtml(memory.body)}</p>
+    ${pendingSpans}
+  </article>`;
+  const meta = conflict.conflictType
+    ? `<p>${trustBadge("conflicting")} Conflict type: <strong>${escapeHtml(conflict.conflictType.replaceAll("_", " "))}</strong>${conflict.confidence != null ? ` · confidence ${score(conflict.confidence)}` : ""}</p>${conflict.explanation ? `<p>${escapeHtml(conflict.explanation)}</p>` : ""}`
+    : "";
+  const otherSide = conflict.active
+    ? conflictingSideCard(conflict.active)
+    : `<aside class="trust-warning tmv-callout tmv-callout--warning">${trustBadge("conflicting")} Conflicting active memory could not be resolved; inspect the <a href="${escapeHtml(routeHref.review("conflict"))}">conflicts list</a>. Approving preserves both sides so live conflict detection can surface it.</aside>`;
+  return section("Conflict — both sides preserved", `${meta}<div class="conflict-comparison">${pendingSide}${otherSide}</div>`);
+}
+
 function memoryView(view: MemoryView): string {
   const memory = view.memory;
-  const warning = view.trustState === "strong" ? "" : `<aside class="trust-warning">${trustBadge(view.trustState)} This memory is not independent strong truth.</aside>`;
   // A memory in a reviewable state gets the same Approve/Reject controls here as in the review queue,
   // so following a review item to its memory page is never a dead end.
   const reviewable = memory.status === "needs_review" || memory.status === "weak";
+  // Show the SPECIFIC review reason (conflict/tentative/duplicate/overbroad/legacy) rather than the old
+  // generic "not independent strong truth". Falls back to the generic line only for non-reviewable weakness.
+  const warning = view.trustState === "strong" ? ""
+    : reviewable && view.reviewReason
+      ? `<aside class="trust-warning tmv-callout tmv-callout--warning">${trustBadge(view.trustState)} <strong>Not active yet.</strong> This memory is not active yet because: ${escapeHtml(view.reviewReason)}</aside>`
+      : `<aside class="trust-warning">${trustBadge(view.trustState)} This memory is not independent strong truth.</aside>`;
   // Same actionability rule as the review queue: a memory with no live evidence span (e.g. its source
   // transcript was deleted) is degraded — Approve is omitted with a warning; Reject/Dismiss stays available.
   const hasLiveEvidence = memory.evidenceSpanIds.length > 0;
   const reviewSection = reviewable
-    ? section("Review decision", `<p>Approve to promote this memory to active, citable evidence, or Reject to remove it from Ask AI and search. Both are append-only and never edit raw transcript text.</p>${memoryReviewControls(memory.id, { canApprove: hasLiveEvidence, degradedReason: hasLiveEvidence ? undefined : DEGRADED_MEMORY_REASON })}`)
+    ? section("Review decision",
+        `<p><strong>What happens if you approve:</strong> this memory becomes active, citable evidence for Ask AI and search — its source support spans become citable.</p>
+         <p><strong>What happens if you reject:</strong> this extracted memory is removed from Ask AI and search. It does not delete or edit the raw transcript.</p>
+         <p class="review-source__meta">Both are append-only decisions and never change raw transcript text.</p>
+         ${memoryReviewControls(memory.id, { canApprove: hasLiveEvidence, degradedReason: hasLiveEvidence ? undefined : DEGRADED_MEMORY_REASON })}`)
+    : "";
+  // Extraction support spans: shown when this reviewable memory has span-level support but NO citable
+  // evidence pointers yet (Policy A). Clearly labeled as not-yet-citable; displaying them never promotes.
+  const supportSection = reviewable && view.supportSpans.length && view.evidence.length === 0
+    ? section("Extraction support spans", `<aside class="immutable-notice">These source spans were used by extraction, but they are not citable evidence until this memory is approved.</aside>${view.supportSpans.map(supportSpanCard).join("")}`)
     : "";
   return `${warning}<article class="memory-object">
     <p>${trustBadge(view.trustState)} ${escapeHtml(memory.type)} · confidence ${score(memory.confidence)} (${escapeHtml(memory.confidenceLabel)})</p>
     <h2>${escapeHtml(memory.title || memory.type)}</h2><p>${escapeHtml(memory.body)}</p>
     <dl><dt>Canonical status</dt><dd>${escapeHtml(memory.status)}</dd><dt>Evidence spans</dt><dd>${memory.evidenceSpanIds.length}</dd><dt>User corrected</dt><dd>${memory.userCorrected ? "yes" : "no"}</dd><dt>Duplicate of</dt><dd>${escapeHtml(memory.duplicateOfId ?? "none")}</dd></dl>
-  </article>${section("Evidence", view.evidence.map(evidenceCard).join("") || emptyState("No linked evidence pointers", "This memory cannot be treated as strong."))}
+  </article>${section("Evidence", view.evidence.map(evidenceCard).join("") || emptyState("No linked evidence pointers", reviewable ? "Not citable evidence yet — approve this memory to promote its support spans to citable evidence. See the extraction support spans below." : "This memory cannot be treated as strong."))}
+  ${supportSection}
+  ${conflictReviewSection(view)}
   ${view.conflicts.length ? section("Conflicts", view.conflicts.map((item) => `<article>${trustBadge("conflicting")} <strong>${escapeHtml(item.summary)}</strong><p>${escapeHtml(item.explanation)}</p></article>`).join("")) : ""}
   ${reviewSection}
   ${section("Submit a correction", correctionForm("memory_object", memory.id))}`;
@@ -105,13 +162,14 @@ function memoryView(view: MemoryView): string {
 // a clear warning is shown — but it stays dismissible via Reject so it is never a dead/actionless item.
 const memoryReviewControls = (memoryId: string, options: { canApprove?: boolean; degradedReason?: string } = {}): string => {
   // Presentation only: the degraded warning is the same reason text, now in a warning callout that also
-  // spells out WHY Approve is unavailable. The canApprove gate itself is unchanged.
+  // spells out WHY Approve is unavailable. The canApprove gate itself is unchanged. Button VALUES
+  // (approve/reject) are unchanged — only the human labels are clearer.
   const warning = options.degradedReason
-    ? `<aside class="trust-warning tmv-callout tmv-callout--warning">${trustBadge("no_evidence", "Evidence removed")} ${escapeHtml(options.degradedReason)} <em>Approve is unavailable because there is no live evidence to promote — you can still Reject / Dismiss.</em></aside>`
+    ? `<aside class="trust-warning tmv-callout tmv-callout--warning">${trustBadge("no_evidence", "Evidence removed")} ${escapeHtml(options.degradedReason)} <em>Approve is unavailable because there is no live evidence to promote — you can still Reject / do not use.</em></aside>`
     : "";
-  const approve = options.canApprove === false ? "" : `<button type="submit" name="decision" value="approve" class="tmv-btn tmv-btn-primary">Approve</button>`;
+  const approve = options.canApprove === false ? "" : `<button type="submit" name="decision" value="approve" class="tmv-btn tmv-btn-primary">Approve as active memory</button>`;
   return `${warning}<form data-action="review" class="review-actions"><input type="hidden" name="memoryId" value="${escapeHtml(memoryId)}">
-      ${approve}<button type="submit" name="decision" value="reject" class="tmv-btn tmv-btn-secondary">${options.canApprove === false ? "Reject / Dismiss" : "Reject"}</button></form><div data-form-result></div>`;
+      ${approve}<button type="submit" name="decision" value="reject" class="tmv-btn tmv-btn-secondary">Reject / do not use</button></form><div data-form-result></div>`;
 };
 
 const reviewActions = (item: ReviewItemView): string => {
@@ -126,10 +184,52 @@ const reviewActions = (item: ReviewItemView): string => {
   return "";
 };
 
+// Friendly, human badge label per review item kind (never the raw enum on the card face).
+const reviewBadgeLabel = (item: ReviewItemView): string =>
+  item.type === "conflict" ? "Conflict"
+    : item.type === "broken_pointer" ? "Broken evidence"
+      : item.type === "weak_evidence" ? "Weak evidence"
+        : item.type === "user_correction" ? "Correction received"
+          : "Needs review";
+
+// Raw extraction support span shown on the card: the immutable transcript quote used by extraction,
+// explicitly labeled NOT citable until approved, with an open-exact-span clickback. Never a pointer.
+const reviewSupportSpanBlock = (span: ReviewSupportSpanView): string =>
+  `<div class="review-source">
+    <p class="review-label">Source span used for extraction <span class="review-pill review-pill--muted">Not citable until approved</span></p>
+    <blockquote>${escapeHtml(span.quote)}</blockquote>
+    <p class="review-source__meta">${escapeHtml(span.transcriptTitle)} · span ${escapeHtml(span.spanId)}</p>
+    <a class="transcript-clickback" href="${escapeHtml(routeHref.transcript(span.transcriptId, span.spanId))}">Open exact transcript span</a>
+  </div>`;
+
+// Compact both-sides comparison on a conflict card. `conflictWith === undefined` => not a conflict item.
+function reviewConflictCompact(item: ReviewItemView): string {
+  if (item.conflictWith === undefined) return "";
+  const other = item.conflictWith;
+  const pending = `<div class="review-conflict__side"><p class="review-conflict__role">This memory</p><p>${escapeHtml(item.memoryBody ?? item.title)}</p></div>`;
+  const active = other
+    ? `<div class="review-conflict__side"><p class="review-conflict__role">Conflicts with active memory</p><p><strong>${escapeHtml(other.title)}</strong></p><p>${escapeHtml(other.body)}</p>${other.quote ? `<blockquote>${escapeHtml(other.quote)}</blockquote>` : ""}${other.memoryId ? `<a href="${escapeHtml(routeHref.memory(other.memoryId))}">Open the active memory</a>` : ""}</div>`
+    : `<div class="review-conflict__side"><p class="review-conflict__role">Conflicts with active memory</p><p class="trust-warning">Could not be resolved — inspect the conflicts list. Approving preserves both sides so live conflict detection can surface it.</p></div>`;
+  return `<div class="review-conflict"><p class="review-label">${trustBadge("conflicting")} Conflict — both sides preserved</p><div class="review-conflict__grid">${pending}${active}</div></div>`;
+}
+
 function reviewCard(item: ReviewItemView): string {
-  return `<article class="review-card tmv-card">${trustBadge(item.trustState)}<h3 class="tmv-section-header"><a href="${escapeHtml(item.href)}">${escapeHtml(item.title)}</a></h3>
-    <p>${escapeHtml(item.detail)}</p><small>${escapeHtml(item.severity)} severity · ${escapeHtml(item.status)} · ${escapeHtml(item.type)} · ${escapeHtml(item.targetType)}:${escapeHtml(item.targetId)}</small>
-    <a href="${escapeHtml(routeHref.review(item.id))}">Review and correct</a>${reviewActions(item)}</article>`;
+  const isMemory = item.type === "memory_needs_review";
+  // A memory item links to its full memory detail page; other items to the review-detail route.
+  const detailHref = isMemory ? routeHref.memory(item.targetId) : routeHref.review(item.id);
+  const typeChip = item.memoryType ? `<span class="review-pill">${escapeHtml(item.memoryType.replaceAll("_", " "))}</span>` : "";
+  const bodyBlock = item.memoryBody ? `<div class="review-extracted"><p class="review-label">Extracted memory</p><p>${escapeHtml(item.memoryBody)}</p></div>` : "";
+  const sourceBlock = item.supportSpan ? reviewSupportSpanBlock(item.supportSpan) : "";
+  const conflictBlock = reviewConflictCompact(item);
+  const decisionHelp = (item.type === "memory_needs_review" || item.type === "conflict")
+    ? `<p class="review-decision-help"><strong>Approve</strong> if this should become active memory for Ask AI and search. <strong>Reject</strong> if this extraction is wrong, too vague, a duplicate, or should not be used.</p>`
+    : "";
+  // Debug/technical metadata is moved off the card face into a collapsed disclosure.
+  const advanced = `<details class="review-card__advanced"><summary>Details</summary><small>${escapeHtml(item.severity)} severity · ${escapeHtml(item.status)} · ${escapeHtml(item.type)} · ${escapeHtml(item.targetType)}:${escapeHtml(item.targetId)}</small> <a href="${escapeHtml(routeHref.review(item.id))}">Review and correct</a></details>`;
+  return `<article class="review-card tmv-card" data-review-type="${escapeHtml(item.type)}">
+    <header class="review-card__head">${trustBadge(item.trustState, reviewBadgeLabel(item))}${typeChip}<h3 class="review-card__title"><a href="${escapeHtml(detailHref)}">${escapeHtml(item.title)}</a></h3></header>
+    <div class="review-why"><p class="review-label">Why this needs review</p><p>${escapeHtml(item.detail)}</p></div>
+    ${bodyBlock}${sourceBlock}${conflictBlock}${decisionHelp}${reviewActions(item)}${advanced}</article>`;
 }
 
 function searchCard(item: SearchResultView): string {

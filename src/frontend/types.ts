@@ -69,11 +69,52 @@ export interface EvidenceView {
   brokenReason: string | null;
 }
 
+/**
+ * A raw transcript span that extraction used to support a memory. For a needs_review memory these exist
+ * (in memory_object_evidence) even though there are NO citable evidence pointers yet (Policy A). Read-only:
+ * displaying these NEVER creates evidence pointers and NEVER promotes the memory to citable/strong.
+ */
+export interface SupportSpanView {
+  spanId: string;
+  transcriptId: string;
+  transcriptTitle: string;
+  quote: string;
+  role: string;
+  evidenceScore: number;
+}
+
+/** The existing active memory a pending memory conflicts with (the "other side"), resolved read-only. */
+export interface ConflictingSideView {
+  memoryId: string;
+  title: string;
+  body: string;
+  type: string;
+  status: string;
+  confidence: number;
+  confidenceLabel: string;
+  supportSpans: SupportSpanView[];
+}
+
+/** Conflict context for a needs_review memory held by an opposition to an active memory. */
+export interface ConflictReviewView {
+  /** The resolved conflicting active memory, or null when it cannot be resolved from current data. */
+  active: ConflictingSideView | null;
+  conflictType?: string;
+  confidence?: number;
+  explanation?: string;
+}
+
 export interface MemoryView {
   memory: CanonicalMemoryObject;
   trustState: TrustState;
   evidence: EvidenceView[];
   conflicts: ConflictAssessment[];
+  /** Specific reason this memory is in Review (from persisted review_reason / degraded / legacy fallback). Undefined when not reviewable. */
+  reviewReason?: string;
+  /** Raw extraction support spans (NOT citable evidence). Present for reviewable memories that have span-level support. */
+  supportSpans: SupportSpanView[];
+  /** Present only when this memory is held by a conflict with an active memory; `active` may be null if unresolvable. */
+  conflictReview?: ConflictReviewView;
 }
 
 /** Status of the disposable generated-Markdown view layer that powers Obsidian's native (ribbon) graph. */
@@ -150,6 +191,32 @@ export interface ReviewItemView {
   canApprove?: boolean;
   canReject?: boolean;
   degradedReason?: string;
+  // --- Read-only decision-UI display fields (populated for memory / conflict review items). All optional
+  // and additive; they never affect trust logic and never create evidence. ---
+  /** The extracted memory body, shown in full on the card (not hidden behind the title). */
+  memoryBody?: string;
+  /** The memory object type (decision / action_item / …), for a friendly type chip. */
+  memoryType?: string;
+  /** Primary extraction support span — the raw transcript quote used by extraction. NOT citable until approved. */
+  supportSpan?: ReviewSupportSpanView;
+  /** For conflict-held items: the opposing side to compare against. `null` = a conflict exists but is unresolvable. */
+  conflictWith?: ReviewConflictSideView | null;
+}
+
+/** A raw transcript quote a review item is backed by (read-only display; never a citable evidence pointer). */
+export interface ReviewSupportSpanView {
+  spanId: string;
+  transcriptId: string;
+  transcriptTitle: string;
+  quote: string;
+}
+
+/** The opposing side of a conflict, for a compact side-by-side comparison on a review card. */
+export interface ReviewConflictSideView {
+  memoryId?: string;
+  title: string;
+  body: string;
+  quote?: string;
 }
 
 export interface CorrectionDraft {
@@ -215,6 +282,13 @@ export interface FrontendApi {
   getSetupSummary?(): Promise<SetupSummary | null>;
   /** Run AI extraction for a transcript that has no completed run yet (e.g. imported before LLM setup). */
   runExtraction(transcriptId: string): Promise<{ status: "extracted" | "skipped" | "setup_required" | "failed"; warning?: string }>;
+  /**
+   * Re-evaluate PENDING review memories against the current activation rules and upgrade legacy
+   * "unknown"-strength bridged evidence pointers. Promotes only items passing ALL trust gates (never
+   * conflicts/duplicates/tentative/unsupported; never overrides user decisions); items that stay pending
+   * get a specific persisted review reason. Newly promoted memories are bridged + conflict-checked.
+   */
+  recalibrateReviewItems(): Promise<{ pointersUpgraded: number; promoted: number; stillPending: number; warning?: string }>;
   /**
    * Hard-delete a whole transcript and its derived provenance (transactional, irreversible). Raw transcript
    * text is never edited — the wrong-import recovery flow is delete + re-import. Memories/conflicts/answers

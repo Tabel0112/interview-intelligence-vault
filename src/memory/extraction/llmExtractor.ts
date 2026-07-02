@@ -39,7 +39,8 @@ const normalizeForMatch = (value: string): string => value.toLowerCase().replace
 // Pipeline-assessed confidence for a candidate that survived grounding (anchored to an exact substring
 // of a cited in-window span). This is NOT the LLM's self-report — it is the trust the pipeline assigns
 // to a grounded candidate. The calibrated status policy still gates active vs review from there.
-const GROUNDED_CONFIDENCE = 0.9;
+// Exported so review recalibration can re-score stored grounded-LLM memories with the same input.
+export const GROUNDED_CONFIDENCE = 0.9;
 
 interface RawObject {
   type?: unknown; title?: unknown; body?: unknown; evidenceSpanIds?: unknown; supportingQuote?: unknown;

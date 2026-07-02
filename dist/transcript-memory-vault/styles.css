@@ -429,6 +429,87 @@
   100% { opacity: 1; }
 }
 
+/* --- Review decision cards: a clean decision inbox, not a debug view. --------------------------- */
+.transcript-memory-vault .review-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-2);
+}
+.transcript-memory-vault .review-card__head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--size-4-2);
+}
+.transcript-memory-vault .review-card__title { margin: 0; font-size: var(--font-ui-large); }
+.transcript-memory-vault .review-card__title a { text-decoration: none; }
+.transcript-memory-vault .review-label {
+  margin: 0 0 var(--size-2-1) 0;
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.transcript-memory-vault .review-why > p:last-child,
+.transcript-memory-vault .review-extracted > p:last-child { margin: 0; }
+.transcript-memory-vault .review-extracted { color: var(--text-normal); }
+.transcript-memory-vault .review-source {
+  border-inline-start: 3px solid var(--background-modifier-border);
+  padding-inline-start: var(--size-4-3);
+}
+.transcript-memory-vault .review-source blockquote {
+  margin: var(--size-2-1) 0;
+  color: var(--text-normal);
+  font-style: normal;
+}
+.transcript-memory-vault .review-source__meta { margin: 0; color: var(--text-muted); font-size: var(--font-ui-smaller); }
+.transcript-memory-vault .review-pill {
+  display: inline-block;
+  padding: 0 var(--size-2-2);
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+.transcript-memory-vault .review-pill--muted { color: var(--text-faint); }
+.transcript-memory-vault .review-conflict {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  padding: var(--size-4-2);
+  background: var(--background-secondary);
+}
+.transcript-memory-vault .review-conflict__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--size-4-2);
+}
+.transcript-memory-vault .review-conflict__side {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  padding: var(--size-4-2);
+  background: var(--background-primary);
+}
+.transcript-memory-vault .review-conflict__role {
+  margin: 0 0 var(--size-2-1) 0;
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-semibold);
+  color: var(--text-muted);
+}
+.transcript-memory-vault .review-decision-help {
+  margin: 0;
+  padding: var(--size-4-2);
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+.transcript-memory-vault .review-actions { display: flex; gap: var(--size-4-2); flex-wrap: wrap; }
+.transcript-memory-vault .review-card__advanced { color: var(--text-faint); font-size: var(--font-ui-smaller); }
+.transcript-memory-vault .review-card__advanced summary { cursor: pointer; }
+.transcript-memory-vault .review-card__advanced small { display: block; margin: var(--size-2-1) 0; }
+
 /* Respect reduced-motion: disable all animation/transition inside the plugin surface. */
 @media (prefers-reduced-motion: reduce) {
   .transcript-memory-vault *,

@@ -1914,6 +1914,27 @@ var tensionPairs = [
 ];
 var round = (value) => Math.round(Math.max(0, Math.min(1, value)) * 1e3) / 1e3;
 var tokens = (text) => new Set(text.toLowerCase().match(/[a-z0-9]+/g)?.filter((token) => token.length > 2 && !stopwords.has(token)) ?? []);
+var NEG_WORDS = /* @__PURE__ */ new Set(["no", "not", "never", "avoid", "reject", "without", "cannot"]);
+var NEGATION_WINDOW = 6;
+var lightStem = (token) => token.length > 3 && token.endsWith("s") ? token.slice(0, -1) : token;
+function negatedPredicateAligns(negatedText, otherText) {
+  const other = tokens(otherText);
+  const otherStems = new Set([...other].map(lightStem));
+  const inOther = (token) => other.has(token) || otherStems.has(lightStem(token));
+  const words = negatedText.toLowerCase().replace(/n't\b/g, " not").match(/[a-z0-9]+/g) ?? [];
+  for (let index = 0; index < words.length; index++) {
+    if (!NEG_WORDS.has(words[index])) continue;
+    const denied = [];
+    for (let next = index + 1; next < words.length && denied.length < NEGATION_WINDOW; next++) {
+      const word = words[next];
+      if (word.length > 2 && !stopwords.has(word) && !NEG_WORDS.has(word)) denied.push(word);
+    }
+    if (!denied.length) continue;
+    const matches = denied.filter(inOther).length;
+    if (inOther(denied[0]) || matches >= Math.ceil(denied.length / 2)) return true;
+  }
+  return false;
+}
 var overlap = (a, b) => {
   const left = tokens(a), right = tokens(b);
   const shared = [...left].filter((token) => right.has(token)).length;
@@ -1947,7 +1968,9 @@ function scoreConflict(candidate, kind, components, options = {}) {
 function classifyConflictCandidate(candidate, options = {}) {
   const topicOverlap = candidate.sharedEntities?.length || candidate.sharedTopics?.length ? 1 : overlap(candidate.leftText, candidate.rightText);
   const leftNegative = negative.test(candidate.leftText), rightNegative = negative.test(candidate.rightText);
-  const polarityOpposition = leftNegative !== rightNegative && assertion.test(candidate.leftText) && assertion.test(candidate.rightText) ? 1 : 0;
+  const negatedSide = leftNegative && !rightNegative ? candidate.leftText : rightNegative && !leftNegative ? candidate.rightText : null;
+  const otherSide = leftNegative && !rightNegative ? candidate.rightText : candidate.leftText;
+  const polarityOpposition = negatedSide != null && assertion.test(candidate.leftText) && assertion.test(candidate.rightText) && negatedPredicateAligns(negatedSide, otherSide) ? 1 : 0;
   const conditionality = conditional.test(candidate.leftText) || conditional.test(candidate.rightText) ? 1 : 0;
   const temporalInfo = temporal(candidate);
   const validated = new Set(options.validatedEvidenceIds ?? [...candidate.leftEvidenceIds, ...candidate.rightEvidenceIds]);
@@ -3355,11 +3378,11 @@ function bodySupport(candidate) {
   const support = assessBodyQuoteSupport(candidate.body, quote2);
   return support.status === "strong" ? { strong: true } : { strong: false, reason: `Claim wording is not strongly supported by its quoted transcript span (${support.reasons.join("; ") || "insufficient overlap"}).` };
 }
-function conflictsWithActiveMemory(db, candidate) {
+function findConflictingActiveMemory(db, candidate, excludeMemoryId) {
   const candidateText = `${candidate.title}. ${candidate.body}`;
   const candidateEvidenceIds = candidate.evidenceSpans.map((span) => span.spanId);
   const actives = db.prepare(`SELECT id, title, generated_text FROM memory_objects
-    WHERE duplicate_of_id IS NULL AND (extraction_status='active' OR (extraction_status IS NULL AND status='active'))`).all();
+    WHERE duplicate_of_id IS NULL AND (extraction_status='active' OR (extraction_status IS NULL AND status='active'))`).all().filter((active) => active.id !== excludeMemoryId);
   for (const active of actives) {
     const classification = classifyConflictCandidate({
       leftTargetId: "candidate",
@@ -3371,9 +3394,14 @@ function conflictsWithActiveMemory(db, candidate) {
       rightText: `${active.title ?? ""}. ${active.generated_text}`,
       rightEvidenceIds: [active.id]
     });
-    if (classification.kind !== "weak_or_ambiguous" && classification.confidence >= 0.6) return true;
+    if (classification.kind !== "weak_or_ambiguous" && classification.confidence >= 0.6) {
+      return { activeMemoryId: active.id, kind: classification.kind, confidence: classification.confidence, explanation: classification.explanation, summary: classification.summary };
+    }
   }
-  return false;
+  return null;
+}
+function conflictsWithActiveMemory(db, candidate, excludeMemoryId) {
+  return findConflictingActiveMemory(db, candidate, excludeMemoryId) != null;
 }
 async function extractMemoryObjectsForTranscript(db, options) {
   const promptVersion = options.extractor.promptVersion ?? MEMORY_EXTRACTION_PROMPT_VERSION;
@@ -3461,6 +3489,97 @@ async function extractMemoryObjectsForTranscript(db, options) {
     failExtractionRun(db, runId, error instanceof Error ? error.message : String(error));
     throw error;
   }
+}
+
+// src/memory/extraction/recalibrate.ts
+var strengthFromScore = (score2) => score2 >= 0.78 ? "strong" : score2 >= 0.55 ? "mixed" : "weak";
+function setReviewReason(db, memoryId, reason) {
+  const row = db.prepare("SELECT metadata_json FROM memory_objects WHERE id=?").get(memoryId);
+  let metadata = {};
+  try {
+    metadata = row?.metadata_json ? JSON.parse(row.metadata_json) : {};
+  } catch {
+    metadata = {};
+  }
+  metadata.review_reason = reason;
+  db.prepare("UPDATE memory_objects SET metadata_json=? WHERE id=? AND user_corrected=0").run(JSON.stringify(metadata), memoryId);
+}
+function recalibratePendingMemories(db, options = {}) {
+  const timestamp = options.now ? options.now().toISOString() : now();
+  const result = { pointersUpgraded: 0, promoted: [], transcriptsToBridge: [], stillPending: [] };
+  const unknownPointers = db.prepare(`SELECT p.evidence_pointer_id id, e.evidence_score score
+    FROM evidence_pointers p
+    JOIN memory_object_evidence e ON e.memory_id = p.target_id AND e.span_id = p.span_id
+    WHERE p.target_type='memory_object' AND p.evidence_strength='unknown'`).all();
+  for (const pointer of unknownPointers) {
+    db.prepare("UPDATE evidence_pointers SET evidence_strength=? WHERE evidence_pointer_id=?").run(strengthFromScore(pointer.score), pointer.id);
+    result.pointersUpgraded++;
+  }
+  const pending = db.prepare(`SELECT id, extraction_type, type, title, generated_text, extraction_status, metadata_json, extraction_run_id
+    FROM memory_objects
+    WHERE extraction_status IN ('needs_review','weak') AND user_corrected=0 AND duplicate_of_id IS NULL`).all();
+  const touchedTranscripts = /* @__PURE__ */ new Set();
+  for (const row of pending) {
+    const keep = (reason) => {
+      setReviewReason(db, row.id, reason);
+      result.stillPending.push({ memoryId: row.id, reason });
+    };
+    const spans = db.prepare(`SELECT s.transcript_id transcriptId, e.turn_id turnId, s.id spanId, s.speaker_label speaker,
+        s.start_char startOffset, s.end_char endOffset, s.text, s.start_time_ms startTimeMs, s.end_time_ms endTimeMs
+      FROM memory_object_evidence e JOIN transcript_spans s ON s.id = e.span_id
+      WHERE e.memory_id=? ORDER BY s.ordinal, s.id`).all(row.id);
+    if (!spans.length) {
+      keep("No live transcript evidence remains (the source transcript may have been deleted) \u2014 this item cannot be activated; dismiss it if no longer needed.");
+      continue;
+    }
+    const runKind = row.extraction_run_id ? db.prepare("SELECT extractor_kind FROM extraction_runs WHERE id=?").get(row.extraction_run_id)?.extractor_kind : void 0;
+    if (runKind !== "llm") {
+      keep('Extracted by a non-grounded (dev/test) extractor \u2014 run "Run AI extraction for transcripts missing it" with a configured LLM, or approve manually after checking the cited spans.');
+      continue;
+    }
+    const type = row.extraction_type ?? row.type;
+    const title = row.title ?? "";
+    const body = row.generated_text;
+    const scored = scoreCandidateConfidence({ type, title, body, evidenceSpanIds: spans.map((span) => span.spanId), confidence: GROUNDED_CONFIDENCE }, spans);
+    if (scored.status !== "active") {
+      keep(scored.statusReason ?? "Calibrated extraction confidence is below the auto-activation bar.");
+      continue;
+    }
+    const quote2 = spans.map((span) => span.text).join(" ");
+    const support = assessBodyQuoteSupport(body, quote2);
+    if (support.status !== "strong") {
+      keep(`Claim wording is not strongly supported by its quoted transcript span (${support.reasons.join("; ") || "insufficient overlap"}).`);
+      continue;
+    }
+    const normalizedText = normalizeMemoryText(title, body);
+    const candidate = {
+      type,
+      title,
+      body,
+      evidenceSpanIds: spans.map((span) => span.spanId),
+      confidence: GROUNDED_CONFIDENCE,
+      transcriptId: spans[0].transcriptId,
+      normalizedText,
+      fingerprint: memoryFingerprint(type, normalizedText),
+      evidenceSpans: spans,
+      ...scored
+    };
+    const duplicate = findDuplicateMemoryObject(db, candidate);
+    if (duplicate && duplicate.object.id !== row.id) {
+      keep("Possible duplicate of an existing memory \u2014 review whether to merge or keep separately.");
+      continue;
+    }
+    if (conflictsWithActiveMemory(db, candidate, row.id)) {
+      keep("Conflicts with an existing active memory \u2014 both sides are preserved for review.");
+      continue;
+    }
+    db.prepare("UPDATE memory_objects SET extraction_status='active', status='active', updated_at=? WHERE id=? AND user_corrected=0").run(timestamp, row.id);
+    setReviewReason(db, row.id, null);
+    result.promoted.push(row.id);
+    for (const span of spans) touchedTranscripts.add(span.transcriptId);
+  }
+  result.transcriptsToBridge = [...touchedTranscripts].sort();
+  return result;
 }
 
 // src/retrieval/embeddingStore.ts
@@ -3632,6 +3751,7 @@ ${doc.search_text}`.trim(), hash = contentHash(text);
 
 // src/retrieval/transcriptIndex.ts
 var mapEvidenceRole = (role) => role === "contradicts" ? "opposition" : role === "qualifies" ? "conditional" : role === "context" ? "neutral" : "support";
+var strengthFromEvidenceScore = (score2) => score2 >= 0.78 ? "strong" : score2 >= 0.55 ? "mixed" : "weak";
 async function indexTranscriptForRetrieval(db, transcriptId) {
   const repo = createMemoryObjectsRepo(db);
   const memoryIds = db.prepare("SELECT DISTINCT memory_id FROM memory_object_evidence WHERE transcript_id=?").all(transcriptId);
@@ -3641,7 +3761,14 @@ async function indexTranscriptForRetrieval(db, transcriptId) {
     if (!canonical || !isUsableAsEvidence(canonical)) continue;
     const rows = db.prepare("SELECT span_id, role, evidence_score, transcript_id FROM memory_object_evidence WHERE memory_id=? AND transcript_id=?").all(memory_id, transcriptId);
     for (const row of rows) {
-      linkMemoryObjectToSpan(db, { memoryObjectId: memory_id, transcriptId: row.transcript_id, spanId: row.span_id, evidenceRole: mapEvidenceRole(row.role), confidence: row.evidence_score });
+      linkMemoryObjectToSpan(db, {
+        memoryObjectId: memory_id,
+        transcriptId: row.transcript_id,
+        spanId: row.span_id,
+        evidenceRole: mapEvidenceRole(row.role),
+        confidence: row.evidence_score,
+        evidenceStrength: strengthFromEvidenceScore(row.evidence_score)
+      });
       evidencePointersBridged++;
     }
   }
@@ -5338,6 +5465,28 @@ function memoryHasLiveEvidenceForReview(db, memoryId) {
     (SELECT COUNT(*) FROM memory_object_evidence WHERE memory_id=?) +
     (SELECT COUNT(*) FROM evidence_pointers WHERE target_type IN ('memory_object','claim','summary') AND target_id=?) c`).get(memoryId, memoryId).c > 0;
 }
+function loadSupportSpans(db, memoryId) {
+  return db.prepare(`SELECT e.span_id spanId, e.role, e.evidence_score score, s.transcript_id transcriptId, s.text quote,
+      COALESCE(t.title, s.transcript_id) title
+    FROM memory_object_evidence e JOIN transcript_spans s ON s.id=e.span_id JOIN transcripts t ON t.id=s.transcript_id
+    WHERE e.memory_id=? ORDER BY s.ordinal, s.id`).all(memoryId).map((row) => ({
+    spanId: String(row.spanId),
+    transcriptId: String(row.transcriptId),
+    transcriptTitle: String(row.title),
+    quote: String(row.quote),
+    role: String(row.role ?? "source"),
+    evidenceScore: Number(row.score ?? 0)
+  }));
+}
+function persistedReviewReason(db, memoryId) {
+  const row = db.prepare("SELECT metadata_json FROM memory_objects WHERE id=?").get(memoryId);
+  try {
+    const parsed = row?.metadata_json ? JSON.parse(row.metadata_json) : void 0;
+    if (typeof parsed?.review_reason === "string" && parsed.review_reason.trim()) return parsed.review_reason.trim();
+  } catch {
+  }
+  return void 0;
+}
 var trust = (value) => {
   const state = String(value ?? "no_evidence");
   return ["strong", "mixed", "weak", "conflicting", "no_evidence", "broken", "needs_review", "rejected", "superseded"].includes(state) ? state : "weak";
@@ -5473,23 +5622,26 @@ function reviewItems(db) {
       });
     }
   }
-  for (const memory of createMemoryObjectsRepo(db).listCanonicalMemoryObjects()) {
+  const memoryRepo = createMemoryObjectsRepo(db);
+  for (const memory of memoryRepo.listCanonicalMemoryObjects()) {
     if (memory.status === "needs_review" || memory.status === "weak") {
-      const row = db.prepare("SELECT created_at, metadata_json FROM memory_objects WHERE id=?").get(memory.id);
-      let reviewReason;
-      try {
-        const parsed = row.metadata_json ? JSON.parse(row.metadata_json) : void 0;
-        if (typeof parsed?.review_reason === "string" && parsed.review_reason.trim()) reviewReason = parsed.review_reason.trim();
-      } catch {
-      }
+      const row = db.prepare("SELECT created_at FROM memory_objects WHERE id=?").get(memory.id);
+      const reviewReason = persistedReviewReason(db, memory.id);
       const transcriptIds = db.prepare(`SELECT DISTINCT s.transcript_id FROM transcript_spans s
         WHERE s.id IN (SELECT span_id FROM memory_object_evidence WHERE memory_id=?) ORDER BY s.transcript_id`).all(memory.id).map((item) => item.transcript_id);
       const hasLiveEvidence = memoryHasLiveEvidenceForReview(db, memory.id);
+      const supportSpan = loadSupportSpans(db, memory.id)[0];
+      let conflictWith;
+      if (/conflicts with an existing active memory/i.test(reviewReason ?? "")) {
+        const match = findConflictingActiveMemory(db, { title: memory.title ?? "", body: memory.body, evidenceSpans: memory.evidenceSpanIds.map((spanId) => ({ spanId })) }, memory.id);
+        const active = match ? memoryRepo.getCanonicalMemoryObject(match.activeMemoryId) : null;
+        conflictWith = active ? { memoryId: active.id, title: active.title || active.type, body: active.body, quote: loadSupportSpans(db, active.id)[0]?.quote } : null;
+      }
       items.push({
         id: `memory:${memory.id}`,
         type: "memory_needs_review",
         title: memory.title || memory.body,
-        detail: reviewReason ?? `${memory.status}; ${memory.evidenceSpanIds.length} evidence span(s)`,
+        detail: reviewReason ?? `${memory.status}; ${memory.evidenceSpanIds.length} evidence span(s). Stored before review reasons were tracked \u2014 run "Recalibrate review items" to re-evaluate it against the current rules.`,
         targetType: "memory_object",
         targetId: memory.id,
         trustState: memory.status,
@@ -5502,7 +5654,11 @@ function reviewItems(db) {
         hasLiveEvidence,
         canApprove: hasLiveEvidence,
         canReject: true,
-        degradedReason: hasLiveEvidence ? void 0 : DEGRADED_MEMORY_REASON
+        degradedReason: hasLiveEvidence ? void 0 : DEGRADED_MEMORY_REASON,
+        memoryBody: memory.body,
+        memoryType: memory.type,
+        supportSpan: supportSpan ? { spanId: supportSpan.spanId, transcriptId: supportSpan.transcriptId, transcriptTitle: supportSpan.transcriptTitle, quote: supportSpan.quote } : void 0,
+        conflictWith
       });
     }
   }
@@ -5510,6 +5666,9 @@ function reviewItems(db) {
   const conflicts = db.prepare("SELECT id FROM conflict_assessments ORDER BY created_at,id").all().map(({ id }) => conflictRepo.get(id)).filter((item) => item != null);
   for (const conflict of conflicts) {
     if (conflict.status === "resolved" || conflict.status === "dismissed" || conflict.status === "superseded") continue;
+    const leftMemory = conflict.leftTargetType === "memory_object" ? memoryRepo.getCanonicalMemoryObject(conflict.leftTargetId) : null;
+    const rightMemory = conflict.rightTargetType === "memory_object" ? memoryRepo.getCanonicalMemoryObject(conflict.rightTargetId) : null;
+    const linkQuote = (side) => preview(conflict.evidenceLinks.find((link) => link.side === side)?.quotePreview ?? "") || void 0;
     items.push({
       id: `conflict:${conflict.id}`,
       type: "conflict",
@@ -5523,7 +5682,11 @@ function reviewItems(db) {
       severity: "high",
       status: "open",
       relatedTranscriptIds: [...new Set(conflict.evidenceLinks.flatMap((link) => link.transcriptId ? [link.transcriptId] : []))],
-      relatedEvidenceIds: conflict.evidenceLinks.map((link) => link.evidencePointerId)
+      relatedEvidenceIds: conflict.evidenceLinks.map((link) => link.evidencePointerId),
+      memoryBody: leftMemory?.body,
+      memoryType: leftMemory?.type,
+      supportSpan: void 0,
+      conflictWith: rightMemory ? { memoryId: rightMemory.id, title: rightMemory.title || rightMemory.type, body: rightMemory.body, quote: linkQuote("right") } : void 0
     });
   }
   for (const row of db.prepare("SELECT id,target_type,target_id,reason,created_at FROM user_corrections WHERE correction_type NOT IN ('confirm','reject') ORDER BY created_at,id").all()) {
@@ -5716,15 +5879,47 @@ function createSqliteFrontendApi(db, options = {}) {
       return evidenceView(db, id);
     },
     async getMemory(id) {
-      const memory = createMemoryObjectsRepo(db).getCanonicalMemoryObject(id);
+      const repo = createMemoryObjectsRepo(db);
+      const memory = repo.getCanonicalMemoryObject(id);
       if (!memory) return null;
       const pointers = db.prepare(`SELECT evidence_pointer_id FROM evidence_pointers
         WHERE target_type IN ('memory_object','claim','summary') AND target_id=? ORDER BY evidence_pointer_id`).all(id);
+      const conflicts = createConflictRepository(db).listConflictsForTarget("memory_object", id);
+      const reviewable = memory.status === "needs_review" || memory.status === "weak";
+      const supportSpans = reviewable ? loadSupportSpans(db, id) : [];
+      let reviewReason;
+      if (reviewable) {
+        reviewReason = persistedReviewReason(db, id) ?? (!memoryHasLiveEvidenceForReview(db, id) ? DEGRADED_MEMORY_REASON : void 0) ?? 'Stored before review reasons were tracked \u2014 run "Recalibrate review items" to re-evaluate it against the current rules.';
+      }
+      let conflictReview;
+      const heldByConflict = reviewable && (conflicts.length > 0 || /conflicts with an existing active memory/i.test(reviewReason ?? ""));
+      if (heldByConflict) {
+        const match = findConflictingActiveMemory(db, { title: memory.title ?? "", body: memory.body, evidenceSpans: memory.evidenceSpanIds.map((spanId) => ({ spanId })) }, id);
+        const activeMemory = match ? repo.getCanonicalMemoryObject(match.activeMemoryId) : null;
+        conflictReview = {
+          active: activeMemory ? {
+            memoryId: activeMemory.id,
+            title: activeMemory.title || activeMemory.type,
+            body: activeMemory.body,
+            type: activeMemory.type,
+            status: activeMemory.status,
+            confidence: activeMemory.confidence,
+            confidenceLabel: activeMemory.confidenceLabel,
+            supportSpans: loadSupportSpans(db, activeMemory.id)
+          } : null,
+          conflictType: match?.kind ?? conflicts[0]?.kind,
+          confidence: match?.confidence ?? conflicts[0]?.confidence,
+          explanation: match?.explanation ?? conflicts[0]?.explanation
+        };
+      }
       return {
         memory,
         trustState: isStrongMemoryObject(memory) ? "strong" : trust(memory.status),
         evidence: pointers.map((pointer) => evidenceView(db, pointer.evidence_pointer_id)),
-        conflicts: createConflictRepository(db).listConflictsForTarget("memory_object", id)
+        conflicts,
+        reviewReason,
+        supportSpans,
+        conflictReview
       };
     },
     async getMemoryObject(id) {
@@ -5849,6 +6044,22 @@ function createSqliteFrontendApi(db, options = {}) {
       }
       return { status: "extracted" };
     },
+    async recalibrateReviewItems() {
+      const result = recalibratePendingMemories(db, { now: options.now });
+      let warning;
+      for (const transcriptId of result.transcriptsToBridge) {
+        try {
+          await indexTranscriptForRetrieval(db, transcriptId);
+        } catch {
+          warning = 'Some promoted memories could not be bridged for retrieval \u2014 run "Run AI extraction" or reopen the transcript.';
+        }
+        try {
+          detectAndPersistConflictsForTranscript(db, transcriptId, { now: options.now });
+        } catch {
+        }
+      }
+      return { pointersUpgraded: result.pointersUpgraded, promoted: result.promoted.length, stillPending: result.stillPending.length, warning };
+    },
     async deleteTranscript(id) {
       return { status: "deleted", summary: createTranscriptsRepo(db).deleteTranscript(id) };
     },
@@ -5919,26 +6130,64 @@ function transcriptView(transcript, selectedSpanId) {
     <p>${escapeHtml(transcript.status)} \xB7 ${transcript.spanCount} spans \xB7 showing ${visibleSpans.length} \xB7 imported ${escapeHtml(transcript.importedAt)}</p>
     <div class="transcript-viewer" data-selected-span="${escapeHtml(selectedSpanId ?? "")}">${spans}</div>`;
 }
+var supportSpanCard = (span) => `<article class="evidence-card support-span" data-support-span-id="${escapeHtml(span.spanId)}">
+    <header>${trustBadge("needs_review", "Support only")} <strong>${escapeHtml(span.role)}</strong> <span>${score(span.evidenceScore)}</span></header>
+    <blockquote>${escapeHtml(span.quote)}</blockquote>
+    <p>${escapeHtml(span.transcriptTitle)} \xB7 span ${escapeHtml(span.spanId)}</p>
+    <a class="transcript-clickback" href="${escapeHtml(routeHref.transcript(span.transcriptId, span.spanId))}">Open exact transcript span</a>
+  </article>`;
+function conflictingSideCard(side) {
+  const spans = side.supportSpans.length ? side.supportSpans.map(supportSpanCard).join("") : emptyState("No source spans found", "This active memory has no resolvable source spans.");
+  return `<article class="conflict-side conflict-side--active tmv-card">
+    <p>${trustBadge("strong")} active memory \xB7 ${escapeHtml(side.type)} \xB7 confidence ${score(side.confidence)} (${escapeHtml(side.confidenceLabel)}) \xB7 status ${escapeHtml(side.status)}</p>
+    <h4>${escapeHtml(side.title)}</h4><p>${escapeHtml(side.body)}</p>
+    ${spans}
+    ${links([{ href: routeHref.memory(side.memoryId), label: "Open the active memory" }])}
+  </article>`;
+}
+function conflictReviewSection(view) {
+  const conflict = view.conflictReview;
+  if (!conflict) return "";
+  const memory = view.memory;
+  const pendingSpans = view.supportSpans.length ? view.supportSpans.map(supportSpanCard).join("") : "";
+  const pendingSide = `<article class="conflict-side conflict-side--pending tmv-card">
+    <p>${trustBadge(view.trustState)} pending memory \xB7 ${escapeHtml(memory.type)} \xB7 confidence ${score(memory.confidence)} (${escapeHtml(memory.confidenceLabel)}) \xB7 status ${escapeHtml(memory.status)}</p>
+    <h4>${escapeHtml(memory.title || memory.type)}</h4><p>${escapeHtml(memory.body)}</p>
+    ${pendingSpans}
+  </article>`;
+  const meta = conflict.conflictType ? `<p>${trustBadge("conflicting")} Conflict type: <strong>${escapeHtml(conflict.conflictType.replaceAll("_", " "))}</strong>${conflict.confidence != null ? ` \xB7 confidence ${score(conflict.confidence)}` : ""}</p>${conflict.explanation ? `<p>${escapeHtml(conflict.explanation)}</p>` : ""}` : "";
+  const otherSide = conflict.active ? conflictingSideCard(conflict.active) : `<aside class="trust-warning tmv-callout tmv-callout--warning">${trustBadge("conflicting")} Conflicting active memory could not be resolved; inspect the <a href="${escapeHtml(routeHref.review("conflict"))}">conflicts list</a>. Approving preserves both sides so live conflict detection can surface it.</aside>`;
+  return section("Conflict \u2014 both sides preserved", `${meta}<div class="conflict-comparison">${pendingSide}${otherSide}</div>`);
+}
 function memoryView(view) {
   const memory = view.memory;
-  const warning = view.trustState === "strong" ? "" : `<aside class="trust-warning">${trustBadge(view.trustState)} This memory is not independent strong truth.</aside>`;
   const reviewable = memory.status === "needs_review" || memory.status === "weak";
+  const warning = view.trustState === "strong" ? "" : reviewable && view.reviewReason ? `<aside class="trust-warning tmv-callout tmv-callout--warning">${trustBadge(view.trustState)} <strong>Not active yet.</strong> This memory is not active yet because: ${escapeHtml(view.reviewReason)}</aside>` : `<aside class="trust-warning">${trustBadge(view.trustState)} This memory is not independent strong truth.</aside>`;
   const hasLiveEvidence = memory.evidenceSpanIds.length > 0;
-  const reviewSection = reviewable ? section("Review decision", `<p>Approve to promote this memory to active, citable evidence, or Reject to remove it from Ask AI and search. Both are append-only and never edit raw transcript text.</p>${memoryReviewControls(memory.id, { canApprove: hasLiveEvidence, degradedReason: hasLiveEvidence ? void 0 : DEGRADED_MEMORY_REASON })}`) : "";
+  const reviewSection = reviewable ? section(
+    "Review decision",
+    `<p><strong>What happens if you approve:</strong> this memory becomes active, citable evidence for Ask AI and search \u2014 its source support spans become citable.</p>
+         <p><strong>What happens if you reject:</strong> this extracted memory is removed from Ask AI and search. It does not delete or edit the raw transcript.</p>
+         <p class="review-source__meta">Both are append-only decisions and never change raw transcript text.</p>
+         ${memoryReviewControls(memory.id, { canApprove: hasLiveEvidence, degradedReason: hasLiveEvidence ? void 0 : DEGRADED_MEMORY_REASON })}`
+  ) : "";
+  const supportSection = reviewable && view.supportSpans.length && view.evidence.length === 0 ? section("Extraction support spans", `<aside class="immutable-notice">These source spans were used by extraction, but they are not citable evidence until this memory is approved.</aside>${view.supportSpans.map(supportSpanCard).join("")}`) : "";
   return `${warning}<article class="memory-object">
     <p>${trustBadge(view.trustState)} ${escapeHtml(memory.type)} \xB7 confidence ${score(memory.confidence)} (${escapeHtml(memory.confidenceLabel)})</p>
     <h2>${escapeHtml(memory.title || memory.type)}</h2><p>${escapeHtml(memory.body)}</p>
     <dl><dt>Canonical status</dt><dd>${escapeHtml(memory.status)}</dd><dt>Evidence spans</dt><dd>${memory.evidenceSpanIds.length}</dd><dt>User corrected</dt><dd>${memory.userCorrected ? "yes" : "no"}</dd><dt>Duplicate of</dt><dd>${escapeHtml(memory.duplicateOfId ?? "none")}</dd></dl>
-  </article>${section("Evidence", view.evidence.map(evidenceCard).join("") || emptyState("No linked evidence pointers", "This memory cannot be treated as strong."))}
+  </article>${section("Evidence", view.evidence.map(evidenceCard).join("") || emptyState("No linked evidence pointers", reviewable ? "Not citable evidence yet \u2014 approve this memory to promote its support spans to citable evidence. See the extraction support spans below." : "This memory cannot be treated as strong."))}
+  ${supportSection}
+  ${conflictReviewSection(view)}
   ${view.conflicts.length ? section("Conflicts", view.conflicts.map((item) => `<article>${trustBadge("conflicting")} <strong>${escapeHtml(item.summary)}</strong><p>${escapeHtml(item.explanation)}</p></article>`).join("")) : ""}
   ${reviewSection}
   ${section("Submit a correction", correctionForm("memory_object", memory.id))}`;
 }
 var memoryReviewControls = (memoryId, options = {}) => {
-  const warning = options.degradedReason ? `<aside class="trust-warning tmv-callout tmv-callout--warning">${trustBadge("no_evidence", "Evidence removed")} ${escapeHtml(options.degradedReason)} <em>Approve is unavailable because there is no live evidence to promote \u2014 you can still Reject / Dismiss.</em></aside>` : "";
-  const approve = options.canApprove === false ? "" : `<button type="submit" name="decision" value="approve" class="tmv-btn tmv-btn-primary">Approve</button>`;
+  const warning = options.degradedReason ? `<aside class="trust-warning tmv-callout tmv-callout--warning">${trustBadge("no_evidence", "Evidence removed")} ${escapeHtml(options.degradedReason)} <em>Approve is unavailable because there is no live evidence to promote \u2014 you can still Reject / do not use.</em></aside>` : "";
+  const approve = options.canApprove === false ? "" : `<button type="submit" name="decision" value="approve" class="tmv-btn tmv-btn-primary">Approve as active memory</button>`;
   return `${warning}<form data-action="review" class="review-actions"><input type="hidden" name="memoryId" value="${escapeHtml(memoryId)}">
-      ${approve}<button type="submit" name="decision" value="reject" class="tmv-btn tmv-btn-secondary">${options.canApprove === false ? "Reject / Dismiss" : "Reject"}</button></form><div data-form-result></div>`;
+      ${approve}<button type="submit" name="decision" value="reject" class="tmv-btn tmv-btn-secondary">Reject / do not use</button></form><div data-form-result></div>`;
 };
 var reviewActions = (item) => {
   if (item.targetType === "memory_object" && (item.type === "memory_needs_review" || item.type === "weak_evidence")) {
@@ -5949,10 +6198,33 @@ var reviewActions = (item) => {
   }
   return "";
 };
+var reviewBadgeLabel = (item) => item.type === "conflict" ? "Conflict" : item.type === "broken_pointer" ? "Broken evidence" : item.type === "weak_evidence" ? "Weak evidence" : item.type === "user_correction" ? "Correction received" : "Needs review";
+var reviewSupportSpanBlock = (span) => `<div class="review-source">
+    <p class="review-label">Source span used for extraction <span class="review-pill review-pill--muted">Not citable until approved</span></p>
+    <blockquote>${escapeHtml(span.quote)}</blockquote>
+    <p class="review-source__meta">${escapeHtml(span.transcriptTitle)} \xB7 span ${escapeHtml(span.spanId)}</p>
+    <a class="transcript-clickback" href="${escapeHtml(routeHref.transcript(span.transcriptId, span.spanId))}">Open exact transcript span</a>
+  </div>`;
+function reviewConflictCompact(item) {
+  if (item.conflictWith === void 0) return "";
+  const other = item.conflictWith;
+  const pending = `<div class="review-conflict__side"><p class="review-conflict__role">This memory</p><p>${escapeHtml(item.memoryBody ?? item.title)}</p></div>`;
+  const active = other ? `<div class="review-conflict__side"><p class="review-conflict__role">Conflicts with active memory</p><p><strong>${escapeHtml(other.title)}</strong></p><p>${escapeHtml(other.body)}</p>${other.quote ? `<blockquote>${escapeHtml(other.quote)}</blockquote>` : ""}${other.memoryId ? `<a href="${escapeHtml(routeHref.memory(other.memoryId))}">Open the active memory</a>` : ""}</div>` : `<div class="review-conflict__side"><p class="review-conflict__role">Conflicts with active memory</p><p class="trust-warning">Could not be resolved \u2014 inspect the conflicts list. Approving preserves both sides so live conflict detection can surface it.</p></div>`;
+  return `<div class="review-conflict"><p class="review-label">${trustBadge("conflicting")} Conflict \u2014 both sides preserved</p><div class="review-conflict__grid">${pending}${active}</div></div>`;
+}
 function reviewCard(item) {
-  return `<article class="review-card tmv-card">${trustBadge(item.trustState)}<h3 class="tmv-section-header"><a href="${escapeHtml(item.href)}">${escapeHtml(item.title)}</a></h3>
-    <p>${escapeHtml(item.detail)}</p><small>${escapeHtml(item.severity)} severity \xB7 ${escapeHtml(item.status)} \xB7 ${escapeHtml(item.type)} \xB7 ${escapeHtml(item.targetType)}:${escapeHtml(item.targetId)}</small>
-    <a href="${escapeHtml(routeHref.review(item.id))}">Review and correct</a>${reviewActions(item)}</article>`;
+  const isMemory = item.type === "memory_needs_review";
+  const detailHref = isMemory ? routeHref.memory(item.targetId) : routeHref.review(item.id);
+  const typeChip = item.memoryType ? `<span class="review-pill">${escapeHtml(item.memoryType.replaceAll("_", " "))}</span>` : "";
+  const bodyBlock = item.memoryBody ? `<div class="review-extracted"><p class="review-label">Extracted memory</p><p>${escapeHtml(item.memoryBody)}</p></div>` : "";
+  const sourceBlock = item.supportSpan ? reviewSupportSpanBlock(item.supportSpan) : "";
+  const conflictBlock = reviewConflictCompact(item);
+  const decisionHelp = item.type === "memory_needs_review" || item.type === "conflict" ? `<p class="review-decision-help"><strong>Approve</strong> if this should become active memory for Ask AI and search. <strong>Reject</strong> if this extraction is wrong, too vague, a duplicate, or should not be used.</p>` : "";
+  const advanced = `<details class="review-card__advanced"><summary>Details</summary><small>${escapeHtml(item.severity)} severity \xB7 ${escapeHtml(item.status)} \xB7 ${escapeHtml(item.type)} \xB7 ${escapeHtml(item.targetType)}:${escapeHtml(item.targetId)}</small> <a href="${escapeHtml(routeHref.review(item.id))}">Review and correct</a></details>`;
+  return `<article class="review-card tmv-card" data-review-type="${escapeHtml(item.type)}">
+    <header class="review-card__head">${trustBadge(item.trustState, reviewBadgeLabel(item))}${typeChip}<h3 class="review-card__title"><a href="${escapeHtml(detailHref)}">${escapeHtml(item.title)}</a></h3></header>
+    <div class="review-why"><p class="review-label">Why this needs review</p><p>${escapeHtml(item.detail)}</p></div>
+    ${bodyBlock}${sourceBlock}${conflictBlock}${decisionHelp}${reviewActions(item)}${advanced}</article>`;
 }
 function searchCard(item) {
   return `<article class="search-result">${item.trustState ? trustBadge(item.trustState) : ""}<h3><a href="${escapeHtml(item.href)}">${escapeHtml(item.title)}</a></h3>
@@ -7558,6 +7830,9 @@ function createUnavailableFrontendApi(getHealth) {
     async runExtraction() {
       return unavailable(getHealth());
     },
+    async recalibrateReviewItems() {
+      return unavailable(getHealth());
+    },
     async deleteTranscript() {
       return unavailable(getHealth());
     }
@@ -7945,6 +8220,7 @@ var TranscriptMemoryVaultPlugin = class extends import_obsidian5.Plugin {
     this.addCommand({ id: "run-ai-extraction", name: "Run AI extraction for transcripts missing it", callback: () => void this.runPendingExtraction() });
     this.addCommand({ id: OBSIDIAN_SYNC_GRAPH_COMMAND.id, name: OBSIDIAN_SYNC_GRAPH_COMMAND.name, callback: () => void this.syncGeneratedGraphNotesCommand() });
     this.addCommand({ id: OBSIDIAN_DEDUPE_COMMAND.id, name: OBSIDIAN_DEDUPE_COMMAND.name, callback: () => void this.mergeDuplicateMemoriesCommand() });
+    this.addCommand({ id: "recalibrate-review-items", name: "Recalibrate review items", callback: () => void this.recalibrateReviewItemsCommand() });
     this.addRibbonIcon(OBSIDIAN_RIBBON.icon, OBSIDIAN_RIBBON.title, () => void navigation.openDashboard());
     this.registerObsidianProtocolHandler(OBSIDIAN_PROTOCOL_ACTION, (params) => {
       const route = obsidianRouteFromProtocol(params);
@@ -8151,6 +8427,31 @@ var TranscriptMemoryVaultPlugin = class extends import_obsidian5.Plugin {
     } catch (error) {
       new import_obsidian5.Notice(`Merge duplicate memories failed: ${readableStartupError(error)}`);
       console.error("Transcript Memory Vault memory dedupe failed", error);
+    }
+  }
+  /**
+   * Re-evaluate pending review memories against the CURRENT activation rules and fix legacy
+   * "unknown"-strength evidence pointers. Promotion never bypasses a trust gate (conflicts, duplicates,
+   * tentative/unsupported claims, and human-decided items are never auto-activated); everything that
+   * stays pending gets a specific review reason. Fully offline — no network call.
+   */
+  async recalibrateReviewItemsCommand() {
+    if (!this.db || this.health.status !== "ready") {
+      new import_obsidian5.Notice("Transcript Memory Vault is not ready; cannot recalibrate review items.");
+      return;
+    }
+    try {
+      const r = await this.api.recalibrateReviewItems();
+      const parts = [
+        r.promoted > 0 ? `${r.promoted} memory(ies) now meet all trust gates and were activated` : "no pending memories qualified for activation",
+        r.stillPending > 0 ? `${r.stillPending} stay in Review with an explicit reason` : "none remain pending",
+        r.pointersUpgraded > 0 ? `${r.pointersUpgraded} legacy evidence link(s) re-labeled from their real scores` : void 0
+      ].filter(Boolean);
+      new import_obsidian5.Notice(`Recalibrated review items: ${parts.join("; ")}.${r.warning ? ` ${r.warning}` : ""}`);
+      await this.viewRegistry.notifyMutation();
+    } catch (error) {
+      new import_obsidian5.Notice(`Recalibrate review items failed: ${readableStartupError(error)}`);
+      console.error("Transcript Memory Vault review recalibration failed", error);
     }
   }
   /** Same sync, triggered from the dashboard button. Returns a frontend-friendly summary (no Notices). */

@@ -1016,6 +1016,27 @@ var tensionPairs = [
 ];
 var round = (value) => Math.round(Math.max(0, Math.min(1, value)) * 1e3) / 1e3;
 var tokens = (text) => new Set(text.toLowerCase().match(/[a-z0-9]+/g)?.filter((token) => token.length > 2 && !stopwords.has(token)) ?? []);
+var NEG_WORDS = /* @__PURE__ */ new Set(["no", "not", "never", "avoid", "reject", "without", "cannot"]);
+var NEGATION_WINDOW = 6;
+var lightStem = (token) => token.length > 3 && token.endsWith("s") ? token.slice(0, -1) : token;
+function negatedPredicateAligns(negatedText, otherText) {
+  const other = tokens(otherText);
+  const otherStems = new Set([...other].map(lightStem));
+  const inOther = (token) => other.has(token) || otherStems.has(lightStem(token));
+  const words = negatedText.toLowerCase().replace(/n't\b/g, " not").match(/[a-z0-9]+/g) ?? [];
+  for (let index = 0; index < words.length; index++) {
+    if (!NEG_WORDS.has(words[index])) continue;
+    const denied = [];
+    for (let next = index + 1; next < words.length && denied.length < NEGATION_WINDOW; next++) {
+      const word = words[next];
+      if (word.length > 2 && !stopwords.has(word) && !NEG_WORDS.has(word)) denied.push(word);
+    }
+    if (!denied.length) continue;
+    const matches = denied.filter(inOther).length;
+    if (inOther(denied[0]) || matches >= Math.ceil(denied.length / 2)) return true;
+  }
+  return false;
+}
 var overlap = (a, b) => {
   const left = tokens(a), right = tokens(b);
   const shared = [...left].filter((token) => right.has(token)).length;
@@ -1049,7 +1070,9 @@ function scoreConflict(candidate, kind, components, options = {}) {
 function classifyConflictCandidate(candidate, options = {}) {
   const topicOverlap = candidate.sharedEntities?.length || candidate.sharedTopics?.length ? 1 : overlap(candidate.leftText, candidate.rightText);
   const leftNegative = negative.test(candidate.leftText), rightNegative = negative.test(candidate.rightText);
-  const polarityOpposition = leftNegative !== rightNegative && assertion.test(candidate.leftText) && assertion.test(candidate.rightText) ? 1 : 0;
+  const negatedSide = leftNegative && !rightNegative ? candidate.leftText : rightNegative && !leftNegative ? candidate.rightText : null;
+  const otherSide = leftNegative && !rightNegative ? candidate.rightText : candidate.leftText;
+  const polarityOpposition = negatedSide != null && assertion.test(candidate.leftText) && assertion.test(candidate.rightText) && negatedPredicateAligns(negatedSide, otherSide) ? 1 : 0;
   const conditionality = conditional.test(candidate.leftText) || conditional.test(candidate.rightText) ? 1 : 0;
   const temporalInfo = temporal(candidate);
   const validated = new Set(options.validatedEvidenceIds ?? [...candidate.leftEvidenceIds, ...candidate.rightEvidenceIds]);
@@ -1961,6 +1984,9 @@ function detectReindexNeeded(db, active, options = {}) {
 // src/memory/extraction/prompt.ts
 var MEMORY_EXTRACTION_PROMPT_VERSION = "mvp-memory-extraction-v1";
 
+// src/memory/extraction/llmExtractor.ts
+var GROUNDED_CONFIDENCE = 0.9;
+
 // src/memory/extraction/normalize.ts
 function normalizeMemoryText(title, body) {
   return `${title} ${body}`.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
@@ -2312,11 +2338,11 @@ function bodySupport(candidate) {
   const support = assessBodyQuoteSupport(candidate.body, quote);
   return support.status === "strong" ? { strong: true } : { strong: false, reason: `Claim wording is not strongly supported by its quoted transcript span (${support.reasons.join("; ") || "insufficient overlap"}).` };
 }
-function conflictsWithActiveMemory(db, candidate) {
+function findConflictingActiveMemory(db, candidate, excludeMemoryId) {
   const candidateText = `${candidate.title}. ${candidate.body}`;
   const candidateEvidenceIds = candidate.evidenceSpans.map((span) => span.spanId);
   const actives = db.prepare(`SELECT id, title, generated_text FROM memory_objects
-    WHERE duplicate_of_id IS NULL AND (extraction_status='active' OR (extraction_status IS NULL AND status='active'))`).all();
+    WHERE duplicate_of_id IS NULL AND (extraction_status='active' OR (extraction_status IS NULL AND status='active'))`).all().filter((active) => active.id !== excludeMemoryId);
   for (const active of actives) {
     const classification = classifyConflictCandidate({
       leftTargetId: "candidate",
@@ -2328,9 +2354,14 @@ function conflictsWithActiveMemory(db, candidate) {
       rightText: `${active.title ?? ""}. ${active.generated_text}`,
       rightEvidenceIds: [active.id]
     });
-    if (classification.kind !== "weak_or_ambiguous" && classification.confidence >= 0.6) return true;
+    if (classification.kind !== "weak_or_ambiguous" && classification.confidence >= 0.6) {
+      return { activeMemoryId: active.id, kind: classification.kind, confidence: classification.confidence, explanation: classification.explanation, summary: classification.summary };
+    }
   }
-  return false;
+  return null;
+}
+function conflictsWithActiveMemory(db, candidate, excludeMemoryId) {
+  return findConflictingActiveMemory(db, candidate, excludeMemoryId) != null;
 }
 async function extractMemoryObjectsForTranscript(db, options) {
   const promptVersion = options.extractor.promptVersion ?? MEMORY_EXTRACTION_PROMPT_VERSION;
@@ -2418,6 +2449,97 @@ async function extractMemoryObjectsForTranscript(db, options) {
     failExtractionRun(db, runId, error instanceof Error ? error.message : String(error));
     throw error;
   }
+}
+
+// src/memory/extraction/recalibrate.ts
+var strengthFromScore = (score2) => score2 >= 0.78 ? "strong" : score2 >= 0.55 ? "mixed" : "weak";
+function setReviewReason(db, memoryId, reason) {
+  const row = db.prepare("SELECT metadata_json FROM memory_objects WHERE id=?").get(memoryId);
+  let metadata = {};
+  try {
+    metadata = row?.metadata_json ? JSON.parse(row.metadata_json) : {};
+  } catch {
+    metadata = {};
+  }
+  metadata.review_reason = reason;
+  db.prepare("UPDATE memory_objects SET metadata_json=? WHERE id=? AND user_corrected=0").run(JSON.stringify(metadata), memoryId);
+}
+function recalibratePendingMemories(db, options = {}) {
+  const timestamp = options.now ? options.now().toISOString() : now();
+  const result = { pointersUpgraded: 0, promoted: [], transcriptsToBridge: [], stillPending: [] };
+  const unknownPointers = db.prepare(`SELECT p.evidence_pointer_id id, e.evidence_score score
+    FROM evidence_pointers p
+    JOIN memory_object_evidence e ON e.memory_id = p.target_id AND e.span_id = p.span_id
+    WHERE p.target_type='memory_object' AND p.evidence_strength='unknown'`).all();
+  for (const pointer of unknownPointers) {
+    db.prepare("UPDATE evidence_pointers SET evidence_strength=? WHERE evidence_pointer_id=?").run(strengthFromScore(pointer.score), pointer.id);
+    result.pointersUpgraded++;
+  }
+  const pending = db.prepare(`SELECT id, extraction_type, type, title, generated_text, extraction_status, metadata_json, extraction_run_id
+    FROM memory_objects
+    WHERE extraction_status IN ('needs_review','weak') AND user_corrected=0 AND duplicate_of_id IS NULL`).all();
+  const touchedTranscripts = /* @__PURE__ */ new Set();
+  for (const row of pending) {
+    const keep = (reason) => {
+      setReviewReason(db, row.id, reason);
+      result.stillPending.push({ memoryId: row.id, reason });
+    };
+    const spans = db.prepare(`SELECT s.transcript_id transcriptId, e.turn_id turnId, s.id spanId, s.speaker_label speaker,
+        s.start_char startOffset, s.end_char endOffset, s.text, s.start_time_ms startTimeMs, s.end_time_ms endTimeMs
+      FROM memory_object_evidence e JOIN transcript_spans s ON s.id = e.span_id
+      WHERE e.memory_id=? ORDER BY s.ordinal, s.id`).all(row.id);
+    if (!spans.length) {
+      keep("No live transcript evidence remains (the source transcript may have been deleted) \u2014 this item cannot be activated; dismiss it if no longer needed.");
+      continue;
+    }
+    const runKind = row.extraction_run_id ? db.prepare("SELECT extractor_kind FROM extraction_runs WHERE id=?").get(row.extraction_run_id)?.extractor_kind : void 0;
+    if (runKind !== "llm") {
+      keep('Extracted by a non-grounded (dev/test) extractor \u2014 run "Run AI extraction for transcripts missing it" with a configured LLM, or approve manually after checking the cited spans.');
+      continue;
+    }
+    const type = row.extraction_type ?? row.type;
+    const title = row.title ?? "";
+    const body = row.generated_text;
+    const scored = scoreCandidateConfidence({ type, title, body, evidenceSpanIds: spans.map((span) => span.spanId), confidence: GROUNDED_CONFIDENCE }, spans);
+    if (scored.status !== "active") {
+      keep(scored.statusReason ?? "Calibrated extraction confidence is below the auto-activation bar.");
+      continue;
+    }
+    const quote = spans.map((span) => span.text).join(" ");
+    const support = assessBodyQuoteSupport(body, quote);
+    if (support.status !== "strong") {
+      keep(`Claim wording is not strongly supported by its quoted transcript span (${support.reasons.join("; ") || "insufficient overlap"}).`);
+      continue;
+    }
+    const normalizedText = normalizeMemoryText(title, body);
+    const candidate = {
+      type,
+      title,
+      body,
+      evidenceSpanIds: spans.map((span) => span.spanId),
+      confidence: GROUNDED_CONFIDENCE,
+      transcriptId: spans[0].transcriptId,
+      normalizedText,
+      fingerprint: memoryFingerprint(type, normalizedText),
+      evidenceSpans: spans,
+      ...scored
+    };
+    const duplicate = findDuplicateMemoryObject(db, candidate);
+    if (duplicate && duplicate.object.id !== row.id) {
+      keep("Possible duplicate of an existing memory \u2014 review whether to merge or keep separately.");
+      continue;
+    }
+    if (conflictsWithActiveMemory(db, candidate, row.id)) {
+      keep("Conflicts with an existing active memory \u2014 both sides are preserved for review.");
+      continue;
+    }
+    db.prepare("UPDATE memory_objects SET extraction_status='active', status='active', updated_at=? WHERE id=? AND user_corrected=0").run(timestamp, row.id);
+    setReviewReason(db, row.id, null);
+    result.promoted.push(row.id);
+    for (const span of spans) touchedTranscripts.add(span.transcriptId);
+  }
+  result.transcriptsToBridge = [...touchedTranscripts].sort();
+  return result;
 }
 
 // src/retrieval/embeddingStore.ts
@@ -2589,6 +2711,7 @@ ${doc.search_text}`.trim(), hash = contentHash(text);
 
 // src/retrieval/transcriptIndex.ts
 var mapEvidenceRole = (role) => role === "contradicts" ? "opposition" : role === "qualifies" ? "conditional" : role === "context" ? "neutral" : "support";
+var strengthFromEvidenceScore = (score2) => score2 >= 0.78 ? "strong" : score2 >= 0.55 ? "mixed" : "weak";
 async function indexTranscriptForRetrieval(db, transcriptId) {
   const repo = createMemoryObjectsRepo(db);
   const memoryIds = db.prepare("SELECT DISTINCT memory_id FROM memory_object_evidence WHERE transcript_id=?").all(transcriptId);
@@ -2598,7 +2721,14 @@ async function indexTranscriptForRetrieval(db, transcriptId) {
     if (!canonical || !isUsableAsEvidence(canonical)) continue;
     const rows = db.prepare("SELECT span_id, role, evidence_score, transcript_id FROM memory_object_evidence WHERE memory_id=? AND transcript_id=?").all(memory_id, transcriptId);
     for (const row of rows) {
-      linkMemoryObjectToSpan(db, { memoryObjectId: memory_id, transcriptId: row.transcript_id, spanId: row.span_id, evidenceRole: mapEvidenceRole(row.role), confidence: row.evidence_score });
+      linkMemoryObjectToSpan(db, {
+        memoryObjectId: memory_id,
+        transcriptId: row.transcript_id,
+        spanId: row.span_id,
+        evidenceRole: mapEvidenceRole(row.role),
+        confidence: row.evidence_score,
+        evidenceStrength: strengthFromEvidenceScore(row.evidence_score)
+      });
       evidencePointersBridged++;
     }
   }
@@ -4293,6 +4423,28 @@ function memoryHasLiveEvidenceForReview(db, memoryId) {
     (SELECT COUNT(*) FROM memory_object_evidence WHERE memory_id=?) +
     (SELECT COUNT(*) FROM evidence_pointers WHERE target_type IN ('memory_object','claim','summary') AND target_id=?) c`).get(memoryId, memoryId).c > 0;
 }
+function loadSupportSpans(db, memoryId) {
+  return db.prepare(`SELECT e.span_id spanId, e.role, e.evidence_score score, s.transcript_id transcriptId, s.text quote,
+      COALESCE(t.title, s.transcript_id) title
+    FROM memory_object_evidence e JOIN transcript_spans s ON s.id=e.span_id JOIN transcripts t ON t.id=s.transcript_id
+    WHERE e.memory_id=? ORDER BY s.ordinal, s.id`).all(memoryId).map((row) => ({
+    spanId: String(row.spanId),
+    transcriptId: String(row.transcriptId),
+    transcriptTitle: String(row.title),
+    quote: String(row.quote),
+    role: String(row.role ?? "source"),
+    evidenceScore: Number(row.score ?? 0)
+  }));
+}
+function persistedReviewReason(db, memoryId) {
+  const row = db.prepare("SELECT metadata_json FROM memory_objects WHERE id=?").get(memoryId);
+  try {
+    const parsed = row?.metadata_json ? JSON.parse(row.metadata_json) : void 0;
+    if (typeof parsed?.review_reason === "string" && parsed.review_reason.trim()) return parsed.review_reason.trim();
+  } catch {
+  }
+  return void 0;
+}
 var trust = (value) => {
   const state = String(value ?? "no_evidence");
   return ["strong", "mixed", "weak", "conflicting", "no_evidence", "broken", "needs_review", "rejected", "superseded"].includes(state) ? state : "weak";
@@ -4428,23 +4580,26 @@ function reviewItems(db) {
       });
     }
   }
-  for (const memory of createMemoryObjectsRepo(db).listCanonicalMemoryObjects()) {
+  const memoryRepo = createMemoryObjectsRepo(db);
+  for (const memory of memoryRepo.listCanonicalMemoryObjects()) {
     if (memory.status === "needs_review" || memory.status === "weak") {
-      const row = db.prepare("SELECT created_at, metadata_json FROM memory_objects WHERE id=?").get(memory.id);
-      let reviewReason;
-      try {
-        const parsed = row.metadata_json ? JSON.parse(row.metadata_json) : void 0;
-        if (typeof parsed?.review_reason === "string" && parsed.review_reason.trim()) reviewReason = parsed.review_reason.trim();
-      } catch {
-      }
+      const row = db.prepare("SELECT created_at FROM memory_objects WHERE id=?").get(memory.id);
+      const reviewReason = persistedReviewReason(db, memory.id);
       const transcriptIds = db.prepare(`SELECT DISTINCT s.transcript_id FROM transcript_spans s
         WHERE s.id IN (SELECT span_id FROM memory_object_evidence WHERE memory_id=?) ORDER BY s.transcript_id`).all(memory.id).map((item) => item.transcript_id);
       const hasLiveEvidence = memoryHasLiveEvidenceForReview(db, memory.id);
+      const supportSpan = loadSupportSpans(db, memory.id)[0];
+      let conflictWith;
+      if (/conflicts with an existing active memory/i.test(reviewReason ?? "")) {
+        const match = findConflictingActiveMemory(db, { title: memory.title ?? "", body: memory.body, evidenceSpans: memory.evidenceSpanIds.map((spanId) => ({ spanId })) }, memory.id);
+        const active = match ? memoryRepo.getCanonicalMemoryObject(match.activeMemoryId) : null;
+        conflictWith = active ? { memoryId: active.id, title: active.title || active.type, body: active.body, quote: loadSupportSpans(db, active.id)[0]?.quote } : null;
+      }
       items.push({
         id: `memory:${memory.id}`,
         type: "memory_needs_review",
         title: memory.title || memory.body,
-        detail: reviewReason ?? `${memory.status}; ${memory.evidenceSpanIds.length} evidence span(s)`,
+        detail: reviewReason ?? `${memory.status}; ${memory.evidenceSpanIds.length} evidence span(s). Stored before review reasons were tracked \u2014 run "Recalibrate review items" to re-evaluate it against the current rules.`,
         targetType: "memory_object",
         targetId: memory.id,
         trustState: memory.status,
@@ -4457,7 +4612,11 @@ function reviewItems(db) {
         hasLiveEvidence,
         canApprove: hasLiveEvidence,
         canReject: true,
-        degradedReason: hasLiveEvidence ? void 0 : DEGRADED_MEMORY_REASON
+        degradedReason: hasLiveEvidence ? void 0 : DEGRADED_MEMORY_REASON,
+        memoryBody: memory.body,
+        memoryType: memory.type,
+        supportSpan: supportSpan ? { spanId: supportSpan.spanId, transcriptId: supportSpan.transcriptId, transcriptTitle: supportSpan.transcriptTitle, quote: supportSpan.quote } : void 0,
+        conflictWith
       });
     }
   }
@@ -4465,6 +4624,9 @@ function reviewItems(db) {
   const conflicts = db.prepare("SELECT id FROM conflict_assessments ORDER BY created_at,id").all().map(({ id }) => conflictRepo.get(id)).filter((item) => item != null);
   for (const conflict of conflicts) {
     if (conflict.status === "resolved" || conflict.status === "dismissed" || conflict.status === "superseded") continue;
+    const leftMemory = conflict.leftTargetType === "memory_object" ? memoryRepo.getCanonicalMemoryObject(conflict.leftTargetId) : null;
+    const rightMemory = conflict.rightTargetType === "memory_object" ? memoryRepo.getCanonicalMemoryObject(conflict.rightTargetId) : null;
+    const linkQuote = (side) => preview(conflict.evidenceLinks.find((link) => link.side === side)?.quotePreview ?? "") || void 0;
     items.push({
       id: `conflict:${conflict.id}`,
       type: "conflict",
@@ -4478,7 +4640,11 @@ function reviewItems(db) {
       severity: "high",
       status: "open",
       relatedTranscriptIds: [...new Set(conflict.evidenceLinks.flatMap((link) => link.transcriptId ? [link.transcriptId] : []))],
-      relatedEvidenceIds: conflict.evidenceLinks.map((link) => link.evidencePointerId)
+      relatedEvidenceIds: conflict.evidenceLinks.map((link) => link.evidencePointerId),
+      memoryBody: leftMemory?.body,
+      memoryType: leftMemory?.type,
+      supportSpan: void 0,
+      conflictWith: rightMemory ? { memoryId: rightMemory.id, title: rightMemory.title || rightMemory.type, body: rightMemory.body, quote: linkQuote("right") } : void 0
     });
   }
   for (const row of db.prepare("SELECT id,target_type,target_id,reason,created_at FROM user_corrections WHERE correction_type NOT IN ('confirm','reject') ORDER BY created_at,id").all()) {
@@ -4671,15 +4837,47 @@ function createSqliteFrontendApi(db, options = {}) {
       return evidenceView(db, id);
     },
     async getMemory(id) {
-      const memory = createMemoryObjectsRepo(db).getCanonicalMemoryObject(id);
+      const repo = createMemoryObjectsRepo(db);
+      const memory = repo.getCanonicalMemoryObject(id);
       if (!memory) return null;
       const pointers = db.prepare(`SELECT evidence_pointer_id FROM evidence_pointers
         WHERE target_type IN ('memory_object','claim','summary') AND target_id=? ORDER BY evidence_pointer_id`).all(id);
+      const conflicts = createConflictRepository(db).listConflictsForTarget("memory_object", id);
+      const reviewable = memory.status === "needs_review" || memory.status === "weak";
+      const supportSpans = reviewable ? loadSupportSpans(db, id) : [];
+      let reviewReason;
+      if (reviewable) {
+        reviewReason = persistedReviewReason(db, id) ?? (!memoryHasLiveEvidenceForReview(db, id) ? DEGRADED_MEMORY_REASON : void 0) ?? 'Stored before review reasons were tracked \u2014 run "Recalibrate review items" to re-evaluate it against the current rules.';
+      }
+      let conflictReview;
+      const heldByConflict = reviewable && (conflicts.length > 0 || /conflicts with an existing active memory/i.test(reviewReason ?? ""));
+      if (heldByConflict) {
+        const match = findConflictingActiveMemory(db, { title: memory.title ?? "", body: memory.body, evidenceSpans: memory.evidenceSpanIds.map((spanId) => ({ spanId })) }, id);
+        const activeMemory = match ? repo.getCanonicalMemoryObject(match.activeMemoryId) : null;
+        conflictReview = {
+          active: activeMemory ? {
+            memoryId: activeMemory.id,
+            title: activeMemory.title || activeMemory.type,
+            body: activeMemory.body,
+            type: activeMemory.type,
+            status: activeMemory.status,
+            confidence: activeMemory.confidence,
+            confidenceLabel: activeMemory.confidenceLabel,
+            supportSpans: loadSupportSpans(db, activeMemory.id)
+          } : null,
+          conflictType: match?.kind ?? conflicts[0]?.kind,
+          confidence: match?.confidence ?? conflicts[0]?.confidence,
+          explanation: match?.explanation ?? conflicts[0]?.explanation
+        };
+      }
       return {
         memory,
         trustState: isStrongMemoryObject(memory) ? "strong" : trust(memory.status),
         evidence: pointers.map((pointer) => evidenceView(db, pointer.evidence_pointer_id)),
-        conflicts: createConflictRepository(db).listConflictsForTarget("memory_object", id)
+        conflicts,
+        reviewReason,
+        supportSpans,
+        conflictReview
       };
     },
     async getMemoryObject(id) {
@@ -4803,6 +5001,22 @@ function createSqliteFrontendApi(db, options = {}) {
       } catch {
       }
       return { status: "extracted" };
+    },
+    async recalibrateReviewItems() {
+      const result = recalibratePendingMemories(db, { now: options.now });
+      let warning;
+      for (const transcriptId of result.transcriptsToBridge) {
+        try {
+          await indexTranscriptForRetrieval(db, transcriptId);
+        } catch {
+          warning = 'Some promoted memories could not be bridged for retrieval \u2014 run "Run AI extraction" or reopen the transcript.';
+        }
+        try {
+          detectAndPersistConflictsForTranscript(db, transcriptId, { now: options.now });
+        } catch {
+        }
+      }
+      return { pointersUpgraded: result.pointersUpgraded, promoted: result.promoted.length, stillPending: result.stillPending.length, warning };
     },
     async deleteTranscript(id) {
       return { status: "deleted", summary: createTranscriptsRepo(db).deleteTranscript(id) };

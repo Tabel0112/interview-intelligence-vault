@@ -49,6 +49,7 @@ export default class TranscriptMemoryVaultPlugin extends Plugin {
     this.addCommand({ id: "run-ai-extraction", name: "Run AI extraction for transcripts missing it", callback: () => void this.runPendingExtraction() });
     this.addCommand({ id: OBSIDIAN_SYNC_GRAPH_COMMAND.id, name: OBSIDIAN_SYNC_GRAPH_COMMAND.name, callback: () => void this.syncGeneratedGraphNotesCommand() });
     this.addCommand({ id: OBSIDIAN_DEDUPE_COMMAND.id, name: OBSIDIAN_DEDUPE_COMMAND.name, callback: () => void this.mergeDuplicateMemoriesCommand() });
+    this.addCommand({ id: "recalibrate-review-items", name: "Recalibrate review items", callback: () => void this.recalibrateReviewItemsCommand() });
     this.addRibbonIcon(OBSIDIAN_RIBBON.icon, OBSIDIAN_RIBBON.title, () => void navigation.openDashboard());
     // External deep links (e.g. from Claude Desktop): obsidian://transcript-memory-vault?route=<mv://...>.
     // Navigation only — the route is allowlist-validated to a known mv:// view, then opened via the existing
@@ -254,6 +255,29 @@ export default class TranscriptMemoryVaultPlugin extends Plugin {
     } catch (error) {
       new Notice(`Merge duplicate memories failed: ${readableStartupError(error)}`);
       console.error("Transcript Memory Vault memory dedupe failed", error);
+    }
+  }
+
+  /**
+   * Re-evaluate pending review memories against the CURRENT activation rules and fix legacy
+   * "unknown"-strength evidence pointers. Promotion never bypasses a trust gate (conflicts, duplicates,
+   * tentative/unsupported claims, and human-decided items are never auto-activated); everything that
+   * stays pending gets a specific review reason. Fully offline — no network call.
+   */
+  private async recalibrateReviewItemsCommand(): Promise<void> {
+    if (!this.db || this.health.status !== "ready") { new Notice("Transcript Memory Vault is not ready; cannot recalibrate review items."); return; }
+    try {
+      const r = await this.api.recalibrateReviewItems();
+      const parts = [
+        r.promoted > 0 ? `${r.promoted} memory(ies) now meet all trust gates and were activated` : "no pending memories qualified for activation",
+        r.stillPending > 0 ? `${r.stillPending} stay in Review with an explicit reason` : "none remain pending",
+        r.pointersUpgraded > 0 ? `${r.pointersUpgraded} legacy evidence link(s) re-labeled from their real scores` : undefined,
+      ].filter(Boolean);
+      new Notice(`Recalibrated review items: ${parts.join("; ")}.${r.warning ? ` ${r.warning}` : ""}`);
+      await this.viewRegistry.notifyMutation();
+    } catch (error) {
+      new Notice(`Recalibrate review items failed: ${readableStartupError(error)}`);
+      console.error("Transcript Memory Vault review recalibration failed", error);
     }
   }
 

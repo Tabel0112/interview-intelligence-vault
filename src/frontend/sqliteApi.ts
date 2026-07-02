@@ -9,7 +9,7 @@ import { createCorrectionsRepo } from "../db/repositories/correctionsRepo.js";
 import { createMemoryObjectsRepo } from "../db/repositories/memoryObjectsRepo.js";
 import { createTranscriptsRepo } from "../db/repositories/transcriptsRepo.js";
 import { importTranscript } from "../ingest/index.js";
-import { extractMemoryObjectsForTranscript, isStrongMemoryObject, type MemoryExtractor } from "../memory/index.js";
+import { extractMemoryObjectsForTranscript, findConflictingActiveMemory, isStrongMemoryObject, recalibratePendingMemories, type MemoryExtractor } from "../memory/index.js";
 import { indexTranscriptForRetrieval, removeRetrievalDocument } from "../retrieval/index.js";
 // Import directly from the (Obsidian-runtime-free) graph builder, NOT the obsidian barrel: the barrel
 // re-exports ObsidianAppApi/ObsidianNavigation which import the "obsidian" package, which would make
@@ -19,7 +19,7 @@ import { resolveEvidencePointer, type EvidencePointer } from "../provenance/inde
 import { routeHref } from "./router.js";
 import { DEGRADED_MEMORY_REASON } from "./types.js";
 import type {
-  DashboardView, EvidenceView, FrontendApi, GeneratedSyncResult, GeneratedSyncStatus, MemoryView, ReviewItemView, SearchResultView, SetupSummary, TranscriptListItem, TranscriptView, TrustState,
+  ConflictReviewView, DashboardView, EvidenceView, FrontendApi, GeneratedSyncResult, GeneratedSyncStatus, MemoryView, ReviewConflictSideView, ReviewItemView, SearchResultView, SetupSummary, SupportSpanView, TranscriptListItem, TranscriptView, TrustState,
 } from "./types.js";
 
 /**
@@ -32,6 +32,32 @@ function memoryHasLiveEvidenceForReview(db: SqliteDatabase, memoryId: string): b
     (SELECT COUNT(*) FROM memory_object_evidence WHERE memory_id=?) +
     (SELECT COUNT(*) FROM evidence_pointers WHERE target_type IN ('memory_object','claim','summary') AND target_id=?) c`)
     .get(memoryId, memoryId) as { c: number }).c > 0;
+}
+
+/**
+ * Read-only extraction support spans for a memory, joined to their IMMUTABLE raw transcript text. This reads
+ * memory_object_evidence (present for needs_review memory) — it does NOT touch evidence_pointers, so it never
+ * creates citable evidence or promotes the memory. Used to show "what extraction used" without breaking Policy A.
+ */
+function loadSupportSpans(db: SqliteDatabase, memoryId: string): SupportSpanView[] {
+  return (db.prepare(`SELECT e.span_id spanId, e.role, e.evidence_score score, s.transcript_id transcriptId, s.text quote,
+      COALESCE(t.title, s.transcript_id) title
+    FROM memory_object_evidence e JOIN transcript_spans s ON s.id=e.span_id JOIN transcripts t ON t.id=s.transcript_id
+    WHERE e.memory_id=? ORDER BY s.ordinal, s.id`).all(memoryId) as Array<Row>)
+    .map((row) => ({
+      spanId: String(row.spanId), transcriptId: String(row.transcriptId), transcriptTitle: String(row.title),
+      quote: String(row.quote), role: String(row.role ?? "source"), evidenceScore: Number(row.score ?? 0),
+    }));
+}
+
+/** Read the persisted, specific review reason (metadata_json.review_reason) for a memory, or undefined. */
+function persistedReviewReason(db: SqliteDatabase, memoryId: string): string | undefined {
+  const row = db.prepare("SELECT metadata_json FROM memory_objects WHERE id=?").get(memoryId) as { metadata_json: string | null } | undefined;
+  try {
+    const parsed = row?.metadata_json ? JSON.parse(row.metadata_json) as { review_reason?: unknown } : undefined;
+    if (typeof parsed?.review_reason === "string" && parsed.review_reason.trim()) return parsed.review_reason.trim();
+  } catch { /* legacy/malformed metadata */ }
+  return undefined;
 }
 import type { PluginHealth } from "../obsidian/startup.js";
 
@@ -127,29 +153,43 @@ function reviewItems(db: SqliteDatabase): ReviewItemView[] {
       });
     }
   }
-  for (const memory of createMemoryObjectsRepo(db).listCanonicalMemoryObjects()) {
+  const memoryRepo = createMemoryObjectsRepo(db);
+  for (const memory of memoryRepo.listCanonicalMemoryObjects()) {
     if (memory.status === "needs_review" || memory.status === "weak") {
-      const row = db.prepare("SELECT created_at, metadata_json FROM memory_objects WHERE id=?").get(memory.id) as { created_at: string; metadata_json: string | null };
+      const row = db.prepare("SELECT created_at FROM memory_objects WHERE id=?").get(memory.id) as { created_at: string };
       // The extraction pipeline persists WHY this item was routed to review (tentative wording, medium
       // confidence, unsupported body, possible duplicate, conflict) — show it instead of a bare status.
-      let reviewReason: string | undefined;
-      try {
-        const parsed = row.metadata_json ? JSON.parse(row.metadata_json) as { review_reason?: unknown } : undefined;
-        if (typeof parsed?.review_reason === "string" && parsed.review_reason.trim()) reviewReason = parsed.review_reason.trim();
-      } catch { /* legacy/malformed metadata -> fall back to the generic detail */ }
+      const reviewReason = persistedReviewReason(db, memory.id);
       const transcriptIds = (db.prepare(`SELECT DISTINCT s.transcript_id FROM transcript_spans s
         WHERE s.id IN (SELECT span_id FROM memory_object_evidence WHERE memory_id=?) ORDER BY s.transcript_id`).all(memory.id) as Array<{ transcript_id: string }>).map((item) => item.transcript_id);
       // Live-evidence count mirrors the approve trust gate (memory_object_evidence + evidence_pointers).
       // A memory with zero live evidence (e.g. its source transcript was deleted) is degraded: it cannot be
       // approved, but stays visible in Review as dismissible (Reject) so it is never a dead/actionless item.
       const hasLiveEvidence = memoryHasLiveEvidenceForReview(db, memory.id);
+      // Read-only card enrichment: the primary extraction support span (raw quote, NOT a citable pointer),
+      // and — for conflict-held items — the opposing active memory resolved via the SAME classifier the gate
+      // uses. Neither creates evidence or mutates anything.
+      const supportSpan = loadSupportSpans(db, memory.id)[0];
+      let conflictWith: ReviewConflictSideView | null | undefined;
+      if (/conflicts with an existing active memory/i.test(reviewReason ?? "")) {
+        const match = findConflictingActiveMemory(db, { title: memory.title ?? "", body: memory.body, evidenceSpans: memory.evidenceSpanIds.map((spanId) => ({ spanId })) }, memory.id);
+        const active = match ? memoryRepo.getCanonicalMemoryObject(match.activeMemoryId) : null;
+        conflictWith = active
+          ? { memoryId: active.id, title: active.title || active.type, body: active.body, quote: loadSupportSpans(db, active.id)[0]?.quote }
+          : null;
+      }
       items.push({
         id: `memory:${memory.id}`, type: "memory_needs_review", title: memory.title || memory.body,
-        detail: reviewReason ?? `${memory.status}; ${memory.evidenceSpanIds.length} evidence span(s)`, targetType: "memory_object", targetId: memory.id,
+        detail: reviewReason
+          ?? `${memory.status}; ${memory.evidenceSpanIds.length} evidence span(s). Stored before review reasons were tracked — run "Recalibrate review items" to re-evaluate it against the current rules.`,
+        targetType: "memory_object", targetId: memory.id,
         trustState: memory.status, href: routeHref.memory(memory.id),
         createdAt: row.created_at, severity: "medium", status: "open", relatedTranscriptIds: transcriptIds, relatedEvidenceIds: [],
         hasLiveEvidence, canApprove: hasLiveEvidence, canReject: true,
         degradedReason: hasLiveEvidence ? undefined : DEGRADED_MEMORY_REASON,
+        memoryBody: memory.body, memoryType: memory.type,
+        supportSpan: supportSpan ? { spanId: supportSpan.spanId, transcriptId: supportSpan.transcriptId, transcriptTitle: supportSpan.transcriptTitle, quote: supportSpan.quote } : undefined,
+        conflictWith,
       });
     }
   }
@@ -158,12 +198,19 @@ function reviewItems(db: SqliteDatabase): ReviewItemView[] {
     .map(({ id }) => conflictRepo.get(id)).filter((item) => item != null);
   for (const conflict of conflicts) {
     if (conflict.status === "resolved" || conflict.status === "dismissed" || conflict.status === "superseded") continue;
+    // Resolve both memory sides for a compact both-sides comparison on the card (read-only).
+    const leftMemory = conflict.leftTargetType === "memory_object" ? memoryRepo.getCanonicalMemoryObject(conflict.leftTargetId) : null;
+    const rightMemory = conflict.rightTargetType === "memory_object" ? memoryRepo.getCanonicalMemoryObject(conflict.rightTargetId) : null;
+    const linkQuote = (side: "left" | "right") => preview(conflict.evidenceLinks.find((link) => link.side === side)?.quotePreview ?? "") || undefined;
     items.push({
       id: `conflict:${conflict.id}`, type: "conflict", title: conflict.summary, detail: conflict.explanation,
       targetType: conflict.leftTargetType, targetId: conflict.leftTargetId, trustState: "conflicting", href: routeHref.review(`conflict:${conflict.id}`),
       createdAt: conflict.createdAt, severity: "high", status: "open",
       relatedTranscriptIds: [...new Set(conflict.evidenceLinks.flatMap((link) => link.transcriptId ? [link.transcriptId] : []))],
       relatedEvidenceIds: conflict.evidenceLinks.map((link) => link.evidencePointerId),
+      memoryBody: leftMemory?.body, memoryType: leftMemory?.type,
+      supportSpan: undefined,
+      conflictWith: rightMemory ? { memoryId: rightMemory.id, title: rightMemory.title || rightMemory.type, body: rightMemory.body, quote: linkQuote("right") } : undefined,
     });
   }
   // confirm/reject corrections are append-only audit records of an approve/reject DECISION, not new
@@ -383,15 +430,53 @@ export function createSqliteFrontendApi(
     },
     async getEvidence(id) { return evidenceView(db, id); },
     async getMemory(id): Promise<MemoryView | null> {
-      const memory = createMemoryObjectsRepo(db).getCanonicalMemoryObject(id);
+      const repo = createMemoryObjectsRepo(db);
+      const memory = repo.getCanonicalMemoryObject(id);
       if (!memory) return null;
       const pointers = db.prepare(`SELECT evidence_pointer_id FROM evidence_pointers
         WHERE target_type IN ('memory_object','claim','summary') AND target_id=? ORDER BY evidence_pointer_id`).all(id) as Array<{ evidence_pointer_id: string }>;
+      const conflicts = createConflictRepository(db).listConflictsForTarget("memory_object", id);
+      const reviewable = memory.status === "needs_review" || memory.status === "weak";
+      const supportSpans = reviewable ? loadSupportSpans(db, id) : [];
+
+      // Specific review reason: persisted reason first; then degraded (no live evidence); then the legacy
+      // fallback (older memories persisted before reasons were tracked). Undefined when not reviewable.
+      let reviewReason: string | undefined;
+      if (reviewable) {
+        reviewReason = persistedReviewReason(db, id)
+          ?? (!memoryHasLiveEvidenceForReview(db, id) ? DEGRADED_MEMORY_REASON : undefined)
+          ?? "Stored before review reasons were tracked — run \"Recalibrate review items\" to re-evaluate it against the current rules.";
+      }
+
+      // Conflict context: this memory is "held by a conflict" if a persisted conflict assessment targets it,
+      // OR its review reason is the extraction-time opposition (no assessment is created by that gate). In the
+      // latter case, resolve the opposing active memory read-only (never creates/mutates a conflict record).
+      let conflictReview: ConflictReviewView | undefined;
+      const heldByConflict = reviewable && (conflicts.length > 0 || /conflicts with an existing active memory/i.test(reviewReason ?? ""));
+      if (heldByConflict) {
+        const match = findConflictingActiveMemory(db, { title: memory.title ?? "", body: memory.body, evidenceSpans: memory.evidenceSpanIds.map((spanId) => ({ spanId })) }, id);
+        const activeMemory = match ? repo.getCanonicalMemoryObject(match.activeMemoryId) : null;
+        conflictReview = {
+          active: activeMemory
+            ? {
+                memoryId: activeMemory.id, title: activeMemory.title || activeMemory.type, body: activeMemory.body,
+                type: activeMemory.type, status: activeMemory.status, confidence: activeMemory.confidence,
+                confidenceLabel: activeMemory.confidenceLabel, supportSpans: loadSupportSpans(db, activeMemory.id),
+              }
+            : null,
+          conflictType: match?.kind ?? conflicts[0]?.kind,
+          confidence: match?.confidence ?? conflicts[0]?.confidence,
+          explanation: match?.explanation ?? conflicts[0]?.explanation,
+        };
+      }
       return {
         memory,
         trustState: isStrongMemoryObject(memory) ? "strong" : trust(memory.status),
         evidence: pointers.map((pointer) => evidenceView(db, pointer.evidence_pointer_id)),
-        conflicts: createConflictRepository(db).listConflictsForTarget("memory_object", id),
+        conflicts,
+        reviewReason,
+        supportSpans,
+        conflictReview,
       };
     },
     async getMemoryObject(id) { return this.getMemory(id); },
@@ -518,6 +603,20 @@ export function createSqliteFrontendApi(
       // Same live conflict-detection hook as uploadTranscript (deterministic, offline, idempotent by pair).
       try { detectAndPersistConflictsForTranscript(db, transcriptId, { now: options.now }); } catch { /* best-effort */ }
       return { status: "extracted" };
+    },
+    async recalibrateReviewItems() {
+      // Re-run the CURRENT activation gates over pending review memories + upgrade legacy "unknown"
+      // pointer strengths (see recalibratePendingMemories). Promotion never bypasses a gate; items that
+      // stay pending get a persisted, specific review reason.
+      const result = recalibratePendingMemories(db, { now: options.now });
+      let warning: string | undefined;
+      // Bridge newly-promoted memories into Ask AI evidence + run the same live conflict detection the
+      // upload/extraction/approve paths use. Best-effort: a failure never rolls back the promotions.
+      for (const transcriptId of result.transcriptsToBridge) {
+        try { await indexTranscriptForRetrieval(db, transcriptId); } catch { warning = "Some promoted memories could not be bridged for retrieval — run \"Run AI extraction\" or reopen the transcript."; }
+        try { detectAndPersistConflictsForTranscript(db, transcriptId, { now: options.now }); } catch { /* best-effort */ }
+      }
+      return { pointersUpgraded: result.pointersUpgraded, promoted: result.promoted.length, stillPending: result.stillPending.length, warning };
     },
     async deleteTranscript(id) {
       // Transactional hard delete; triggers downgrade dependent memories/conflicts/answers. Generated

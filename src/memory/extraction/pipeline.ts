@@ -32,12 +32,32 @@ function bodySupport(candidate: ValidatedMemoryCandidate): { strong: boolean; re
     : { strong: false, reason: `Claim wording is not strongly supported by its quoted transcript span (${support.reasons.join("; ") || "insufficient overlap"}).` };
 }
 
-function conflictsWithActiveMemory(db: SqliteDatabase, candidate: ValidatedMemoryCandidate): boolean {
+/** The active memory a pending candidate opposes, plus the deterministic classification of that opposition. */
+export interface ConflictingActiveMatch {
+  activeMemoryId: string;
+  kind: string;
+  confidence: number;
+  explanation: string;
+  summary: string;
+}
+
+/**
+ * Read-only: find the FIRST existing active memory that a candidate directly opposes (same gate that blocks
+ * auto-activation), or null. Never creates/mutates any conflict record — it only classifies. Shared by the
+ * activation gate and the Review detail page so both agree on what a pending memory conflicts with.
+ * `excludeMemoryId` lets an already-stored pending memory be checked against actives other than itself.
+ */
+export function findConflictingActiveMemory(
+  db: SqliteDatabase,
+  candidate: Pick<ValidatedMemoryCandidate, "title" | "body"> & { evidenceSpans: Array<{ spanId: string }> },
+  excludeMemoryId?: string,
+): ConflictingActiveMatch | null {
   const candidateText = `${candidate.title}. ${candidate.body}`;
   const candidateEvidenceIds = candidate.evidenceSpans.map((span) => span.spanId);
-  const actives = db.prepare(`SELECT id, title, generated_text FROM memory_objects
+  const actives = (db.prepare(`SELECT id, title, generated_text FROM memory_objects
     WHERE duplicate_of_id IS NULL AND (extraction_status='active' OR (extraction_status IS NULL AND status='active'))`)
-    .all() as Array<{ id: string; title: string | null; generated_text: string }>;
+    .all() as Array<{ id: string; title: string | null; generated_text: string }>)
+    .filter((active) => active.id !== excludeMemoryId);
   for (const active of actives) {
     const classification = classifyConflictCandidate({
       leftTargetId: "candidate", leftTargetType: "memory_object", leftText: candidateText, leftEvidenceIds: candidateEvidenceIds,
@@ -45,9 +65,23 @@ function conflictsWithActiveMemory(db: SqliteDatabase, candidate: ValidatedMemor
     });
     // weak_or_ambiguous never blocks; a real opposition (direct/tension/temporal/conditional) with
     // sufficient confidence does.
-    if (classification.kind !== "weak_or_ambiguous" && classification.confidence >= 0.6) return true;
+    if (classification.kind !== "weak_or_ambiguous" && classification.confidence >= 0.6) {
+      return { activeMemoryId: active.id, kind: classification.kind, confidence: classification.confidence, explanation: classification.explanation, summary: classification.summary };
+    }
   }
-  return false;
+  return null;
+}
+
+/**
+ * Exported for the review-recalibration path, which must apply the SAME opposition gate as extraction.
+ * `excludeMemoryId` lets an already-stored pending memory be checked against actives other than itself.
+ */
+export function conflictsWithActiveMemory(
+  db: SqliteDatabase,
+  candidate: Pick<ValidatedMemoryCandidate, "title" | "body"> & { evidenceSpans: Array<{ spanId: string }> },
+  excludeMemoryId?: string,
+): boolean {
+  return findConflictingActiveMemory(db, candidate, excludeMemoryId) != null;
 }
 
 export async function extractMemoryObjectsForTranscript(db: SqliteDatabase, options: {
