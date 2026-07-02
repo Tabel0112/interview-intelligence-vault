@@ -7033,8 +7033,42 @@ function nativeBindingLoadError(resolution, error) {
 var import_obsidian = require("obsidian");
 
 // src/obsidian/settings.ts
-var LLM_PROVIDER_OPTIONS = ["none", "openai"];
-var EMBEDDING_PROVIDER_OPTIONS = ["deterministic-test", "noop", "openai"];
+var LLM_PROVIDER_OPTIONS = ["openai", "none"];
+var EMBEDDING_PROVIDER_OPTIONS = ["openai", "deterministic-test", "noop"];
+var LLM_PROVIDER_LABELS = {
+  openai: "openai \u2014 recommended",
+  none: "none \u2014 AI features disabled"
+};
+var EMBEDDING_PROVIDER_LABELS = {
+  openai: "openai \u2014 recommended (enables Ask AI retrieval + MCP)",
+  "deterministic-test": "deterministic-test \u2014 dev/test only (does NOT enable Ask AI)",
+  noop: "noop \u2014 dev/test only (disables retrieval)"
+};
+var RECOMMENDED_LLM_DEFAULTS = { provider: "openai", model: "gpt-4o-mini" };
+var RECOMMENDED_EMBEDDING_DEFAULTS = {
+  provider: "openai",
+  model: "text-embedding-3-small",
+  dimensions: 1536
+};
+var isDevTestEmbeddingProvider = (providerId) => !isExternalEmbeddingProvider(providerId);
+function applyRecommendedLlmDefaults(settings) {
+  return {
+    ...settings,
+    mode: "external",
+    llm: { ...settings.llm, provider: RECOMMENDED_LLM_DEFAULTS.provider, model: RECOMMENDED_LLM_DEFAULTS.model }
+  };
+}
+function applyRecommendedEmbeddingDefaults(settings) {
+  return {
+    ...settings,
+    embedding: {
+      ...settings.embedding,
+      provider: RECOMMENDED_EMBEDDING_DEFAULTS.provider,
+      model: RECOMMENDED_EMBEDDING_DEFAULTS.model,
+      dimensions: RECOMMENDED_EMBEDDING_DEFAULTS.dimensions
+    }
+  };
+}
 var EXTERNAL_LLM_PROVIDERS = ["openai"];
 var isExternalLlmProvider = (providerId) => EXTERNAL_LLM_PROVIDERS.includes(providerId);
 var EXTERNAL_EMBEDDING_PROVIDERS = ["openai"];
@@ -7060,7 +7094,7 @@ var DEFAULT_SETTINGS = {
   schemaVersion: 1,
   mode: "local",
   llm: { provider: "none", model: "" },
-  embedding: { provider: "deterministic-test", model: "token-hash-v1" },
+  embedding: { ...RECOMMENDED_EMBEDDING_DEFAULTS },
   apiKeys: {}
 };
 var isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
@@ -7093,7 +7127,7 @@ var normalizeEmbeddingSelection = (value, fallback) => {
     provider: asString(record.provider, fallback.provider),
     model: asString(record.model, fallback.model)
   };
-  const dimensions = positiveInt(record.dimensions);
+  const dimensions = positiveInt(record.dimensions) ?? (isRecord(value) ? void 0 : fallback.dimensions);
   if (dimensions !== void 0) result.dimensions = dimensions;
   const baseUrl = normalizeBaseUrl(record.baseUrl);
   if (baseUrl !== void 0) result.baseUrl = baseUrl;
@@ -7167,13 +7201,19 @@ var TranscriptMemorySettingsTab = class extends import_obsidian.PluginSettingTab
     const required = this.containerEl.createEl("p", { text: setupRequirement(settings).message });
     required.addClass("setting-item-description");
     new import_obsidian.Setting(this.containerEl).setName("LLM provider").setDesc('Required for Ask AI. Grounded memory extraction and Ask AI answer synthesis use this external provider. Select "none" to disable AI features.').addDropdown((dropdown) => {
-      for (const option of LLM_PROVIDER_OPTIONS) dropdown.addOption(option, option);
+      for (const option of LLM_PROVIDER_OPTIONS) dropdown.addOption(option, LLM_PROVIDER_LABELS[option] ?? option);
       dropdown.setValue(settings.llm.provider).onChange(async (value) => {
         const mode = value !== "none" ? "external" : "local";
         await this.onSave({ ...this.getSettings(), mode, llm: { ...this.getSettings().llm, provider: value } });
         this.display();
       });
     });
+    new import_obsidian.Setting(this.containerEl).setName("Recommended LLM setup").setDesc(`One click fills provider "${RECOMMENDED_LLM_DEFAULTS.provider}" and model "${RECOMMENDED_LLM_DEFAULTS.model}". Your API key is never autofilled \u2014 add it below.`).addButton(
+      (button) => button.setButtonText("Use recommended LLM defaults").onClick(async () => {
+        await this.onSave(applyRecommendedLlmDefaults(this.getSettings()));
+        this.display();
+      })
+    );
     new import_obsidian.Setting(this.containerEl).setName("LLM model").setDesc("Model identifier. Required for an external provider.").addText(
       (text) => text.setPlaceholder("e.g. gpt-4o-mini").setValue(settings.llm.model).onChange(async (value) => {
         await this.onSave({ ...this.getSettings(), llm: { ...this.getSettings().llm, model: value } });
@@ -7192,21 +7232,34 @@ var TranscriptMemorySettingsTab = class extends import_obsidian.PluginSettingTab
         await this.onSave({ ...this.getSettings(), llm: { ...this.getSettings().llm, timeoutMs } });
       })
     );
-    new import_obsidian.Setting(this.containerEl).setName("Embedding provider").setDesc("Required for Ask AI retrieval, MCP ask_vault, and MCP evidence search. Choose an external (OpenAI-compatible) provider and set its dimensions + API key below. The deterministic test provider is a dev/test seam only and does NOT enable Ask AI.").addDropdown((dropdown) => {
-      for (const option of EMBEDDING_PROVIDER_OPTIONS) dropdown.addOption(option, option);
+    new import_obsidian.Setting(this.containerEl).setName("Embedding provider").setDesc("Required for Ask AI retrieval, MCP ask_vault, and MCP evidence search. Choose the recommended external (OpenAI-compatible) provider and set its dimensions + API key below. The deterministic-test / noop providers are dev/test seams only and do NOT enable Ask AI.").addDropdown((dropdown) => {
+      for (const option of EMBEDDING_PROVIDER_OPTIONS) dropdown.addOption(option, EMBEDDING_PROVIDER_LABELS[option] ?? option);
       dropdown.setValue(settings.embedding.provider).onChange(async (value) => {
         await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, provider: value } });
         this.display();
       });
     });
-    new import_obsidian.Setting(this.containerEl).setName("Embedding model").setDesc("Model identifier (e.g. text-embedding-3-small). Required for an external embedding provider.").addText(
+    new import_obsidian.Setting(this.containerEl).setName("Recommended embedding setup").setDesc(`One click fills provider "${RECOMMENDED_EMBEDDING_DEFAULTS.provider}", model "${RECOMMENDED_EMBEDDING_DEFAULTS.model}", and dimensions ${RECOMMENDED_EMBEDDING_DEFAULTS.dimensions}. Your API key is never autofilled \u2014 add it below, then run "Rebuild Embedding Index".`).addButton(
+      (button) => button.setButtonText("Use recommended embedding defaults").onClick(async () => {
+        await this.onSave(applyRecommendedEmbeddingDefaults(this.getSettings()));
+        this.display();
+      })
+    );
+    if (isDevTestEmbeddingProvider(settings.embedding.provider)) {
+      const devWarning = this.containerEl.createEl("p", {
+        text: `"${settings.embedding.provider}" is a dev/test seam: it produces non-semantic token-hash vectors and does NOT enable Ask AI or MCP ask_vault. Switch to the recommended external provider above (or click "Use recommended embedding defaults") and add an API key to enable Ask AI.`
+      });
+      devWarning.addClass("setting-item-description");
+      devWarning.addClass("mod-warning");
+    }
+    new import_obsidian.Setting(this.containerEl).setName("Embedding model").setDesc('Model identifier (e.g. text-embedding-3-small). Required for an external embedding provider. Changing the model changes the vector space \u2014 run "Rebuild Embedding Index" afterward.').addText(
       (text) => text.setPlaceholder("e.g. text-embedding-3-small").setValue(settings.embedding.model).onChange(async (value) => {
         await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, model: value } });
       })
     );
     const embeddingProviderId = settings.embedding.provider;
     const embeddingIsExternal = isExternalEmbeddingProvider(embeddingProviderId);
-    new import_obsidian.Setting(this.containerEl).setName("Embedding dimensions").setDesc("Required for an external embedding provider: the vector length the model returns.").addText(
+    new import_obsidian.Setting(this.containerEl).setName("Embedding dimensions").setDesc('Required for an external embedding provider: the vector length the model returns. Changing it requires a "Rebuild Embedding Index".').addText(
       (text) => text.setPlaceholder("e.g. 1536").setValue(settings.embedding.dimensions != null ? String(settings.embedding.dimensions) : "").onChange(async (value) => {
         const parsed = Number(value.trim());
         const dimensions = Number.isInteger(parsed) && parsed > 0 ? parsed : void 0;
@@ -7227,7 +7280,7 @@ var TranscriptMemorySettingsTab = class extends import_obsidian.PluginSettingTab
       })
     );
     new import_obsidian.Setting(this.containerEl).setName("Embedding API key").setDesc(
-      embeddingIsExternal ? `Stored for "${embeddingProviderId}": ${redactApiKey(settings.apiKeys[embeddingProviderId])}. Type a new key to replace it; leave blank to keep the existing one.` : "The selected embedding provider runs locally and needs no API key."
+      embeddingIsExternal ? `Stored for "${embeddingProviderId}": ${redactApiKey(settings.apiKeys[embeddingProviderId])} (the saved key is never displayed). Type a new key to replace it; leave blank to keep the existing one.` : "The selected embedding provider runs locally and needs no API key."
     ).addText((text) => {
       text.inputEl.type = "password";
       text.setPlaceholder("Enter API key").onChange(async (value) => {
@@ -7246,7 +7299,7 @@ var TranscriptMemorySettingsTab = class extends import_obsidian.PluginSettingTab
     const llmProviderId = settings.llm.provider;
     const llmKeyStatus = redactApiKey(settings.apiKeys[llmProviderId]);
     new import_obsidian.Setting(this.containerEl).setName("LLM API key").setDesc(
-      llmProviderId === "none" ? "Select an LLM provider to set its API key." : `Stored for "${llmProviderId}": ${llmKeyStatus}. Type a new key to replace it; leave blank to keep the existing one.`
+      llmProviderId === "none" ? "Select an LLM provider to set its API key." : `Stored for "${llmProviderId}": ${llmKeyStatus} (the saved key is never displayed). Type a new key to replace it; leave blank to keep the existing one.`
     ).addText((text) => {
       text.inputEl.type = "password";
       text.setPlaceholder("Enter API key").onChange(async (value) => {
@@ -7275,7 +7328,7 @@ var TranscriptMemorySettingsTab = class extends import_obsidian.PluginSettingTab
       health.reindexNeeded === void 0 ? "Status unavailable until the database is ready." : health.reindexNeeded ? `Reindex needed \u2014 run the "Rebuild Embedding Index" command. ${health.reindexSummary ?? ""}`.trim() : `Up to date. ${health.reindexSummary ?? ""}`.trim()
     );
     if (health.embeddingUsedFallback) {
-      new import_obsidian.Setting(this.containerEl).setName("Embedding fallback").setDesc("The configured external embedding provider is not fully set up; using local token-hash-v1.");
+      new import_obsidian.Setting(this.containerEl).setName("Embedding setup incomplete").setDesc('An external embedding provider is selected but has no API key yet, so Ask AI and MCP stay disabled. A local token-hash index (dev/test only) is used for keyword search and never answers Ask AI. Add an API key above, then run "Rebuild Embedding Index".');
     }
     new import_obsidian.Setting(this.containerEl).setName("Database location").setDesc(health.databasePath ?? "Unavailable");
     new import_obsidian.Setting(this.containerEl).setName("SQLite storage").setDesc(health.realSqliteStorage ? "Connected to real local SQLite storage" : "Not connected");
@@ -7494,13 +7547,13 @@ function resolveEmbeddingProviderFromSettings(settings, options = {}) {
     const config = options.transport ? { ...external, transport: options.transport } : external;
     return resolveEmbeddingProvider(void 0, { external: config });
   }
-  if (settings.mode === "external" && isExternalEmbeddingProvider(settings.embedding.provider)) {
+  if (isExternalEmbeddingProvider(settings.embedding.provider)) {
     const fallback = resolveEmbeddingProvider();
     return {
       ...fallback,
       requestedId: settings.embedding.provider,
       usedFallback: true,
-      reason: `External embedding provider "${settings.embedding.provider}" is not fully configured (needs a non-blank API key and positive dimensions); using local ${TOKEN_HASH_MODEL}.`
+      reason: `Embedding provider "${settings.embedding.provider}" needs an API key (and positive dimensions) before it can power Ask AI. The local ${TOKEN_HASH_MODEL} index is dev/test only and does not answer Ask AI \u2014 add a key in Settings and run "Rebuild Embedding Index".`
     };
   }
   return resolveEmbeddingProvider(settings.embedding.provider, { dimensions: settings.embedding.dimensions });

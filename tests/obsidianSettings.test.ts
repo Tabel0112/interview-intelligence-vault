@@ -1,19 +1,46 @@
 import { describe, expect, it } from "vitest";
 import {
-  API_KEY_REDACTED, DEFAULT_SETTINGS, isEmbeddingConfigured, isLlmConfigured, normalizeSettings, redactApiKey, redactSettingsForLog,
-  setApiKey, settingsHealthSummary, setupRequirement, type TranscriptMemorySettings,
+  API_KEY_REDACTED, applyRecommendedEmbeddingDefaults, applyRecommendedLlmDefaults, DEFAULT_SETTINGS,
+  EMBEDDING_PROVIDER_LABELS, EMBEDDING_PROVIDER_OPTIONS, isDevTestEmbeddingProvider, isEmbeddingConfigured,
+  isLlmConfigured, normalizeSettings, redactApiKey, RECOMMENDED_EMBEDDING_DEFAULTS, RECOMMENDED_LLM_DEFAULTS,
+  redactSettingsForLog, setApiKey, settingsHealthSummary, setupRequirement, type TranscriptMemorySettings,
 } from "../src/obsidian/settings.js";
 import { initialPluginHealth } from "../src/obsidian/startup.js";
 
 const SECRET = "sk-live-SUPERSECRET-abcdef 1234567890";
 
 describe("transcript memory settings foundation", () => {
-  it("defaults to local deterministic mode with no providers or keys", () => {
+  it("defaults to the recommended KEYLESS external embedding provider (not deterministic/token-hash) and stays fail-closed", () => {
     expect(DEFAULT_SETTINGS.mode).toBe("local");
     expect(DEFAULT_SETTINGS.llm.provider).toBe("none");
-    expect(DEFAULT_SETTINGS.embedding.provider).toBe("deterministic-test");
-    expect(DEFAULT_SETTINGS.embedding.model).toBe("token-hash-v1");
+    // Normal fresh settings default to the recommended external provider, NOT a deterministic/token-hash seam.
+    expect(DEFAULT_SETTINGS.embedding).toEqual({ provider: "openai", model: "text-embedding-3-small", dimensions: 1536 });
+    expect(DEFAULT_SETTINGS.embedding.provider).not.toBe("deterministic-test");
+    expect(DEFAULT_SETTINGS.embedding.model).not.toBe("token-hash-v1");
+    expect(isDevTestEmbeddingProvider(DEFAULT_SETTINGS.embedding.provider)).toBe(false);
+    // ...but it is KEYLESS, so it is still fully fail-closed: neither LLM nor embeddings are configured.
     expect(DEFAULT_SETTINGS.apiKeys).toEqual({});
+    expect(isLlmConfigured(DEFAULT_SETTINGS)).toBe(false);
+    expect(isEmbeddingConfigured(DEFAULT_SETTINGS)).toBe(false);
+  });
+
+  it("setupRequirement(DEFAULT_SETTINGS) is incomplete and states embeddings are required (not optional)", () => {
+    const req = setupRequirement(DEFAULT_SETTINGS);
+    expect(req.complete).toBe(false);
+    expect(req.embeddingConfigured).toBe(false);
+    expect(req.message).toMatch(/embedding provider/i);
+    expect(req.message).toMatch(/Embeddings are NOT configured/i);
+    expect(req.message.toLowerCase()).not.toContain("optional");
+  });
+
+  it("a partial embedding config that omits dimensions does NOT inherit the default dimensions (stays not-configured)", () => {
+    // Guard against the fresh default's dimensions being silently injected onto a user's partial config.
+    const partial = normalizeSettings({ mode: "external", embedding: { provider: "openai", model: "custom" }, apiKeys: { openai: SECRET } });
+    expect(partial.embedding.dimensions).toBeUndefined();
+    expect(isEmbeddingConfigured(partial)).toBe(false); // missing dimensions -> not configured (fail-closed)
+    // Only a fully-absent/corrupt embedding value inherits the full default (incl. dimensions).
+    expect(normalizeSettings({}).embedding).toEqual(DEFAULT_SETTINGS.embedding);
+    expect(normalizeSettings({ embedding: 42 }).embedding).toEqual(DEFAULT_SETTINGS.embedding);
   });
 
   it("normalizes missing, null, and corrupt input to defaults without throwing", () => {
@@ -134,8 +161,8 @@ describe("transcript memory settings foundation", () => {
       providerMode: "external",
       llmProvider: "anthropic",
       llmModel: "claude-x",
-      embeddingProvider: "deterministic-test",
-      embeddingModel: "token-hash-v1",
+      embeddingProvider: "openai", // fresh-install default is the recommended external provider (keyless -> not configured)
+      embeddingModel: "text-embedding-3-small",
       apiKeyConfigured: true,
       llmReady: false, // "anthropic" is not an OpenAI-compatible external provider -> not LLM-ready
     });
@@ -156,7 +183,7 @@ describe("transcript memory settings foundation", () => {
     const health = initialPluginHealth();
     expect(health.providerMode).toBe("local");
     expect(health.llmProvider).toBe("none");
-    expect(health.embeddingProvider).toBe("deterministic-test");
+    expect(health.embeddingProvider).toBe("openai"); // recommended external default, keyless -> not configured
     expect(health.apiKeyConfigured).toBe(false);
     // The health object that reaches the frontend dashboard must never carry a secret.
     expect(JSON.stringify(health)).not.toContain(SECRET);
@@ -172,8 +199,8 @@ describe("Ask AI setup requirement — BOTH an LLM and an external embedding pro
     "openai", SECRET);
 
   it("isEmbeddingConfigured requires an external provider + key + positive integer dimensions (token-hash is NOT configured)", () => {
-    expect(isEmbeddingConfigured(DEFAULT_SETTINGS)).toBe(false); // deterministic-test default is not a configured product provider
-    expect(isEmbeddingConfigured(llmOnly())).toBe(false); // LLM configured but embeddings still on the token-hash default
+    expect(isEmbeddingConfigured(DEFAULT_SETTINGS)).toBe(false); // recommended default is keyless (mode local, no key) -> not configured
+    expect(isEmbeddingConfigured(llmOnly())).toBe(false); // LLM configured but embeddings on the deterministic seam (not an external key)
     // external provider + key but missing/invalid dimensions -> still not configured
     const noDims = setApiKey({ schemaVersion: 1, mode: "external", llm: { provider: "none", model: "" }, embedding: { provider: "openai", model: "m" }, apiKeys: {} }, "openai", SECRET);
     expect(isEmbeddingConfigured(noDims)).toBe(false);
@@ -205,5 +232,57 @@ describe("Ask AI setup requirement — BOTH an LLM and an external embedding pro
     expect(req).toMatchObject({ llmConfigured: true, embeddingConfigured: true, complete: true });
     expect(req.message).toMatch(/Setup complete/i);
     expect(JSON.stringify(req)).not.toContain(SECRET); // onboarding copy never leaks a key
+  });
+});
+
+describe("recommended provider defaults + dev/test seams are never the user-facing default", () => {
+  it("recommended defaults are a normal OpenAI production setup (not deterministic/token-hash)", () => {
+    expect(RECOMMENDED_LLM_DEFAULTS).toEqual({ provider: "openai", model: "gpt-4o-mini" });
+    expect(RECOMMENDED_EMBEDDING_DEFAULTS).toEqual({ provider: "openai", model: "text-embedding-3-small", dimensions: 1536 });
+    expect(isDevTestEmbeddingProvider(RECOMMENDED_EMBEDDING_DEFAULTS.provider)).toBe(false);
+  });
+
+  it("openai is the FIRST (recommended) embedding option; deterministic/noop remain available but labeled dev/test", () => {
+    expect(EMBEDDING_PROVIDER_OPTIONS[0]).toBe("openai"); // normal/default choice comes first
+    expect(EMBEDDING_PROVIDER_OPTIONS).toContain("deterministic-test"); // still available as a seam
+    expect(EMBEDDING_PROVIDER_OPTIONS).toContain("noop");
+    // Labels make the distinction obvious and never imply token-hash is the normal model.
+    expect(EMBEDDING_PROVIDER_LABELS.openai.toLowerCase()).toContain("recommended");
+    expect(EMBEDDING_PROVIDER_LABELS["deterministic-test"].toLowerCase()).toContain("dev/test");
+    expect(EMBEDDING_PROVIDER_LABELS["deterministic-test"]).toMatch(/does NOT enable Ask AI/i);
+    expect(EMBEDDING_PROVIDER_LABELS.noop.toLowerCase()).toContain("dev/test");
+    for (const label of Object.values(EMBEDDING_PROVIDER_LABELS)) expect(label).not.toContain("token-hash-v1");
+  });
+
+  it("applyRecommendedLlmDefaults fills provider/model + external mode, and never adds an API key", () => {
+    const next = applyRecommendedLlmDefaults(DEFAULT_SETTINGS);
+    expect(next.mode).toBe("external");
+    expect(next.llm.provider).toBe("openai");
+    expect(next.llm.model).toBe("gpt-4o-mini");
+    expect(next.apiKeys).toEqual({}); // autofill NEVER touches secrets
+    expect(isLlmConfigured(next)).toBe(false); // still fail-closed until a key is added
+    expect(isLlmConfigured(setApiKey(next, "openai", SECRET))).toBe(true); // key completes it
+    expect(DEFAULT_SETTINGS.llm.provider).toBe("none"); // input not mutated
+  });
+
+  it("applyRecommendedEmbeddingDefaults fills provider/model/dimensions, never adds a key, and does not flip mode", () => {
+    const base: TranscriptMemorySettings = { schemaVersion: 1, mode: "local", llm: { provider: "none", model: "" }, embedding: { provider: "deterministic-test", model: "token-hash-v1" }, apiKeys: {} };
+    const next = applyRecommendedEmbeddingDefaults(base);
+    expect(next.embedding).toEqual({ provider: "openai", model: "text-embedding-3-small", dimensions: 1536 });
+    expect(next.mode).toBe("local"); // embedding autofill does not change mode
+    expect(next.apiKeys).toEqual({}); // autofill NEVER touches secrets
+    expect(isEmbeddingConfigured(next)).toBe(false); // still fail-closed (no key, mode local)
+    // With an LLM selected (external) + an embedding key, the autofilled embedding is now configured.
+    const configured = setApiKey({ ...next, mode: "external" }, "openai", SECRET);
+    expect(isEmbeddingConfigured(configured)).toBe(true);
+    expect(base.embedding.provider).toBe("deterministic-test"); // input not mutated
+  });
+
+  it("autofilling recommended embedding defaults still requires a reindex (index built under a new space)", () => {
+    // Autofill changes provider/model/dimensions, which defines a new embedding space; the stored key is
+    // required and the index must be (re)built. Autofill alone never marks the vault as ready-to-answer.
+    const next = applyRecommendedEmbeddingDefaults(DEFAULT_SETTINGS);
+    expect(isEmbeddingConfigured(next)).toBe(false);
+    expect(setupRequirement(next).embeddingConfigured).toBe(false);
   });
 });

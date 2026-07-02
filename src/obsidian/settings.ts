@@ -34,7 +34,11 @@ export interface EmbeddingSelection extends ProviderSelection {
 
 export interface TranscriptMemorySettings {
   schemaVersion: 1;
-  /** "local" = fully offline deterministic mode (default). */
+  /**
+   * "external" once an external LLM provider is selected (Ask AI enabled); "local" only before any
+   * external provider is chosen. There is no offline/deterministic PRODUCT mode — deterministic/token-hash
+   * providers are dev/test-only seams and never enable Ask AI/MCP.
+   */
   mode: ProviderMode;
   llm: LlmSelection;
   embedding: EmbeddingSelection;
@@ -43,9 +47,69 @@ export interface TranscriptMemorySettings {
 }
 
 // "anthropic" is intentionally omitted: the current external LLM provider is OpenAI-compatible only.
-export const LLM_PROVIDER_OPTIONS = ["none", "openai"] as const;
-// Only providers the external embedding adapter actually supports (OpenAI-compatible) are offered.
-export const EMBEDDING_PROVIDER_OPTIONS = ["deterministic-test", "noop", "openai"] as const;
+// "openai" is listed first as the recommended production choice; "none" disables AI features.
+export const LLM_PROVIDER_OPTIONS = ["openai", "none"] as const;
+// "openai" (external, OpenAI-compatible) is the recommended PRODUCTION embedding provider and is listed
+// first. "deterministic-test"/"noop" are dev/test-only seams that do NOT enable Ask AI/MCP; they are kept
+// available for local inspection but must never be presented as the normal production default.
+export const EMBEDDING_PROVIDER_OPTIONS = ["openai", "deterministic-test", "noop"] as const;
+
+/** Human-readable dropdown labels that make the recommended vs dev/test distinction obvious. */
+export const LLM_PROVIDER_LABELS: Record<string, string> = {
+  openai: "openai — recommended",
+  none: "none — AI features disabled",
+};
+export const EMBEDDING_PROVIDER_LABELS: Record<string, string> = {
+  openai: "openai — recommended (enables Ask AI retrieval + MCP)",
+  "deterministic-test": "deterministic-test — dev/test only (does NOT enable Ask AI)",
+  noop: "noop — dev/test only (disables retrieval)",
+};
+
+/**
+ * Recommended production defaults for a normal OpenAI setup. Used by the "Use recommended defaults" Settings
+ * actions and as the fresh-install embedding selection. These are provider/model/dimensions only — NEVER an
+ * API key. Autofilling them still leaves the setup fail-closed until the user adds a key (and, for the LLM,
+ * selects it), so nothing here weakens the setup-required gates.
+ */
+export const RECOMMENDED_LLM_DEFAULTS: { provider: string; model: string } = { provider: "openai", model: "gpt-4o-mini" };
+export const RECOMMENDED_EMBEDDING_DEFAULTS: { provider: string; model: string; dimensions: number } = {
+  provider: "openai",
+  model: "text-embedding-3-small",
+  dimensions: 1536,
+};
+
+/** True for the local dev/test embedding seams (deterministic-test/noop) that do NOT enable Ask AI. */
+export const isDevTestEmbeddingProvider = (providerId: string): boolean => !isExternalEmbeddingProvider(providerId);
+
+/**
+ * Fill the recommended LLM provider + model (enabling external mode), WITHOUT touching API keys.
+ * Mirrors selecting the external LLM provider in the dropdown. Fail-closed is preserved: the result is not
+ * `isLlmConfigured` until the user also adds an API key.
+ */
+export function applyRecommendedLlmDefaults(settings: TranscriptMemorySettings): TranscriptMemorySettings {
+  return {
+    ...settings,
+    mode: "external",
+    llm: { ...settings.llm, provider: RECOMMENDED_LLM_DEFAULTS.provider, model: RECOMMENDED_LLM_DEFAULTS.model },
+  };
+}
+
+/**
+ * Fill the recommended embedding provider + model + dimensions, WITHOUT touching API keys or mode.
+ * Mirrors selecting the external embedding provider in the dropdown. Fail-closed is preserved: the result is
+ * not `isEmbeddingConfigured` until the user also adds an API key (and an LLM is selected so mode is external).
+ */
+export function applyRecommendedEmbeddingDefaults(settings: TranscriptMemorySettings): TranscriptMemorySettings {
+  return {
+    ...settings,
+    embedding: {
+      ...settings.embedding,
+      provider: RECOMMENDED_EMBEDDING_DEFAULTS.provider,
+      model: RECOMMENDED_EMBEDDING_DEFAULTS.model,
+      dimensions: RECOMMENDED_EMBEDDING_DEFAULTS.dimensions,
+    },
+  };
+}
 
 /** LLM provider ids that require an external (network) call and an API key. */
 export const EXTERNAL_LLM_PROVIDERS = ["openai"] as const;
@@ -108,11 +172,18 @@ export function setupRequirement(settings: TranscriptMemorySettings): SetupRequi
   return { llmConfigured, embeddingConfigured, complete, message };
 }
 
+// Fresh-install defaults. The embedding selection is the recommended EXTERNAL provider (openai /
+// text-embedding-3-small / 1536), NOT a deterministic/token-hash dev seam — so normal user settings never
+// default to deterministic. It is KEYLESS, so it stays fully fail-closed: `isEmbeddingConfigured` is false
+// (no key), `productionEmbeddingProvider` returns undefined (no token-hash is ever handed to production), and
+// Ask AI/MCP are setup-required until the user adds an embedding API key and runs "Rebuild Embedding Index".
+// The local keyword index still resolves to token-hash for non-Ask-AI search, flagged as an "awaiting key"
+// fallback (see resolveEmbeddingProviderFromSettings) rather than presented as a configured provider.
 export const DEFAULT_SETTINGS: TranscriptMemorySettings = {
   schemaVersion: 1,
   mode: "local",
   llm: { provider: "none", model: "" },
-  embedding: { provider: "deterministic-test", model: "token-hash-v1" },
+  embedding: { ...RECOMMENDED_EMBEDDING_DEFAULTS },
   apiKeys: {},
 };
 
@@ -151,13 +222,17 @@ const normalizeLlmSelection = (value: unknown, fallback: ProviderSelection): Llm
   return result;
 };
 
-const normalizeEmbeddingSelection = (value: unknown, fallback: ProviderSelection): EmbeddingSelection => {
+const normalizeEmbeddingSelection = (value: unknown, fallback: EmbeddingSelection): EmbeddingSelection => {
   const record = isRecord(value) ? value : {};
   const result: EmbeddingSelection = {
     provider: asString(record.provider, fallback.provider),
     model: asString(record.model, fallback.model),
   };
-  const dimensions = positiveInt(record.dimensions);
+  // Use provided dimensions when valid. When the whole embedding value was absent/corrupt (not an object),
+  // inherit the fallback's dimensions so `normalizeSettings(<missing>)` reproduces DEFAULT_SETTINGS exactly.
+  // A PARTIAL object that merely omits dimensions is left WITHOUT dimensions (so it stays not-configured
+  // rather than inheriting a possibly-wrong vector length for the user's model).
+  const dimensions = positiveInt(record.dimensions) ?? (isRecord(value) ? undefined : fallback.dimensions);
   if (dimensions !== undefined) result.dimensions = dimensions;
   const baseUrl = normalizeBaseUrl(record.baseUrl);
   if (baseUrl !== undefined) result.baseUrl = baseUrl;

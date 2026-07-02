@@ -2,9 +2,15 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDatabase, type SqliteDatabase } from "../src/db/index.js";
 import { importTranscript } from "../src/ingest/index.js";
 import {
-  embeddingReindexStatus, resolveEmbeddingProviderFromSettings, runEmbeddingReindex,
+  embeddingReindexStatus, productionEmbeddingProvider, resolveEmbeddingProviderFromSettings, runEmbeddingReindex,
 } from "../src/obsidian/embeddingSettings.js";
 import { DEFAULT_SETTINGS, setApiKey, type TranscriptMemorySettings } from "../src/obsidian/settings.js";
+
+// Explicit deterministic dev/test seam (NOT the fresh default, which is the keyless external provider).
+const deterministicSeam = (): TranscriptMemorySettings => ({
+  schemaVersion: 1, mode: "local", llm: { provider: "none", model: "" },
+  embedding: { provider: "deterministic-test", model: "token-hash-v1" }, apiKeys: {},
+});
 import {
   DeterministicTestEmbeddingProvider, ExternalEmbeddingProvider, NoopEmbeddingProvider, vectorSearch,
   type EmbeddingTransport, type EmbeddingTransportRequest, type EmbeddingTransportResponse,
@@ -45,12 +51,24 @@ Sam: Markdown files are readable views only.` });
 afterEach(() => db.close());
 
 describe("resolveEmbeddingProviderFromSettings", () => {
-  it("defaults to the local token-hash provider and never calls the transport", () => {
+  it("the keyless external default resolves the local token-hash index but is flagged awaiting-key (never calls the transport)", () => {
     const { transport, calls } = makeTransport();
     const resolution = resolveEmbeddingProviderFromSettings(DEFAULT_SETTINGS, { transport });
+    // The local keyword index still uses token-hash, but this is an "awaiting key" fallback, not a configured provider.
     expect(resolution.provider).toBeInstanceOf(DeterministicTestEmbeddingProvider);
-    expect(resolution.usedFallback).toBe(false);
-    expect(calls).toHaveLength(0);
+    expect(resolution.usedFallback).toBe(true);
+    expect(resolution.requestedId).toBe("openai");
+    expect(resolution.reason).toMatch(/needs an API key/i);
+    expect(calls).toHaveLength(0); // resolving must not perform any network call
+    // Fail-closed: no production provider is handed out for a keyless default (no token-hash reaches production).
+    expect(productionEmbeddingProvider(DEFAULT_SETTINGS, { transport })).toBeUndefined();
+  });
+
+  it("an EXPLICIT deterministic-test seam resolves that provider directly (not a fallback)", () => {
+    const resolution = resolveEmbeddingProviderFromSettings(deterministicSeam());
+    expect(resolution.provider).toBeInstanceOf(DeterministicTestEmbeddingProvider);
+    expect(resolution.usedFallback).toBe(false); // an intentional dev/test selection, not an awaiting-key fallback
+    expect(resolution.requestedId).toBe("deterministic-test");
   });
 
   it("resolves the noop provider for a disabled selection", () => {
@@ -81,28 +99,28 @@ describe("resolveEmbeddingProviderFromSettings", () => {
 });
 
 describe("embeddingReindexStatus (read-only, network-free)", () => {
-  it("reports no reindex on a fresh, unindexed database", () => {
-    const { assessment, summary } = embeddingReindexStatus(db, DEFAULT_SETTINGS);
+  it("reports no reindex on a fresh, unindexed database (explicit local seam)", () => {
+    const { assessment, summary } = embeddingReindexStatus(db, deterministicSeam());
     expect(assessment.needsReindex).toBe(false);
     expect(summary.usedFallback).toBe(false);
   });
 
   it("reports reindex-needed (with a foreign space) after switching to a different provider space", async () => {
-    await runEmbeddingReindex(db, DEFAULT_SETTINGS); // local token-hash index
+    await runEmbeddingReindex(db, deterministicSeam()); // local token-hash index
     const { assessment } = embeddingReindexStatus(db, externalSettings());
     expect(assessment.needsReindex).toBe(true);
     expect(assessment.foreignSpaces.length).toBeGreaterThan(0);
   });
 
   it("never leaks the API key in the status object", async () => {
-    await runEmbeddingReindex(db, DEFAULT_SETTINGS);
+    await runEmbeddingReindex(db, deterministicSeam());
     expect(JSON.stringify(embeddingReindexStatus(db, externalSettings()))).not.toContain(SECRET);
   });
 });
 
 describe("runEmbeddingReindex (explicit, mock transport only)", () => {
-  it("embeds with the local token-hash provider by default (no transport needed)", async () => {
-    const { result, summary } = await runEmbeddingReindex(db, DEFAULT_SETTINGS);
+  it("embeds with the local token-hash provider when the deterministic seam is explicitly selected (no transport)", async () => {
+    const { result, summary } = await runEmbeddingReindex(db, deterministicSeam());
     expect(result.embedded).toBeGreaterThan(0);
     expect(summary.usedFallback).toBe(false);
     const providers = db.prepare("SELECT DISTINCT embedding_provider p FROM search_embeddings").all() as Array<{ p: string }>;

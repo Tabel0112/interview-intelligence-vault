@@ -112,9 +112,9 @@ describe("MCP loadMcpConfig settings loading", () => {
     expect(cfg.settings.embedding.provider).toBe("openai");
   });
 
-  it("4. missing settings file -> deterministic defaults gated as setup_required (no silent token-hash answers)", async () => {
+  it("4. missing settings file -> keyless recommended defaults gated as setup_required (no silent token-hash answers)", async () => {
     const cfg = loadMcpConfig({ TMV_DB_PATH: "/vault/db.sqlite" }, { readSettingsFile: () => undefined });
-    expect(cfg.settings.embedding).toEqual(DEFAULT_SETTINGS.embedding); // token-hash default only as a non-production placeholder
+    expect(cfg.settings.embedding).toEqual(DEFAULT_SETTINGS.embedding); // recommended keyless external default; still gated (no key) as setup_required
     expect(cfg.settingsSource.loaded).toBe(false);
     // The gate is the guard: even though a local provider could resolve, ask_vault is blocked before retrieval.
     expect(askAiEmbeddingHealth(db, cfg.settings).state).toBe("setup_required");

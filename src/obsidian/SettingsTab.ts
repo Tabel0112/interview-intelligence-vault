@@ -2,8 +2,11 @@ import { PluginSettingTab, Setting, type App, type Plugin } from "obsidian";
 import type { ObsidianNavigation } from "../frontend/index.js";
 import type { PluginHealth } from "./startup.js";
 import {
-  EMBEDDING_PROVIDER_OPTIONS, isEmbeddingConfigured, isExternalEmbeddingProvider, isLlmConfigured, LLM_PROVIDER_OPTIONS,
-  redactApiKey, setApiKey, setupRequirement, type TranscriptMemorySettings,
+  applyRecommendedEmbeddingDefaults, applyRecommendedLlmDefaults,
+  EMBEDDING_PROVIDER_LABELS, EMBEDDING_PROVIDER_OPTIONS, isDevTestEmbeddingProvider, isEmbeddingConfigured,
+  isExternalEmbeddingProvider, isLlmConfigured, LLM_PROVIDER_LABELS, LLM_PROVIDER_OPTIONS,
+  redactApiKey, RECOMMENDED_EMBEDDING_DEFAULTS, RECOMMENDED_LLM_DEFAULTS, setApiKey, setupRequirement,
+  type TranscriptMemorySettings,
 } from "./settings.js";
 
 export class TranscriptMemorySettingsTab extends PluginSettingTab {
@@ -39,7 +42,7 @@ export class TranscriptMemorySettingsTab extends PluginSettingTab {
       .setName("LLM provider")
       .setDesc("Required for Ask AI. Grounded memory extraction and Ask AI answer synthesis use this external provider. Select \"none\" to disable AI features.")
       .addDropdown((dropdown) => {
-        for (const option of LLM_PROVIDER_OPTIONS) dropdown.addOption(option, option);
+        for (const option of LLM_PROVIDER_OPTIONS) dropdown.addOption(option, LLM_PROVIDER_LABELS[option] ?? option);
         dropdown.setValue(settings.llm.provider).onChange(async (value) => {
           // Selecting an external provider enables external mode; "none" disables AI features. There is
           // no user-facing local/deterministic mode.
@@ -48,6 +51,16 @@ export class TranscriptMemorySettingsTab extends PluginSettingTab {
           this.display();
         });
       });
+
+    new Setting(this.containerEl)
+      .setName("Recommended LLM setup")
+      .setDesc(`One click fills provider "${RECOMMENDED_LLM_DEFAULTS.provider}" and model "${RECOMMENDED_LLM_DEFAULTS.model}". Your API key is never autofilled — add it below.`)
+      .addButton((button) =>
+        button.setButtonText("Use recommended LLM defaults").onClick(async () => {
+          await this.onSave(applyRecommendedLlmDefaults(this.getSettings()));
+          this.display();
+        }),
+      );
 
     new Setting(this.containerEl)
       .setName("LLM model")
@@ -81,9 +94,9 @@ export class TranscriptMemorySettingsTab extends PluginSettingTab {
 
     new Setting(this.containerEl)
       .setName("Embedding provider")
-      .setDesc("Required for Ask AI retrieval, MCP ask_vault, and MCP evidence search. Choose an external (OpenAI-compatible) provider and set its dimensions + API key below. The deterministic test provider is a dev/test seam only and does NOT enable Ask AI.")
+      .setDesc("Required for Ask AI retrieval, MCP ask_vault, and MCP evidence search. Choose the recommended external (OpenAI-compatible) provider and set its dimensions + API key below. The deterministic-test / noop providers are dev/test seams only and do NOT enable Ask AI.")
       .addDropdown((dropdown) => {
-        for (const option of EMBEDDING_PROVIDER_OPTIONS) dropdown.addOption(option, option);
+        for (const option of EMBEDDING_PROVIDER_OPTIONS) dropdown.addOption(option, EMBEDDING_PROVIDER_LABELS[option] ?? option);
         dropdown.setValue(settings.embedding.provider).onChange(async (value) => {
           await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, provider: value } });
           this.display();
@@ -91,8 +104,27 @@ export class TranscriptMemorySettingsTab extends PluginSettingTab {
       });
 
     new Setting(this.containerEl)
+      .setName("Recommended embedding setup")
+      .setDesc(`One click fills provider "${RECOMMENDED_EMBEDDING_DEFAULTS.provider}", model "${RECOMMENDED_EMBEDDING_DEFAULTS.model}", and dimensions ${RECOMMENDED_EMBEDDING_DEFAULTS.dimensions}. Your API key is never autofilled — add it below, then run "Rebuild Embedding Index".`)
+      .addButton((button) =>
+        button.setButtonText("Use recommended embedding defaults").onClick(async () => {
+          await this.onSave(applyRecommendedEmbeddingDefaults(this.getSettings()));
+          this.display();
+        }),
+      );
+
+    // Make it impossible to mistake a dev/test seam for a production embedding setup.
+    if (isDevTestEmbeddingProvider(settings.embedding.provider)) {
+      const devWarning = this.containerEl.createEl("p", {
+        text: `"${settings.embedding.provider}" is a dev/test seam: it produces non-semantic token-hash vectors and does NOT enable Ask AI or MCP ask_vault. Switch to the recommended external provider above (or click "Use recommended embedding defaults") and add an API key to enable Ask AI.`,
+      });
+      devWarning.addClass("setting-item-description");
+      devWarning.addClass("mod-warning");
+    }
+
+    new Setting(this.containerEl)
       .setName("Embedding model")
-      .setDesc("Model identifier (e.g. text-embedding-3-small). Required for an external embedding provider.")
+      .setDesc("Model identifier (e.g. text-embedding-3-small). Required for an external embedding provider. Changing the model changes the vector space — run \"Rebuild Embedding Index\" afterward.")
       .addText((text) =>
         text.setPlaceholder("e.g. text-embedding-3-small").setValue(settings.embedding.model).onChange(async (value) => {
           await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, model: value } });
@@ -104,7 +136,7 @@ export class TranscriptMemorySettingsTab extends PluginSettingTab {
 
     new Setting(this.containerEl)
       .setName("Embedding dimensions")
-      .setDesc("Required for an external embedding provider: the vector length the model returns.")
+      .setDesc("Required for an external embedding provider: the vector length the model returns. Changing it requires a \"Rebuild Embedding Index\".")
       .addText((text) =>
         text.setPlaceholder("e.g. 1536").setValue(settings.embedding.dimensions != null ? String(settings.embedding.dimensions) : "").onChange(async (value) => {
           const parsed = Number(value.trim());
@@ -138,7 +170,7 @@ export class TranscriptMemorySettingsTab extends PluginSettingTab {
       .setName("Embedding API key")
       .setDesc(
         embeddingIsExternal
-          ? `Stored for "${embeddingProviderId}": ${redactApiKey(settings.apiKeys[embeddingProviderId])}. Type a new key to replace it; leave blank to keep the existing one.`
+          ? `Stored for "${embeddingProviderId}": ${redactApiKey(settings.apiKeys[embeddingProviderId])} (the saved key is never displayed). Type a new key to replace it; leave blank to keep the existing one.`
           : "The selected embedding provider runs locally and needs no API key.",
       )
       .addText((text) => {
@@ -166,7 +198,7 @@ export class TranscriptMemorySettingsTab extends PluginSettingTab {
       .setDesc(
         llmProviderId === "none"
           ? "Select an LLM provider to set its API key."
-          : `Stored for "${llmProviderId}": ${llmKeyStatus}. Type a new key to replace it; leave blank to keep the existing one.`,
+          : `Stored for "${llmProviderId}": ${llmKeyStatus} (the saved key is never displayed). Type a new key to replace it; leave blank to keep the existing one.`,
       )
       .addText((text) => {
         text.inputEl.type = "password";
@@ -207,7 +239,9 @@ export class TranscriptMemorySettingsTab extends PluginSettingTab {
           : `Up to date. ${health.reindexSummary ?? ""}`.trim(),
     );
     if (health.embeddingUsedFallback) {
-      new Setting(this.containerEl).setName("Embedding fallback").setDesc("The configured external embedding provider is not fully set up; using local token-hash-v1.");
+      new Setting(this.containerEl)
+        .setName("Embedding setup incomplete")
+        .setDesc("An external embedding provider is selected but has no API key yet, so Ask AI and MCP stay disabled. A local token-hash index (dev/test only) is used for keyword search and never answers Ask AI. Add an API key above, then run \"Rebuild Embedding Index\".");
     }
     new Setting(this.containerEl).setName("Database location").setDesc(health.databasePath ?? "Unavailable");
     new Setting(this.containerEl).setName("SQLite storage").setDesc(health.realSqliteStorage ? "Connected to real local SQLite storage" : "Not connected");
