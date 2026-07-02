@@ -49,23 +49,30 @@ The server runs as a **separate Node process over stdio**. It opens the SQLite d
 
 `better-sqlite3` is **resolved from `node_modules` at runtime, never bundled** — run `npm install` in the repo so `node_modules/better-sqlite3` exists, and launch `node dist/mcp/server.cjs` from the repo (Node resolves the dependency upward from `dist/mcp/`). Because the server runs under your **system Node** (not Obsidian's Electron), `npm install` fetches the prebuilt binary matching your Node — so on Apple Silicon this works regardless of the plugin's Electron ABI. If `better-sqlite3` is missing, the server logs a clear startup error and exits.
 
+### Configuration source
+
+The MCP server loads its **provider settings — LLM, embeddings, models, dimensions, and API keys — from the same Obsidian plugin settings file the app writes, `data.json`** (resolved from `TMV_SETTINGS_PATH`, or inferred as `dirname(TMV_DB_PATH)/data.json`). Recommended setup: **configure both providers once in the Obsidian plugin's Settings tab**, then point the MCP server's `TMV_DB_PATH` at the same vault — no keys need to be duplicated into the Claude Desktop config.
+
+**Ask AI requires BOTH providers.** `ask_vault` (and `search_evidence`'s semantic path) need a configured external **LLM** (synthesis) **and** a configured external **embedding provider** (retrieval). Missing/incomplete LLM → `ask_vault` returns `setup_required`; missing/incomplete embeddings → `embedding_setup_required`; a stale/mismatched index → `embedding_reindex_required`. It never produces deterministic/token-hash output. **Embeddings are read ONLY from `data.json` (there is no embedding env var), so an env-only configuration is NOT sufficient for Ask AI.**
+
 ### Environment variables
 
 | Var | Required | Meaning |
 |---|---|---|
-| `TMV_DB_PATH` | **yes** | Path to the vault SQLite DB (e.g. `<vault>/.obsidian/plugins/transcript-memory-vault/transcript-memory.sqlite`). |
-| `TMV_LLM_PROVIDER` | no (default `openai`) | OpenAI-compatible provider id. |
-| `TMV_LLM_MODEL` | for AI features | Model id (e.g. `gpt-4o-mini`). |
-| `TMV_LLM_BASE_URL` | no | Override the OpenAI-compatible endpoint. |
-| `TMV_LLM_API_KEY` | for AI features | API key. **Never logged or persisted.** |
+| `TMV_DB_PATH` | **yes** | Path to the vault SQLite DB (e.g. `<vault>/.obsidian/plugins/transcript-memory-vault/transcript-memory.sqlite`). Its directory is also where `data.json` is inferred. |
+| `TMV_SETTINGS_PATH` | no | Explicit path to the plugin `data.json` (overrides the inferred `dirname(TMV_DB_PATH)/data.json`). |
+| `TMV_LLM_PROVIDER` | no | **Optional LLM overlay** on top of `data.json` (default `openai` when any `TMV_LLM_*` is set). |
+| `TMV_LLM_MODEL` | no | Optional LLM overlay: model id (e.g. `gpt-4o-mini`). |
+| `TMV_LLM_BASE_URL` | no | Optional LLM overlay: override the OpenAI-compatible endpoint. |
+| `TMV_LLM_API_KEY` | no | Optional LLM overlay: API key. **Never logged or persisted.** Does **not** configure embeddings. |
 | `TMV_MIGRATIONS_DIR` | no | Override the migrations directory (defaults to `dist/mcp/migrations`). |
 | `TMV_OBSIDIAN_VAULT` | no | Obsidian vault **name** to focus when an `obsidian://` deep link is opened. Omit to target the active vault. Navigation only; never a secret. |
 
-Without a fully configured LLM (`provider + model + key`), `ask_vault` returns `setup_required` — it never produces deterministic/local output. API keys are **not** read from Obsidian `data.json` in Phase 1.
+The `TMV_LLM_*` vars are a convenience overlay for the LLM only; they never configure embeddings. For a complete Ask AI setup, configure both providers in the Obsidian Settings tab (stored in `data.json`).
 
 ### Configure Claude Desktop
 
-Add to Claude Desktop's MCP config (e.g. `claude_desktop_config.json`):
+First, in the **Obsidian plugin Settings tab**, configure BOTH an external LLM provider/model/key and an external embedding provider/model/dimensions/key (these are stored in the plugin's `data.json`). Then add to Claude Desktop's MCP config (e.g. `claude_desktop_config.json`) — the recommended form points at the same vault DB and lets the server read providers + keys from `data.json`:
 
 ```json
 {
@@ -74,10 +81,7 @@ Add to Claude Desktop's MCP config (e.g. `claude_desktop_config.json`):
       "command": "node",
       "args": ["/absolute/path/to/dist/mcp/server.cjs"],
       "env": {
-        "TMV_DB_PATH": "/absolute/path/to/transcript-memory.sqlite",
-        "TMV_LLM_PROVIDER": "openai",
-        "TMV_LLM_MODEL": "gpt-4o-mini",
-        "TMV_LLM_API_KEY": "sk-...",
+        "TMV_DB_PATH": "/absolute/path/to/.obsidian/plugins/transcript-memory-vault/transcript-memory.sqlite",
         "TMV_OBSIDIAN_VAULT": "My Vault"
       }
     }
@@ -85,7 +89,7 @@ Add to Claude Desktop's MCP config (e.g. `claude_desktop_config.json`):
 }
 ```
 
-`TMV_OBSIDIAN_VAULT` is optional — set it to the Obsidian vault name so the `obsidian://` deep links in answers open that specific vault; omit it to target whichever vault is active.
+No API key is needed in this config — the LLM and embedding providers/keys come from the plugin's `data.json` next to `TMV_DB_PATH`. Optionally, you may add `TMV_LLM_*` env vars to override the LLM (e.g. `"TMV_LLM_API_KEY": "sk-..."`, a placeholder — use your real key), but **there is no embedding env override: embeddings must be configured in `data.json`**, so an env-only config still needs the plugin to have saved an embedding provider. `TMV_OBSIDIAN_VAULT` is optional — set it to the Obsidian vault name so the `obsidian://` deep links in answers open that specific vault; omit it to target whichever vault is active.
 
 ## Concurrency
 

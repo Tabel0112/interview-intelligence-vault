@@ -5,9 +5,12 @@
 //  - user config / secrets never enter the authoritative transcript trust store.
 //
 // This module is intentionally PURE (no Obsidian, network, Date, or randomness) so it is
-// fully unit-testable and deterministic. Nothing here makes a network call, and nothing
-// consumes these settings to change runtime behavior yet — the app stays in local
-// deterministic mode regardless of what is stored here.
+// fully unit-testable and deterministic. Nothing here makes a network call. These settings DO
+// drive live runtime behavior: the live app is external-provider-required. Ask AI — in Obsidian
+// AND via Claude Desktop / MCP — needs BOTH a configured external LLM (grounded memory extraction
+// + answer synthesis) and a configured external embedding provider (retrieval, MCP `ask_vault`,
+// MCP evidence search). It fails closed to a setup-required state when either is missing; there is
+// no deterministic/token-hash product fallback (that path is a dev/test-only seam).
 
 export type ProviderMode = "local" | "external";
 
@@ -64,6 +67,45 @@ export function isLlmConfigured(settings: TranscriptMemorySettings): boolean {
     && isExternalLlmProvider(settings.llm.provider)
     && settings.llm.model.trim().length > 0
     && (settings.apiKeys[settings.llm.provider]?.trim().length ?? 0) > 0;
+}
+
+/**
+ * The live app is ALSO embedding-required for Ask AI retrieval. Embeddings are "configured" only when an
+ * external (OpenAI-compatible) embedding provider is selected with a non-blank API key and positive integer
+ * dimensions. The deterministic-test/token-hash provider is a dev/test seam and is NOT a configured product
+ * embedding provider — when this is false, Ask AI (Obsidian + MCP) is gated as embedding-setup-required.
+ * (Mirrors the config checks in `externalEmbeddingConfigFromSettings`; kept pure so onboarding copy can use it.)
+ */
+export function isEmbeddingConfigured(settings: TranscriptMemorySettings): boolean {
+  if (settings.mode !== "external") return false;
+  if (!isExternalEmbeddingProvider(settings.embedding.provider)) return false;
+  if ((settings.apiKeys[settings.embedding.provider]?.trim().length ?? 0) === 0) return false;
+  const dims = settings.embedding.dimensions;
+  return typeof dims === "number" && Number.isInteger(dims) && dims > 0;
+}
+
+/** Non-secret onboarding summary: BOTH an LLM and an external embedding provider are required for Ask AI. */
+export interface SetupRequirement {
+  llmConfigured: boolean;
+  embeddingConfigured: boolean;
+  complete: boolean;
+  message: string;
+}
+
+/**
+ * Plain-language setup status for the Settings tab / onboarding. States that Ask AI (in Obsidian and via
+ * Claude Desktop / MCP) requires BOTH an LLM (extraction + synthesis) AND an external embedding provider
+ * (retrieval + MCP ask_vault + evidence search), and that an LLM-only setup is incomplete. Never contains
+ * any secret — only configured/not-configured facts.
+ */
+export function setupRequirement(settings: TranscriptMemorySettings): SetupRequirement {
+  const llmConfigured = isLlmConfigured(settings);
+  const embeddingConfigured = isEmbeddingConfigured(settings);
+  const complete = llmConfigured && embeddingConfigured;
+  const message = complete
+    ? "Setup complete. Ask AI is enabled in Obsidian and via Claude Desktop (MCP)."
+    : `Ask AI requires BOTH an LLM provider (grounded memory extraction + answer synthesis) and an external embedding provider (Ask AI retrieval, MCP ask_vault, and MCP evidence search). ${llmConfigured ? "LLM is configured." : "LLM is NOT configured."} ${embeddingConfigured ? "Embeddings are configured." : "Embeddings are NOT configured."} An LLM-only setup is incomplete — Ask AI and MCP stay disabled until both are configured below.`;
+  return { llmConfigured, embeddingConfigured, complete, message };
 }
 
 export const DEFAULT_SETTINGS: TranscriptMemorySettings = {

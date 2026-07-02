@@ -120,10 +120,19 @@ export interface AnswerBundle {
   pipeline: AnswerBundlePipeline;
 }
 
-const claimWarning = (support: string): string | undefined =>
+// Caution shown for a "mixed"-confidence answer's claims. Upstream synthesis maps mixed -> supportStatus
+// "supported" (unchanged here), so without this the claim would read as fully clean. This is NOT a full
+// contradiction (that is `conflicting`) — only a signal that some evidence qualifies/partially challenges it.
+const MIXED_CLAIM_WARNING = "Evidence is mixed — some sources support this while others qualify or partially challenge it; do not treat it as fully unchallenged. Inspect the cited evidence.";
+
+// Per-claim warning. `support` comes from the claim's (synthesis-owned) supportStatus; `answerConfidence` is
+// the answer-level evidence confidence, used only to surface the mixed caution on otherwise-"supported" claims.
+const claimWarning = (support: string, answerConfidence?: string): string | undefined =>
   support === "weakly_supported" ? "Supported only by weak/indirect evidence — treat cautiously."
     : support === "conflicting" ? "Sources conflict; both sides are preserved below."
-      : support === "unsupported" ? "Not supported by the cited evidence." : undefined;
+      : support === "unsupported" ? "Not supported by the cited evidence."
+        : (support === "supported" && answerConfidence === "mixed") ? MIXED_CLAIM_WARNING
+          : undefined;
 
 export function toAnswerBundle(response: AskAIResponse, options: { brokenCitationIds?: string[]; obsidianVault?: string } = {}): AnswerBundle {
   const broken = new Set(options.brokenCitationIds ?? []);
@@ -160,14 +169,19 @@ export function toAnswerBundle(response: AskAIResponse, options: { brokenCitatio
       evidence_uri: evUri,
     };
   });
-  const claims: AnswerBundleClaim[] = response.claims.map((claim) => ({
-    claim_id: claim.id,
-    text: claim.text,
-    kind: claim.kind,
-    support_state: claim.supportStatus,
-    citation_ids: claim.citationIds,
-    ...(claimWarning(claim.supportStatus) ? { warning: claimWarning(claim.supportStatus) } : {}),
-  }));
+  const claims: AnswerBundleClaim[] = response.claims.map((claim) => {
+    // support_state stays exactly as synthesis set it (no schema/synthesis change); the mixed caution is
+    // surfaced only via the warning field so a mixed answer never reads as fully clean in Claude Desktop.
+    const warning = claimWarning(claim.supportStatus, response.evidenceConfidence);
+    return {
+      claim_id: claim.id,
+      text: claim.text,
+      kind: claim.kind,
+      support_state: claim.supportStatus,
+      citation_ids: claim.citationIds,
+      ...(warning ? { warning } : {}),
+    };
+  });
 
   // Live-only AI analysis (Step 2): uncited, never transcript-backed. Projected as-is; never promoted.
   const analysis: AnswerBundleAnalysisItem[] = (response.analysis ?? []).map((a) => ({
@@ -189,6 +203,10 @@ export function toAnswerBundle(response: AskAIResponse, options: { brokenCitatio
     warnings.push("Evidence is weak; do not treat this as strong truth.");
   } else if (response.evidenceConfidence === "conflicting") {
     warnings.push("Sources conflict; both sides are preserved with citations.");
+  } else if (response.evidenceConfidence === "mixed") {
+    // Not a full contradiction (that is `conflicting`) — some evidence supports the answer while some
+    // qualifies or partially challenges it. Surface it so a mixed answer never looks fully unchallenged.
+    warnings.push("Evidence is mixed — some sources support this answer while others qualify or partially challenge it; do not treat it as fully unchallenged. Inspect the citations.");
   }
   if (broken.size > 0) warnings.push(`${broken.size} citation pointer(s) no longer resolve.`);
   if (response.analysisUnavailable) warnings.push("AI analysis could not be generated for this answer; the transcript-backed evidence above is unaffected.");

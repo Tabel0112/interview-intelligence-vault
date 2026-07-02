@@ -8,7 +8,7 @@ Manual end-to-end verification that the **built** plugin works inside a clean Ob
 
 - **Platform:** Apple Silicon macOS. The packaged native binding is `darwin-arm64-abi140` only. Other OS / CPU / Electron-ABI combinations fail safe with a readable health error (by design) and cannot complete this checklist until their native target is built and packaged.
 - **Record the environment** you tested against: Obsidian version, Electron version, and ABI (`process.versions.modules`). The checked-in binding was validated on Obsidian `1.12.7` / Electron `39.8.3` / `abi140`.
-- The app is **LLM-required**: Ask AI and AI memory extraction need a configured external (OpenAI-compatible) LLM. **You must configure a real API key before testing AI features** (step 3a). Without one, the app shows setup-required and does not generate — that is correct, not a bug. There is no local/deterministic product mode.
+- The app is **LLM- and embedding-required**: Ask AI (in Obsidian and via Claude Desktop / MCP) needs BOTH a configured external (OpenAI-compatible) **LLM** (extraction + synthesis) AND a configured external **embedding provider** (retrieval). **You must configure both real providers/keys before testing AI features** (step 3a). Without them, the app shows setup-required (`setup_required` / `embedding_setup_required`) and does not generate — that is correct, not a bug. There is no local/deterministic product mode; an LLM-only setup is incomplete.
 
 ## 1. Build and verify the package
 - [ ] `npm run build`
@@ -21,12 +21,14 @@ Manual end-to-end verification that the **built** plugin works inside a clean Ob
 
 ## 3. Startup health — checks 4–5
 - [ ] Open the dashboard via the database ribbon icon, or the **Open Transcript Memory Dashboard** command. The view loads and is **not blank**.
-- [ ] The dashboard "Database health" section shows: database connected, migration status current, applied = packaged migration count (`13/13`), database location under the plugin directory, and native target `darwin-arm64-abi140`.
+- [ ] The dashboard "Database health" section shows: database connected, migration status current, applied = packaged migration count (`16/16`), database location under the plugin directory, and native target `darwin-arm64-abi140`.
 
-## 3a. Configure the LLM (required before AI features)
-- [ ] Open **Settings → Transcript Memory Vault**. Confirm the top shows **"AI is NOT configured"**.
+## 3a. Configure the LLM AND embeddings (both required before AI features)
+- [ ] Open **Settings → Transcript Memory Vault**. Confirm the top message says Ask AI requires BOTH an LLM and an external embedding provider, and that it is currently NOT configured.
 - [ ] Confirm the **dashboard** and the **Ask AI** view show a clear **setup-required** state (not a deterministic/local answer).
-- [ ] Set **LLM provider** = `openai`, **LLM model** (e.g. `gpt-4o-mini`), and a **real API key**. Confirm settings now show **"AI is configured"** and the setup-required banners clear.
+- [ ] Set **LLM provider** = `openai`, **LLM model** (e.g. `gpt-4o-mini`), and a **real API key**.
+- [ ] Set **Embedding provider** = `openai`, **Embedding model** (e.g. `text-embedding-3-small`), **Embedding dimensions** (e.g. `1536`), and a **real API key**. (Confirm the Settings **"AI retrieval (embeddings)"** status flips from "Not configured" to "Configured".)
+- [ ] Confirm the Settings **"AI (LLM)"** and **"AI retrieval (embeddings)"** status lines both show Configured, and the setup-required banners clear. Then run **"Rebuild Embedding Index"** so Ask AI retrieval uses the configured provider (embedding health becomes `ok`).
 
 ## 4. Upload + automatic LLM extraction — checks 6–8
 Use this sample transcript (`smoke.txt`):
@@ -74,7 +76,7 @@ With the real LLM key configured (it is now exercised by extraction + Ask AI), c
 The MCP server is the recommended main chat UI. It runs as a **separate system-Node process** (not Electron), so its `better-sqlite3` is matched to your Node, independent of Obsidian's Electron ABI.
 
 - [ ] `npm install` (so `node_modules/better-sqlite3` exists — the MCP bundle resolves it at runtime, never bundles it) and `npm run mcp:build` (→ `dist/mcp/server.cjs` + `dist/mcp/migrations/`).
-- [ ] Point `TMV_DB_PATH` at the **same** vault DB the plugin uses: `<vault>/.obsidian/plugins/transcript-memory-vault/transcript-memory.sqlite`. Add the server to `claude_desktop_config.json` with `command: node`, `args: ["<repo>/dist/mcp/server.cjs"]`, and `env` `TMV_DB_PATH`, `TMV_LLM_PROVIDER`, `TMV_LLM_MODEL`, `TMV_LLM_API_KEY` (and optional `TMV_OBSIDIAN_VAULT`). See [MCP.md](MCP.md).
+- [ ] Point `TMV_DB_PATH` at the **same** vault DB the plugin uses: `<vault>/.obsidian/plugins/transcript-memory-vault/transcript-memory.sqlite`. Add the server to `claude_desktop_config.json` with `command: node`, `args: ["<repo>/dist/mcp/server.cjs"]`, and `env` `TMV_DB_PATH` (and optional `TMV_OBSIDIAN_VAULT`). The server reads the LLM **and** embedding providers/keys from the plugin `data.json` next to `TMV_DB_PATH` (configured in step 3a) — no key needs to be duplicated into the config; the optional `TMV_LLM_*` env vars override the LLM only (never embeddings). See [MCP.md](MCP.md).
 - [ ] In Claude Desktop, call **`ask_vault`** with `What is the source of truth?`. Confirm a validated AnswerBundle with at least one citation, and that the `obsidian://` deep links open Obsidian to the right view. Missing `TMV_DB_PATH` must fail with a clear setup error; an unconfigured/failed LLM returns setup-required / llm-failed and persists no answer.
 
 ## Failure expectations

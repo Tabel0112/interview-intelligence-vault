@@ -1082,6 +1082,40 @@ function classifyConflictCandidate(candidate, options = {}) {
   };
 }
 
+// src/conflicts/detector.ts
+var intersection = (left = [], right = []) => left.filter((item) => right.includes(item));
+function generateConflictCandidates(statements) {
+  const candidates = [];
+  for (let leftIndex = 0; leftIndex < statements.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < statements.length; rightIndex += 1) {
+      const left = statements[leftIndex], right = statements[rightIndex];
+      const sharedEntities = intersection(left.entities, right.entities);
+      const sharedTopics = intersection(left.topics, right.topics);
+      const words = new Set(left.text.toLowerCase().match(/[a-z0-9]+/g) ?? []);
+      const lexicalOverlap = (right.text.toLowerCase().match(/[a-z0-9]+/g) ?? []).some((word) => word.length > 3 && words.has(word));
+      if (!sharedEntities.length && !sharedTopics.length && !lexicalOverlap) continue;
+      candidates.push({
+        leftTargetId: left.targetId,
+        leftTargetType: left.targetType,
+        leftText: left.text,
+        leftEvidenceIds: left.evidenceIds,
+        leftTimestamp: left.timestamp,
+        rightTargetId: right.targetId,
+        rightTargetType: right.targetType,
+        rightText: right.text,
+        rightEvidenceIds: right.evidenceIds,
+        rightTimestamp: right.timestamp,
+        sharedEntities,
+        sharedTopics
+      });
+    }
+  }
+  return candidates;
+}
+function detectConflicts(statements, options = {}) {
+  return generateConflictCandidates(statements).map((candidate) => ({ candidate, classification: classifyConflictCandidate(candidate, options) }));
+}
+
 // src/provenance/pointerFormat.ts
 function encodeId(value, name) {
   if (!value.trim()) throw new ValidationError(`${name} must be non-empty`);
@@ -1593,6 +1627,62 @@ function createConflictRepository(db, options = {}) {
   };
 }
 
+// src/conflicts/liveDetection.ts
+function gatherEvidenceBackedStatements(db) {
+  const rows = db.prepare(`SELECT m.id, m.title, m.generated_text, m.created_at, e.evidence_pointer_id, e.transcript_id
+    FROM memory_objects m
+    JOIN evidence_pointers e ON e.target_type IN ('memory_object','claim','summary') AND e.target_id=m.id
+    WHERE m.duplicate_of_id IS NULL
+      AND (m.extraction_status='active' OR (m.extraction_status IS NULL AND m.status='active'))
+    ORDER BY m.id, e.evidence_pointer_id`).all();
+  const byMemory = /* @__PURE__ */ new Map();
+  for (const row of rows) {
+    if (!resolveEvidencePointer(db, row.evidence_pointer_id).ok) continue;
+    let statement = byMemory.get(row.id);
+    if (!statement) {
+      statement = {
+        targetId: row.id,
+        targetType: "memory_object",
+        // Same text shape the live activation gate compares (title + body), so the persisted pair
+        // classifies consistently with the gate that may have routed one side to review.
+        text: `${row.title ?? ""}. ${row.generated_text}`,
+        evidenceIds: [],
+        timestamp: row.created_at,
+        transcriptIds: /* @__PURE__ */ new Set()
+      };
+      byMemory.set(row.id, statement);
+    }
+    statement.evidenceIds.push(row.evidence_pointer_id);
+    if (row.transcript_id) statement.transcriptIds.add(row.transcript_id);
+  }
+  return [...byMemory.values()].filter((statement) => statement.evidenceIds.length > 0);
+}
+function persistDetected(db, statements, touches, options) {
+  if (statements.length < 2) return [];
+  const repo = createConflictRepository(db, { now: options.now });
+  const persisted = [];
+  for (const detected of detectConflicts(statements)) {
+    if (detected.classification.kind === "weak_or_ambiguous") continue;
+    if (!touches(detected.candidate.leftTargetId, detected.candidate.rightTargetId)) continue;
+    try {
+      persisted.push(repo.createConflictAssessment({ candidate: detected.candidate }));
+    } catch {
+    }
+  }
+  return persisted;
+}
+function detectAndPersistConflictsForTranscript(db, transcriptId, options = {}) {
+  const statements = gatherEvidenceBackedStatements(db);
+  const inTranscript = new Set(statements.filter((s) => s.transcriptIds.has(transcriptId)).map((s) => s.targetId));
+  if (!inTranscript.size) return [];
+  return persistDetected(db, statements, (left, right) => inTranscript.has(left) || inTranscript.has(right), options);
+}
+function detectAndPersistConflictsForMemory(db, memoryId, options = {}) {
+  const statements = gatherEvidenceBackedStatements(db);
+  if (!statements.some((s) => s.targetId === memoryId)) return [];
+  return persistDetected(db, statements, (left, right) => left === memoryId || right === memoryId, options);
+}
+
 // src/conflicts/render.ts
 function renderConflictContext(conflicts) {
   const active = conflicts.filter((conflict) => conflict.status === "active");
@@ -1880,9 +1970,9 @@ function memoryFingerprint(type, normalizedText) {
 }
 function tokenJaccard(a, b) {
   const left = new Set(a.split(/\s+/).filter(Boolean)), right = new Set(b.split(/\s+/).filter(Boolean));
-  const intersection = [...left].filter((token) => right.has(token)).length;
+  const intersection2 = [...left].filter((token) => right.has(token)).length;
   const union = (/* @__PURE__ */ new Set([...left, ...right])).size;
-  return union ? intersection / union : 0;
+  return union ? intersection2 / union : 0;
 }
 
 // src/memory/extraction/confidence.ts
@@ -2787,8 +2877,8 @@ var normalizeQuote = (quote = "") => quote.toLowerCase().replace(/[^\p{L}\p{N}]+
 function nearIdentical(left = "", right = "") {
   const a = new Set(normalizeQuote(left).split(" ").filter(Boolean)), b = new Set(normalizeQuote(right).split(" ").filter(Boolean));
   if (!a.size || !b.size) return false;
-  const intersection = [...a].filter((token) => b.has(token)).length;
-  return intersection / Math.max(a.size, b.size) >= 0.9;
+  const intersection2 = [...a].filter((token) => b.has(token)).length;
+  return intersection2 / Math.max(a.size, b.size) >= 0.9;
 }
 function areDuplicates(left, right) {
   if (left.evidencePointerId && left.evidencePointerId === right.evidencePointerId) return true;
@@ -4469,6 +4559,11 @@ function createSqliteFrontendApi(db, options = {}) {
         } catch {
           warning = warning ?? "Transcript imported, but automatic memory indexing did not complete.";
         }
+        try {
+          detectAndPersistConflictsForTranscript(db, result.transcriptId, { now: options.now });
+        } catch {
+          warning = warning ?? "Transcript imported, but conflict detection did not complete.";
+        }
       }
       return { transcriptId: result.transcriptId, status: result.status, warning };
     },
@@ -4621,6 +4716,11 @@ function createSqliteFrontendApi(db, options = {}) {
         } catch {
           warning = "Memory approved, but automatic retrieval indexing did not complete.";
         }
+        try {
+          detectAndPersistConflictsForMemory(db, memoryId, { now: options.now });
+        } catch {
+          warning = warning ?? "Memory approved, but conflict detection did not complete.";
+        }
         return { status: "approved", warning };
       }
       corrections.applyMemoryObjectCorrection(memoryId, { correction_type: "reject", new_value: { status: "rejected" } });
@@ -4650,6 +4750,10 @@ function createSqliteFrontendApi(db, options = {}) {
       }
       try {
         await indexTranscriptForRetrieval(db, transcriptId);
+      } catch {
+      }
+      try {
+        detectAndPersistConflictsForTranscript(db, transcriptId, { now: options.now });
       } catch {
       }
       return { status: "extracted" };
@@ -5030,7 +5134,8 @@ var clip = (value, limit = QUOTE_PREVIEW_LIMIT) => {
 };
 var sourceSpanUri = (transcriptId, spanId) => routeHref.transcript(transcriptId, spanId);
 var evidenceUri = (evidencePointerId) => routeHref.evidence(evidencePointerId);
-var claimWarning = (support) => support === "weakly_supported" ? "Supported only by weak/indirect evidence \u2014 treat cautiously." : support === "conflicting" ? "Sources conflict; both sides are preserved below." : support === "unsupported" ? "Not supported by the cited evidence." : void 0;
+var MIXED_CLAIM_WARNING = "Evidence is mixed \u2014 some sources support this while others qualify or partially challenge it; do not treat it as fully unchallenged. Inspect the cited evidence.";
+var claimWarning = (support, answerConfidence2) => support === "weakly_supported" ? "Supported only by weak/indirect evidence \u2014 treat cautiously." : support === "conflicting" ? "Sources conflict; both sides are preserved below." : support === "unsupported" ? "Not supported by the cited evidence." : support === "supported" && answerConfidence2 === "mixed" ? MIXED_CLAIM_WARNING : void 0;
 function toAnswerBundle(response, options = {}) {
   const broken = new Set(options.brokenCitationIds ?? []);
   const ext = (mvUri) => toObsidianUri(mvUri, { vault: options.obsidianVault });
@@ -5065,14 +5170,17 @@ function toAnswerBundle(response, options = {}) {
       evidence_uri: evUri
     };
   });
-  const claims = response.claims.map((claim) => ({
-    claim_id: claim.id,
-    text: claim.text,
-    kind: claim.kind,
-    support_state: claim.supportStatus,
-    citation_ids: claim.citationIds,
-    ...claimWarning(claim.supportStatus) ? { warning: claimWarning(claim.supportStatus) } : {}
-  }));
+  const claims = response.claims.map((claim) => {
+    const warning = claimWarning(claim.supportStatus, response.evidenceConfidence);
+    return {
+      claim_id: claim.id,
+      text: claim.text,
+      kind: claim.kind,
+      support_state: claim.supportStatus,
+      citation_ids: claim.citationIds,
+      ...warning ? { warning } : {}
+    };
+  });
   const analysis = (response.analysis ?? []).map((a) => ({
     analysis_id: a.id,
     text: a.text,
@@ -5098,6 +5206,8 @@ function toAnswerBundle(response, options = {}) {
     warnings.push("Evidence is weak; do not treat this as strong truth.");
   } else if (response.evidenceConfidence === "conflicting") {
     warnings.push("Sources conflict; both sides are preserved with citations.");
+  } else if (response.evidenceConfidence === "mixed") {
+    warnings.push("Evidence is mixed \u2014 some sources support this answer while others qualify or partially challenge it; do not treat it as fully unchallenged. Inspect the citations.");
   }
   if (broken.size > 0) warnings.push(`${broken.size} citation pointer(s) no longer resolve.`);
   if (response.analysisUnavailable) warnings.push("AI analysis could not be generated for this answer; the transcript-backed evidence above is unaffected.");

@@ -1980,6 +1980,40 @@ function classifyConflictCandidate(candidate, options = {}) {
   };
 }
 
+// src/conflicts/detector.ts
+var intersection = (left = [], right = []) => left.filter((item) => right.includes(item));
+function generateConflictCandidates(statements) {
+  const candidates = [];
+  for (let leftIndex = 0; leftIndex < statements.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < statements.length; rightIndex += 1) {
+      const left = statements[leftIndex], right = statements[rightIndex];
+      const sharedEntities = intersection(left.entities, right.entities);
+      const sharedTopics = intersection(left.topics, right.topics);
+      const words = new Set(left.text.toLowerCase().match(/[a-z0-9]+/g) ?? []);
+      const lexicalOverlap = (right.text.toLowerCase().match(/[a-z0-9]+/g) ?? []).some((word) => word.length > 3 && words.has(word));
+      if (!sharedEntities.length && !sharedTopics.length && !lexicalOverlap) continue;
+      candidates.push({
+        leftTargetId: left.targetId,
+        leftTargetType: left.targetType,
+        leftText: left.text,
+        leftEvidenceIds: left.evidenceIds,
+        leftTimestamp: left.timestamp,
+        rightTargetId: right.targetId,
+        rightTargetType: right.targetType,
+        rightText: right.text,
+        rightEvidenceIds: right.evidenceIds,
+        rightTimestamp: right.timestamp,
+        sharedEntities,
+        sharedTopics
+      });
+    }
+  }
+  return candidates;
+}
+function detectConflicts(statements, options = {}) {
+  return generateConflictCandidates(statements).map((candidate) => ({ candidate, classification: classifyConflictCandidate(candidate, options) }));
+}
+
 // src/provenance/pointerFormat.ts
 function encodeId(value, name) {
   if (!value.trim()) throw new ValidationError(`${name} must be non-empty`);
@@ -2491,6 +2525,62 @@ function createConflictRepository(db, options = {}) {
   };
 }
 
+// src/conflicts/liveDetection.ts
+function gatherEvidenceBackedStatements(db) {
+  const rows = db.prepare(`SELECT m.id, m.title, m.generated_text, m.created_at, e.evidence_pointer_id, e.transcript_id
+    FROM memory_objects m
+    JOIN evidence_pointers e ON e.target_type IN ('memory_object','claim','summary') AND e.target_id=m.id
+    WHERE m.duplicate_of_id IS NULL
+      AND (m.extraction_status='active' OR (m.extraction_status IS NULL AND m.status='active'))
+    ORDER BY m.id, e.evidence_pointer_id`).all();
+  const byMemory = /* @__PURE__ */ new Map();
+  for (const row of rows) {
+    if (!resolveEvidencePointer(db, row.evidence_pointer_id).ok) continue;
+    let statement = byMemory.get(row.id);
+    if (!statement) {
+      statement = {
+        targetId: row.id,
+        targetType: "memory_object",
+        // Same text shape the live activation gate compares (title + body), so the persisted pair
+        // classifies consistently with the gate that may have routed one side to review.
+        text: `${row.title ?? ""}. ${row.generated_text}`,
+        evidenceIds: [],
+        timestamp: row.created_at,
+        transcriptIds: /* @__PURE__ */ new Set()
+      };
+      byMemory.set(row.id, statement);
+    }
+    statement.evidenceIds.push(row.evidence_pointer_id);
+    if (row.transcript_id) statement.transcriptIds.add(row.transcript_id);
+  }
+  return [...byMemory.values()].filter((statement) => statement.evidenceIds.length > 0);
+}
+function persistDetected(db, statements, touches, options) {
+  if (statements.length < 2) return [];
+  const repo = createConflictRepository(db, { now: options.now });
+  const persisted = [];
+  for (const detected of detectConflicts(statements)) {
+    if (detected.classification.kind === "weak_or_ambiguous") continue;
+    if (!touches(detected.candidate.leftTargetId, detected.candidate.rightTargetId)) continue;
+    try {
+      persisted.push(repo.createConflictAssessment({ candidate: detected.candidate }));
+    } catch {
+    }
+  }
+  return persisted;
+}
+function detectAndPersistConflictsForTranscript(db, transcriptId, options = {}) {
+  const statements = gatherEvidenceBackedStatements(db);
+  const inTranscript = new Set(statements.filter((s) => s.transcriptIds.has(transcriptId)).map((s) => s.targetId));
+  if (!inTranscript.size) return [];
+  return persistDetected(db, statements, (left, right) => inTranscript.has(left) || inTranscript.has(right), options);
+}
+function detectAndPersistConflictsForMemory(db, memoryId, options = {}) {
+  const statements = gatherEvidenceBackedStatements(db);
+  if (!statements.some((s) => s.targetId === memoryId)) return [];
+  return persistDetected(db, statements, (left, right) => left === memoryId || right === memoryId, options);
+}
+
 // src/conflicts/render.ts
 function renderConflictContext(conflicts) {
   const active = conflicts.filter((conflict) => conflict.status === "active");
@@ -2923,9 +3013,9 @@ function memoryFingerprint(type, normalizedText) {
 }
 function tokenJaccard(a, b) {
   const left = new Set(a.split(/\s+/).filter(Boolean)), right = new Set(b.split(/\s+/).filter(Boolean));
-  const intersection = [...left].filter((token) => right.has(token)).length;
+  const intersection2 = [...left].filter((token) => right.has(token)).length;
   const union = (/* @__PURE__ */ new Set([...left, ...right])).size;
-  return union ? intersection / union : 0;
+  return union ? intersection2 / union : 0;
 }
 
 // src/memory/extraction/confidence.ts
@@ -3830,8 +3920,8 @@ var normalizeQuote = (quote2 = "") => quote2.toLowerCase().replace(/[^\p{L}\p{N}
 function nearIdentical(left = "", right = "") {
   const a = new Set(normalizeQuote(left).split(" ").filter(Boolean)), b = new Set(normalizeQuote(right).split(" ").filter(Boolean));
   if (!a.size || !b.size) return false;
-  const intersection = [...a].filter((token) => b.has(token)).length;
-  return intersection / Math.max(a.size, b.size) >= 0.9;
+  const intersection2 = [...a].filter((token) => b.has(token)).length;
+  return intersection2 / Math.max(a.size, b.size) >= 0.9;
 }
 function areDuplicates(left, right) {
   if (left.evidencePointerId && left.evidencePointerId === right.evidencePointerId) return true;
@@ -5514,6 +5604,11 @@ function createSqliteFrontendApi(db, options = {}) {
         } catch {
           warning = warning ?? "Transcript imported, but automatic memory indexing did not complete.";
         }
+        try {
+          detectAndPersistConflictsForTranscript(db, result.transcriptId, { now: options.now });
+        } catch {
+          warning = warning ?? "Transcript imported, but conflict detection did not complete.";
+        }
       }
       return { transcriptId: result.transcriptId, status: result.status, warning };
     },
@@ -5666,6 +5761,11 @@ function createSqliteFrontendApi(db, options = {}) {
         } catch {
           warning = "Memory approved, but automatic retrieval indexing did not complete.";
         }
+        try {
+          detectAndPersistConflictsForMemory(db, memoryId, { now: options.now });
+        } catch {
+          warning = warning ?? "Memory approved, but conflict detection did not complete.";
+        }
         return { status: "approved", warning };
       }
       corrections.applyMemoryObjectCorrection(memoryId, { correction_type: "reject", new_value: { status: "rejected" } });
@@ -5695,6 +5795,10 @@ function createSqliteFrontendApi(db, options = {}) {
       }
       try {
         await indexTranscriptForRetrieval(db, transcriptId);
+      } catch {
+      }
+      try {
+        detectAndPersistConflictsForTranscript(db, transcriptId, { now: options.now });
       } catch {
       }
       return { status: "extracted" };
@@ -5902,7 +6006,7 @@ async function renderPage(context) {
       const view = await api.getDashboard();
       const readyStatus = view.health?.status === "ready" ? `<aside class="status-banner tmv-callout tmv-callout--success">${statusChip("ok", "Vault ready")} <strong>Transcript Memory Vault is ready.</strong> ${view.health.firstRun ? "Upload a transcript to begin. " : ""}Imported raw transcript snapshots are immutable; SQLite is the source of truth.</aside>` : "";
       const startupProblem = view.health && view.health.status !== "ready" ? `<aside class="trust-warning">${view.health.status === "unsupported" ? trustBadge("no_evidence", "desktop only") : trustBadge("broken", "startup unavailable")} ${escapeHtml(view.health.lastInitializationError ?? "Database initialization has not completed.")}</aside>` : "";
-      const llmBanner = view.llmRequired && view.llmReady === false ? `<aside class="trust-warning llm-setup-required">${trustBadge("no_evidence", "LLM required")} AI is not configured. Ask AI and AI memory extraction need an external LLM \u2014 open plugin Settings and add a provider, model, and API key. Transcripts still import; run the "Run AI extraction" command afterward.</aside>` : "";
+      const llmBanner = view.llmRequired && view.llmReady === false ? `<aside class="trust-warning llm-setup-required">${trustBadge("no_evidence", "LLM required")} AI is not configured. Ask AI needs an external LLM (grounded extraction + answer synthesis) AND an external embedding provider (retrieval) \u2014 open plugin Settings and configure both. Transcripts still import; run the "Run AI extraction" command afterward. (Embedding status is shown in the setup card below.)</aside>` : "";
       const sync = view.generatedSync;
       const syncStatusLine = !sync ? "Generated graph notes status is unavailable in this context." : !sync.synced ? "Never synced \u2014 Obsidian's native graph has no generated notes yet. Sync after importing transcripts, running AI extraction, or asking AI." : `Last synced ${escapeHtml(sync.lastSyncedAt ?? "unknown")} \xB7 ${sync.fileCount ?? 0} files \xB7 ${sync.graphNodeCount ?? 0} nodes \xB7 ${sync.graphEdgeCount ?? 0} edges.`;
       const syncWarn = sync?.status === "failed" ? `<aside class="trust-warning">${trustBadge("broken", "last sync had errors")} ${escapeHtml(sync.error ?? "Some generated files could not be written.")}</aside>` : "";
@@ -6937,6 +7041,20 @@ var isExternalEmbeddingProvider = (providerId) => EXTERNAL_EMBEDDING_PROVIDERS.i
 function isLlmConfigured(settings) {
   return settings.mode === "external" && isExternalLlmProvider(settings.llm.provider) && settings.llm.model.trim().length > 0 && (settings.apiKeys[settings.llm.provider]?.trim().length ?? 0) > 0;
 }
+function isEmbeddingConfigured(settings) {
+  if (settings.mode !== "external") return false;
+  if (!isExternalEmbeddingProvider(settings.embedding.provider)) return false;
+  if ((settings.apiKeys[settings.embedding.provider]?.trim().length ?? 0) === 0) return false;
+  const dims = settings.embedding.dimensions;
+  return typeof dims === "number" && Number.isInteger(dims) && dims > 0;
+}
+function setupRequirement(settings) {
+  const llmConfigured = isLlmConfigured(settings);
+  const embeddingConfigured = isEmbeddingConfigured(settings);
+  const complete = llmConfigured && embeddingConfigured;
+  const message = complete ? "Setup complete. Ask AI is enabled in Obsidian and via Claude Desktop (MCP)." : `Ask AI requires BOTH an LLM provider (grounded memory extraction + answer synthesis) and an external embedding provider (Ask AI retrieval, MCP ask_vault, and MCP evidence search). ${llmConfigured ? "LLM is configured." : "LLM is NOT configured."} ${embeddingConfigured ? "Embeddings are configured." : "Embeddings are NOT configured."} An LLM-only setup is incomplete \u2014 Ask AI and MCP stay disabled until both are configured below.`;
+  return { llmConfigured, embeddingConfigured, complete, message };
+}
 var DEFAULT_SETTINGS = {
   schemaVersion: 1,
   mode: "local",
@@ -7045,11 +7163,9 @@ var TranscriptMemorySettingsTab = class extends import_obsidian.PluginSettingTab
       text: `API keys are stored in this plugin's local data file (data.json) as plain text. If your vault is synced, the key may sync with it. Run the "Rebuild Embedding Index" command to (re)build the index with the configured provider \u2014 that command is the only action that may make a network call.`
     });
     warning.addClass("setting-item-description");
-    const required = this.containerEl.createEl("p", {
-      text: isLlmConfigured(settings) ? `AI is configured: ${settings.llm.provider} / ${settings.llm.model}. Ask AI and AI memory extraction are enabled.` : "AI is NOT configured. Ask AI and AI memory extraction require an external LLM provider, model, and API key. Configure one below to enable AI features."
-    });
+    const required = this.containerEl.createEl("p", { text: setupRequirement(settings).message });
     required.addClass("setting-item-description");
-    new import_obsidian.Setting(this.containerEl).setName("LLM provider").setDesc('Required. Ask AI and AI memory extraction use this external provider. Select "none" to disable AI features.').addDropdown((dropdown) => {
+    new import_obsidian.Setting(this.containerEl).setName("LLM provider").setDesc('Required for Ask AI. Grounded memory extraction and Ask AI answer synthesis use this external provider. Select "none" to disable AI features.').addDropdown((dropdown) => {
       for (const option of LLM_PROVIDER_OPTIONS) dropdown.addOption(option, option);
       dropdown.setValue(settings.llm.provider).onChange(async (value) => {
         const mode = value !== "none" ? "external" : "local";
@@ -7075,15 +7191,15 @@ var TranscriptMemorySettingsTab = class extends import_obsidian.PluginSettingTab
         await this.onSave({ ...this.getSettings(), llm: { ...this.getSettings().llm, timeoutMs } });
       })
     );
-    new import_obsidian.Setting(this.containerEl).setName("Embedding provider").setDesc("For future semantic retrieval. The deterministic test provider is the default.").addDropdown((dropdown) => {
+    new import_obsidian.Setting(this.containerEl).setName("Embedding provider").setDesc("Required for Ask AI retrieval, MCP ask_vault, and MCP evidence search. Choose an external (OpenAI-compatible) provider and set its dimensions + API key below. The deterministic test provider is a dev/test seam only and does NOT enable Ask AI.").addDropdown((dropdown) => {
       for (const option of EMBEDDING_PROVIDER_OPTIONS) dropdown.addOption(option, option);
       dropdown.setValue(settings.embedding.provider).onChange(async (value) => {
         await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, provider: value } });
         this.display();
       });
     });
-    new import_obsidian.Setting(this.containerEl).setName("Embedding model").setDesc("Model identifier placeholder.").addText(
-      (text) => text.setPlaceholder("token-hash-v1").setValue(settings.embedding.model).onChange(async (value) => {
+    new import_obsidian.Setting(this.containerEl).setName("Embedding model").setDesc("Model identifier (e.g. text-embedding-3-small). Required for an external embedding provider.").addText(
+      (text) => text.setPlaceholder("e.g. text-embedding-3-small").setValue(settings.embedding.model).onChange(async (value) => {
         await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, model: value } });
       })
     );
@@ -7150,6 +7266,9 @@ var TranscriptMemorySettingsTab = class extends import_obsidian.PluginSettingTab
     new import_obsidian.Setting(this.containerEl).setName("API key").setDesc(health.apiKeyConfigured ? "configured" : "not configured");
     new import_obsidian.Setting(this.containerEl).setName("AI (LLM)").setDesc(
       isLlmConfigured(settings) ? `Configured: ${settings.llm.provider}${settings.llm.model ? ` / ${settings.llm.model}` : ""} (external).` : "Not configured. Ask AI and AI memory extraction are disabled until you set an LLM provider, model, and API key."
+    );
+    new import_obsidian.Setting(this.containerEl).setName("AI retrieval (embeddings)").setDesc(
+      isEmbeddingConfigured(settings) ? `Configured: ${settings.embedding.provider}${settings.embedding.model ? ` / ${settings.embedding.model}` : ""}${settings.embedding.dimensions ? ` / ${settings.embedding.dimensions}d` : ""} (external).` : "Not configured. Ask AI retrieval, MCP ask_vault, and MCP evidence search are disabled until you set an external embedding provider, model, dimensions, and API key. Required \u2014 not optional."
     );
     new import_obsidian.Setting(this.containerEl).setName("Embedding index").setDesc(
       health.reindexNeeded === void 0 ? "Status unavailable until the database is ready." : health.reindexNeeded ? `Reindex needed \u2014 run the "Rebuild Embedding Index" command. ${health.reindexSummary ?? ""}`.trim() : `Up to date. ${health.reindexSummary ?? ""}`.trim()

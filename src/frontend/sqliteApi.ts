@@ -3,7 +3,7 @@ import type { EmbeddingProvider } from "../retrieval/index.js";
 
 /** Read-only production-readiness of Ask AI embeddings (resolved by the plugin from settings). */
 export type EmbeddingHealth = { state: "ok" | "setup_required" | "reindex_required"; reason: string };
-import { createConflictRepository } from "../conflicts/index.js";
+import { createConflictRepository, detectAndPersistConflictsForMemory, detectAndPersistConflictsForTranscript } from "../conflicts/index.js";
 import type { SqliteDatabase } from "../db/connection.js";
 import { createCorrectionsRepo } from "../db/repositories/correctionsRepo.js";
 import { createMemoryObjectsRepo } from "../db/repositories/memoryObjectsRepo.js";
@@ -324,6 +324,14 @@ export function createSqliteFrontendApi(
         } catch {
           warning = warning ?? "Transcript imported, but automatic memory indexing did not complete.";
         }
+        // LIVE conflict detection (deterministic, offline, idempotent by pair): compare this transcript's
+        // bridged memories against existing active memory and persist assessments so Review, MCP
+        // get_conflicts, the graph, and Ask AI surface them. Best-effort — never blocks the import.
+        try {
+          detectAndPersistConflictsForTranscript(db, result.transcriptId, { now: options.now });
+        } catch {
+          warning = warning ?? "Transcript imported, but conflict detection did not complete.";
+        }
       }
       return { transcriptId: result.transcriptId, status: result.status, warning };
     },
@@ -455,6 +463,15 @@ export function createSqliteFrontendApi(
         } catch {
           warning = "Memory approved, but automatic retrieval indexing did not complete.";
         }
+        // The approval above just bridged this memory to evidence pointers, so it is NOW a citable
+        // conflict side (Policy A: needs_review memory has no pointers). Detect + persist conflicts
+        // against other active memory — e.g. the pair that originally held this memory back for review.
+        // Best-effort and idempotent by pair; never blocks the approval.
+        try {
+          detectAndPersistConflictsForMemory(db, memoryId, { now: options.now });
+        } catch {
+          warning = warning ?? "Memory approved, but conflict detection did not complete.";
+        }
         return { status: "approved", warning };
       }
       // Reject: mark rejected (append-only correction) and delete this memory's evidence pointers; the
@@ -487,6 +504,8 @@ export function createSqliteFrontendApi(
         return { status: "failed", warning: "AI memory extraction did not complete. Please try again." };
       }
       try { await indexTranscriptForRetrieval(db, transcriptId); } catch { /* indexing is best-effort */ }
+      // Same live conflict-detection hook as uploadTranscript (deterministic, offline, idempotent by pair).
+      try { detectAndPersistConflictsForTranscript(db, transcriptId, { now: options.now }); } catch { /* best-effort */ }
       return { status: "extracted" };
     },
     async deleteTranscript(id) {

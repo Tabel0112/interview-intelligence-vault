@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  API_KEY_REDACTED, DEFAULT_SETTINGS, normalizeSettings, redactApiKey, redactSettingsForLog,
-  setApiKey, settingsHealthSummary, type TranscriptMemorySettings,
+  API_KEY_REDACTED, DEFAULT_SETTINGS, isEmbeddingConfigured, isLlmConfigured, normalizeSettings, redactApiKey, redactSettingsForLog,
+  setApiKey, settingsHealthSummary, setupRequirement, type TranscriptMemorySettings,
 } from "../src/obsidian/settings.js";
 import { initialPluginHealth } from "../src/obsidian/startup.js";
 
@@ -160,5 +160,50 @@ describe("transcript memory settings foundation", () => {
     expect(health.apiKeyConfigured).toBe(false);
     // The health object that reaches the frontend dashboard must never carry a secret.
     expect(JSON.stringify(health)).not.toContain(SECRET);
+  });
+});
+
+describe("Ask AI setup requirement — BOTH an LLM and an external embedding provider are required", () => {
+  const llmOnly = (): TranscriptMemorySettings => setApiKey(
+    { schemaVersion: 1, mode: "external", llm: { provider: "openai", model: "gpt-4o-mini" }, embedding: { provider: "deterministic-test", model: "token-hash-v1" }, apiKeys: {} },
+    "openai", SECRET);
+  const bothConfigured = (): TranscriptMemorySettings => setApiKey(
+    { schemaVersion: 1, mode: "external", llm: { provider: "openai", model: "gpt-4o-mini" }, embedding: { provider: "openai", model: "text-embedding-3-small", dimensions: 1536 }, apiKeys: {} },
+    "openai", SECRET);
+
+  it("isEmbeddingConfigured requires an external provider + key + positive integer dimensions (token-hash is NOT configured)", () => {
+    expect(isEmbeddingConfigured(DEFAULT_SETTINGS)).toBe(false); // deterministic-test default is not a configured product provider
+    expect(isEmbeddingConfigured(llmOnly())).toBe(false); // LLM configured but embeddings still on the token-hash default
+    // external provider + key but missing/invalid dimensions -> still not configured
+    const noDims = setApiKey({ schemaVersion: 1, mode: "external", llm: { provider: "none", model: "" }, embedding: { provider: "openai", model: "m" }, apiKeys: {} }, "openai", SECRET);
+    expect(isEmbeddingConfigured(noDims)).toBe(false);
+    // external provider + dims but no key -> not configured
+    expect(isEmbeddingConfigured({ schemaVersion: 1, mode: "external", llm: { provider: "none", model: "" }, embedding: { provider: "openai", model: "m", dimensions: 8 }, apiKeys: {} })).toBe(false);
+    expect(isEmbeddingConfigured(bothConfigured())).toBe(true);
+  });
+
+  it("setupRequirement treats an LLM-only setup as INCOMPLETE and says embeddings are required (not optional/future)", () => {
+    const req = setupRequirement(llmOnly());
+    expect(req.llmConfigured).toBe(true);
+    expect(req.embeddingConfigured).toBe(false);
+    expect(req.complete).toBe(false); // LLM-only is incomplete
+    expect(req.message).toMatch(/requires BOTH/i);
+    expect(req.message).toMatch(/embedding provider/i);
+    expect(req.message).toMatch(/Embeddings are NOT configured/i);
+    expect(req.message).toMatch(/LLM-only setup is incomplete/i);
+    // The copy never implies embeddings are merely future/optional.
+    expect(req.message.toLowerCase()).not.toContain("optional");
+    expect(req.message.toLowerCase()).not.toContain("for future");
+  });
+
+  it("setupRequirement is complete only when BOTH providers are configured, and carries no secret", () => {
+    const incompleteEmbeddingsOnly = { ...bothConfigured(), llm: { provider: "none" as const, model: "" } };
+    expect(isLlmConfigured(incompleteEmbeddingsOnly)).toBe(false);
+    expect(setupRequirement(incompleteEmbeddingsOnly).complete).toBe(false); // embeddings-only is also incomplete
+
+    const req = setupRequirement(bothConfigured());
+    expect(req).toMatchObject({ llmConfigured: true, embeddingConfigured: true, complete: true });
+    expect(req.message).toMatch(/Setup complete/i);
+    expect(JSON.stringify(req)).not.toContain(SECRET); // onboarding copy never leaks a key
   });
 });

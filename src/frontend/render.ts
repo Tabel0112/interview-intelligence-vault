@@ -280,7 +280,7 @@ export async function renderPage(context: PageContext): Promise<RenderedPage> {
       const startupProblem = view.health && view.health.status !== "ready"
         ? `<aside class="trust-warning">${view.health.status === "unsupported" ? trustBadge("no_evidence", "desktop only") : trustBadge("broken", "startup unavailable")} ${escapeHtml(view.health.lastInitializationError ?? "Database initialization has not completed.")}</aside>` : "";
       const llmBanner = view.llmRequired && view.llmReady === false
-        ? `<aside class="trust-warning llm-setup-required">${trustBadge("no_evidence", "LLM required")} AI is not configured. Ask AI and AI memory extraction need an external LLM — open plugin Settings and add a provider, model, and API key. Transcripts still import; run the "Run AI extraction" command afterward.</aside>`
+        ? `<aside class="trust-warning llm-setup-required">${trustBadge("no_evidence", "LLM required")} AI is not configured. Ask AI needs an external LLM (grounded extraction + answer synthesis) AND an external embedding provider (retrieval) — open plugin Settings and configure both. Transcripts still import; run the "Run AI extraction" command afterward. (Embedding status is shown in the setup card below.)</aside>`
         : "";
       const sync = view.generatedSync;
       const syncStatusLine = !sync

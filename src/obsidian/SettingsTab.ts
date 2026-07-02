@@ -2,8 +2,8 @@ import { PluginSettingTab, Setting, type App, type Plugin } from "obsidian";
 import type { ObsidianNavigation } from "../frontend/index.js";
 import type { PluginHealth } from "./startup.js";
 import {
-  EMBEDDING_PROVIDER_OPTIONS, isExternalEmbeddingProvider, isLlmConfigured, LLM_PROVIDER_OPTIONS, redactApiKey, setApiKey,
-  type TranscriptMemorySettings,
+  EMBEDDING_PROVIDER_OPTIONS, isEmbeddingConfigured, isExternalEmbeddingProvider, isLlmConfigured, LLM_PROVIDER_OPTIONS,
+  redactApiKey, setApiKey, setupRequirement, type TranscriptMemorySettings,
 } from "./settings.js";
 
 export class TranscriptMemorySettingsTab extends PluginSettingTab {
@@ -30,16 +30,14 @@ export class TranscriptMemorySettingsTab extends PluginSettingTab {
     });
     warning.addClass("setting-item-description");
 
-    const required = this.containerEl.createEl("p", {
-      text: isLlmConfigured(settings)
-        ? `AI is configured: ${settings.llm.provider} / ${settings.llm.model}. Ask AI and AI memory extraction are enabled.`
-        : "AI is NOT configured. Ask AI and AI memory extraction require an external LLM provider, model, and API key. Configure one below to enable AI features.",
-    });
+    // Ask AI (Obsidian + Claude Desktop / MCP) requires BOTH a configured LLM and a configured external
+    // embedding provider — an LLM-only setup is incomplete. This single message reflects both requirements.
+    const required = this.containerEl.createEl("p", { text: setupRequirement(settings).message });
     required.addClass("setting-item-description");
 
     new Setting(this.containerEl)
       .setName("LLM provider")
-      .setDesc("Required. Ask AI and AI memory extraction use this external provider. Select \"none\" to disable AI features.")
+      .setDesc("Required for Ask AI. Grounded memory extraction and Ask AI answer synthesis use this external provider. Select \"none\" to disable AI features.")
       .addDropdown((dropdown) => {
         for (const option of LLM_PROVIDER_OPTIONS) dropdown.addOption(option, option);
         dropdown.setValue(settings.llm.provider).onChange(async (value) => {
@@ -83,7 +81,7 @@ export class TranscriptMemorySettingsTab extends PluginSettingTab {
 
     new Setting(this.containerEl)
       .setName("Embedding provider")
-      .setDesc("For future semantic retrieval. The deterministic test provider is the default.")
+      .setDesc("Required for Ask AI retrieval, MCP ask_vault, and MCP evidence search. Choose an external (OpenAI-compatible) provider and set its dimensions + API key below. The deterministic test provider is a dev/test seam only and does NOT enable Ask AI.")
       .addDropdown((dropdown) => {
         for (const option of EMBEDDING_PROVIDER_OPTIONS) dropdown.addOption(option, option);
         dropdown.setValue(settings.embedding.provider).onChange(async (value) => {
@@ -94,9 +92,9 @@ export class TranscriptMemorySettingsTab extends PluginSettingTab {
 
     new Setting(this.containerEl)
       .setName("Embedding model")
-      .setDesc("Model identifier placeholder.")
+      .setDesc("Model identifier (e.g. text-embedding-3-small). Required for an external embedding provider.")
       .addText((text) =>
-        text.setPlaceholder("token-hash-v1").setValue(settings.embedding.model).onChange(async (value) => {
+        text.setPlaceholder("e.g. text-embedding-3-small").setValue(settings.embedding.model).onChange(async (value) => {
           await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, model: value } });
         }),
       );
@@ -195,6 +193,11 @@ export class TranscriptMemorySettingsTab extends PluginSettingTab {
       isLlmConfigured(settings)
         ? `Configured: ${settings.llm.provider}${settings.llm.model ? ` / ${settings.llm.model}` : ""} (external).`
         : "Not configured. Ask AI and AI memory extraction are disabled until you set an LLM provider, model, and API key.",
+    );
+    new Setting(this.containerEl).setName("AI retrieval (embeddings)").setDesc(
+      isEmbeddingConfigured(settings)
+        ? `Configured: ${settings.embedding.provider}${settings.embedding.model ? ` / ${settings.embedding.model}` : ""}${settings.embedding.dimensions ? ` / ${settings.embedding.dimensions}d` : ""} (external).`
+        : "Not configured. Ask AI retrieval, MCP ask_vault, and MCP evidence search are disabled until you set an external embedding provider, model, dimensions, and API key. Required — not optional.",
     );
     new Setting(this.containerEl).setName("Embedding index").setDesc(
       health.reindexNeeded === undefined
