@@ -55,8 +55,16 @@ const summarizeResolution = (resolution: EmbeddingProviderResolution): Embedding
  * Returns the LIVE provider (for an external provider it holds the API key), so callers must not
  * serialize the returned object — use embeddingReindexStatus/runEmbeddingReindex, which return a
  * non-secret summary instead. A mock transport may be injected for tests; production passes the
- * Obsidian requestUrl transport. When external is selected but not fully configured, falls back to
- * local token-hash-v1 with a clear reason.
+ * Obsidian requestUrl transport.
+ *
+ * Three resolution cases, kept distinct:
+ *  1. External provider fully configured (mode external + key + positive dims) → the LIVE external provider
+ *     (`usedFallback: false`).
+ *  2. External provider SELECTED but not fully configured (missing key/dims, or mode not yet "external") →
+ *     the local token-hash provider for the keyword index, flagged `usedFallback: true` with an "awaiting
+ *     key" reason. Production Ask AI/MCP stay fail-closed (productionEmbeddingProvider returns undefined).
+ *  3. An explicit dev/test seam (`deterministic-test` / `noop`) → that provider directly (`usedFallback:
+ *     false`) — an intentional selection, never treated as a fallback.
  */
 export function resolveEmbeddingProviderFromSettings(
   settings: TranscriptMemorySettings,
@@ -67,15 +75,19 @@ export function resolveEmbeddingProviderFromSettings(
     const config: ExternalEmbeddingConfig = options.transport ? { ...external, transport: options.transport } : external;
     return resolveEmbeddingProvider(undefined, { external: config });
   }
-  if (settings.mode === "external" && isExternalEmbeddingProvider(settings.embedding.provider)) {
+  // Case 2: an external provider is selected but not fully configured (missing API key and/or dimensions, or
+  // mode not yet "external"). This is a setup-incomplete "awaiting key" state — NOT an explicit dev/test seam.
+  // The local token-hash index still serves keyword search, but Ask AI/MCP stay fail-closed via usedFallback.
+  if (isExternalEmbeddingProvider(settings.embedding.provider)) {
     const fallback = resolveEmbeddingProvider();
     return {
       ...fallback,
       requestedId: settings.embedding.provider,
       usedFallback: true,
-      reason: `External embedding provider "${settings.embedding.provider}" is not fully configured (needs a non-blank API key and positive dimensions); using local ${TOKEN_HASH_MODEL}.`,
+      reason: `Embedding provider "${settings.embedding.provider}" needs an API key (and positive dimensions) before it can power Ask AI. The local ${TOKEN_HASH_MODEL} index is dev/test only and does not answer Ask AI — add a key in Settings and run "Rebuild Embedding Index".`,
     };
   }
+  // Case 3: explicit dev/test seam (deterministic-test / noop) — an intentional selection, not a fallback.
   return resolveEmbeddingProvider(settings.embedding.provider, { dimensions: settings.embedding.dimensions });
 }
 

@@ -4772,6 +4772,11 @@ function createSqliteFrontendApi(db, options = {}) {
 }
 
 // src/obsidian/settings.ts
+var RECOMMENDED_EMBEDDING_DEFAULTS = {
+  provider: "openai",
+  model: "text-embedding-3-small",
+  dimensions: 1536
+};
 var EXTERNAL_LLM_PROVIDERS = ["openai"];
 var isExternalLlmProvider = (providerId) => EXTERNAL_LLM_PROVIDERS.includes(providerId);
 var EXTERNAL_EMBEDDING_PROVIDERS = ["openai"];
@@ -4783,7 +4788,7 @@ var DEFAULT_SETTINGS = {
   schemaVersion: 1,
   mode: "local",
   llm: { provider: "none", model: "" },
-  embedding: { provider: "deterministic-test", model: "token-hash-v1" },
+  embedding: { ...RECOMMENDED_EMBEDDING_DEFAULTS },
   apiKeys: {}
 };
 var isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
@@ -4816,7 +4821,7 @@ var normalizeEmbeddingSelection = (value, fallback) => {
     provider: asString(record.provider, fallback.provider),
     model: asString(record.model, fallback.model)
   };
-  const dimensions = positiveInt(record.dimensions);
+  const dimensions = positiveInt(record.dimensions) ?? (isRecord(value) ? void 0 : fallback.dimensions);
   if (dimensions !== void 0) result.dimensions = dimensions;
   const baseUrl = normalizeBaseUrl(record.baseUrl);
   if (baseUrl !== void 0) result.baseUrl = baseUrl;
@@ -5038,13 +5043,13 @@ function resolveEmbeddingProviderFromSettings(settings, options = {}) {
     const config = options.transport ? { ...external, transport: options.transport } : external;
     return resolveEmbeddingProvider(void 0, { external: config });
   }
-  if (settings.mode === "external" && isExternalEmbeddingProvider(settings.embedding.provider)) {
+  if (isExternalEmbeddingProvider(settings.embedding.provider)) {
     const fallback = resolveEmbeddingProvider();
     return {
       ...fallback,
       requestedId: settings.embedding.provider,
       usedFallback: true,
-      reason: `External embedding provider "${settings.embedding.provider}" is not fully configured (needs a non-blank API key and positive dimensions); using local ${TOKEN_HASH_MODEL}.`
+      reason: `Embedding provider "${settings.embedding.provider}" needs an API key (and positive dimensions) before it can power Ask AI. The local ${TOKEN_HASH_MODEL} index is dev/test only and does not answer Ask AI \u2014 add a key in Settings and run "Rebuild Embedding Index".`
     };
   }
   return resolveEmbeddingProvider(settings.embedding.provider, { dimensions: settings.embedding.dimensions });
