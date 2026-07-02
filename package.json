@@ -5,6 +5,10 @@
   "scripts": {
     "build": "node esbuild.mjs --production",
     "build:dev": "node esbuild.mjs",
+    "verify:dist": "node scripts/verify-dist.mjs",
+    "install:vault": "node scripts/install-to-vault.mjs",
+    "mcp:build": "node scripts/build-mcp.mjs",
+    "mcp:start": "node dist/mcp/server.cjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

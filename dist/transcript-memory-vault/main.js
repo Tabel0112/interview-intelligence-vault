@@ -78,7 +78,7 @@ var require_sqlite_error = __commonJS({
 // node_modules/file-uri-to-path/index.js
 var require_file_uri_to_path = __commonJS({
   "node_modules/file-uri-to-path/index.js"(exports2, module2) {
-    var sep = require("path").sep || "/";
+    var sep2 = require("path").sep || "/";
     module2.exports = fileUriToPath;
     function fileUriToPath(uri) {
       if ("string" != typeof uri || uri.length <= 7 || "file://" != uri.substring(0, 7)) {
@@ -90,15 +90,15 @@ var require_file_uri_to_path = __commonJS({
       var path = rest.substring(firstSlash + 1);
       if ("localhost" == host) host = "";
       if (host) {
-        host = sep + sep + host;
+        host = sep2 + sep2 + host;
       }
       path = path.replace(/^(.+)\|/, "$1:");
-      if (sep == "\\") {
+      if (sep2 == "\\") {
         path = path.replace(/\//g, "\\");
       }
       if (/^.+\:/.test(path)) {
       } else {
-        path = sep + path;
+        path = sep2 + path;
       }
       return host + path;
     }
@@ -111,8 +111,8 @@ var require_bindings = __commonJS({
     var fs = require("fs");
     var path = require("path");
     var fileURLToPath2 = require_file_uri_to_path();
-    var join4 = path.join;
-    var dirname2 = path.dirname;
+    var join5 = path.join;
+    var dirname4 = path.dirname;
     var exists = fs.accessSync && function(path2) {
       try {
         fs.accessSync(path2);
@@ -121,7 +121,7 @@ var require_bindings = __commonJS({
       }
       return true;
     } || fs.existsSync || path.existsSync;
-    var defaults = {
+    var defaults2 = {
       arrow: process.env.NODE_BINDINGS_ARROW || " \u2192 ",
       compiled: process.env.NODE_BINDINGS_COMPILED_DIR || "compiled",
       platform: process.platform,
@@ -159,8 +159,8 @@ var require_bindings = __commonJS({
       } else if (!opts) {
         opts = {};
       }
-      Object.keys(defaults).map(function(i2) {
-        if (!(i2 in opts)) opts[i2] = defaults[i2];
+      Object.keys(defaults2).map(function(i2) {
+        if (!(i2 in opts)) opts[i2] = defaults2[i2];
       });
       if (!opts.module_root) {
         opts.module_root = exports2.getRoot(exports2.getFileName());
@@ -171,7 +171,7 @@ var require_bindings = __commonJS({
       var requireFunc = typeof __webpack_require__ === "function" ? __non_webpack_require__ : require;
       var tries = [], i = 0, l = opts.try.length, n, b, err;
       for (; i < l; i++) {
-        n = join4.apply(
+        n = join5.apply(
           null,
           opts.try[i].map(function(p) {
             return opts[p] || p;
@@ -227,12 +227,12 @@ var require_bindings = __commonJS({
       return fileName;
     };
     exports2.getRoot = function getRoot(file) {
-      var dir = dirname2(file), prev;
+      var dir = dirname4(file), prev;
       while (true) {
         if (dir === ".") {
           dir = process.cwd();
         }
-        if (exists(join4(dir, "package.json")) || exists(join4(dir, "node_modules"))) {
+        if (exists(join5(dir, "package.json")) || exists(join5(dir, "node_modules"))) {
           return dir;
         }
         if (prev === dir) {
@@ -241,7 +241,7 @@ var require_bindings = __commonJS({
           );
         }
         prev = dir;
-        dir = join4(dir, "..");
+        dir = join5(dir, "..");
       }
     };
   }
@@ -429,13 +429,13 @@ var require_backup = __commonJS({
     var runBackup = (backup, handler) => {
       let rate = 0;
       let useDefault = true;
-      return new Promise((resolve, reject) => {
+      return new Promise((resolve3, reject) => {
         setImmediate(function step() {
           try {
             const progress = backup.transfer(rate);
             if (!progress.remainingPages) {
               backup.close();
-              resolve(progress);
+              resolve3(progress);
               return;
             }
             if (useDefault) {
@@ -814,9 +814,9 @@ __export(main_exports, {
 module.exports = __toCommonJS(main_exports);
 
 // src/obsidian/Plugin.ts
-var import_obsidian4 = require("obsidian");
+var import_obsidian5 = require("obsidian");
 var import_node_fs3 = require("node:fs");
-var import_node_path4 = require("node:path");
+var import_node_path7 = require("node:path");
 
 // src/db/connection.ts
 var import_better_sqlite3 = __toESM(require_lib(), 1);
@@ -838,7 +838,11 @@ var PACKAGED_MIGRATIONS = [
   { id: "009", name: "ask_ai_pipeline", filename: "009_ask_ai_pipeline.sql" },
   { id: "010", name: "conflict_detection", filename: "010_conflict_detection.sql" },
   { id: "011", name: "agent_orchestration_hermes", filename: "011_agent_orchestration_hermes.sql" },
-  { id: "012", name: "obsidian_views", filename: "012_obsidian_views.sql" }
+  { id: "012", name: "obsidian_views", filename: "012_obsidian_views.sql" },
+  { id: "013", name: "ask_ai_claim_support", filename: "013_ask_ai_claim_support.sql" },
+  { id: "014", name: "ask_ai_analysis", filename: "014_ask_ai_analysis.sql" },
+  { id: "015", name: "ask_ai_unconfirmed", filename: "015_ask_ai_unconfirmed.sql" },
+  { id: "016", name: "ask_ai_analysis_pk", filename: "016_ask_ai_analysis_pk.sql" }
 ];
 var PACKAGED_MIGRATION_COUNT = PACKAGED_MIGRATIONS.length;
 function validateMigrationPackage(directory = defaultMigrationDirectory()) {
@@ -892,6 +896,7 @@ function openDatabase(filename = ":memory:", options = {}) {
   if (options.nativeBinding !== void 0) sqliteOptions.nativeBinding = options.nativeBinding;
   const db = new import_better_sqlite3.default(filename, sqliteOptions);
   db.pragma("foreign_keys = ON");
+  db.pragma("busy_timeout = 5000");
   if (filename !== ":memory:" && !options.readonly) {
     db.pragma("journal_mode = WAL");
   }
@@ -992,6 +997,41 @@ function createTranscriptsRepo(db) {
     updateTranscriptStatus(id, status) {
       const result = db.prepare("UPDATE transcripts SET status = ?, updated_at = ? WHERE id = ?").run(status, now(), id);
       if (!result.changes) throw new NotFoundError(`Transcript not found: ${id}`);
+    },
+    /**
+     * Hard-delete a whole transcript and its derived provenance, transactionally. Raw transcript fields are
+     * NEVER edited — the whole row is removed. The two `ON DELETE RESTRICT` chains on transcript_spans
+     * (evidence_items, memory_object_evidence; evidence_items in turn restricted by legacy ai_answer_citations)
+     * are cleared explicitly, in order, before the transcript row is deleted; cascades + existing triggers then
+     * remove turns/spans/source_pointers/evidence_pointers/ask_ai_run_evidence/extraction_runs and downgrade any
+     * now-evidence-less memories and affected conflicts. Memory objects are NOT deleted directly. Generated
+     * Markdown is untouched here (it self-prunes on the next sync). Throws NotFoundError for an unknown id; the
+     * transaction leaves no half-deleted state.
+     */
+    deleteTranscript(id) {
+      if (!db.prepare("SELECT 1 FROM transcripts WHERE id = ?").get(id)) throw new NotFoundError(`Transcript not found: ${id}`);
+      return db.transaction(() => {
+        const spanIds = db.prepare("SELECT id FROM transcript_spans WHERE transcript_id = ?").all(id).map((r) => r.id);
+        const count = (sql, ...args) => db.prepare(sql).get(...args).c;
+        const inSpans = (column) => `${column} IN (${spanIds.map(() => "?").join(",")})`;
+        const evidenceItemIds = spanIds.length ? db.prepare(`SELECT id FROM evidence_items WHERE ${inSpans("span_id")}`).all(...spanIds).map((r) => r.id) : [];
+        const memoryEvidenceLinksDeleted = spanIds.length ? count(`SELECT COUNT(*) c FROM memory_object_evidence WHERE ${inSpans("span_id")}`, ...spanIds) : 0;
+        const evidencePointersDeleted = count("SELECT COUNT(*) c FROM evidence_pointers WHERE transcript_id = ?", id);
+        const conflictsAffected = count("SELECT COUNT(DISTINCT conflict_assessment_id) c FROM conflict_evidence_links WHERE evidence_pointer_id IN (SELECT evidence_pointer_id FROM evidence_pointers WHERE transcript_id = ?)", id);
+        const answersAffected = count("SELECT COUNT(DISTINCT ask_ai_run_id) c FROM ask_ai_run_evidence WHERE transcript_id = ?", id);
+        const activeMemoryIds = db.prepare("SELECT id FROM memory_objects WHERE status = 'active' OR extraction_status = 'active'").all().map((r) => r.id);
+        if (evidenceItemIds.length) db.prepare(`DELETE FROM ai_answer_citations WHERE evidence_item_id IN (${evidenceItemIds.map(() => "?").join(",")})`).run(...evidenceItemIds);
+        if (spanIds.length) {
+          db.prepare(`DELETE FROM evidence_items WHERE ${inSpans("span_id")}`).run(...spanIds);
+          db.prepare(`DELETE FROM memory_object_evidence WHERE ${inSpans("span_id")}`).run(...spanIds);
+        }
+        db.prepare("DELETE FROM transcripts WHERE id = ?").run(id);
+        const memoriesDowngraded = activeMemoryIds.filter((memoryId) => {
+          const row = db.prepare("SELECT status, extraction_status FROM memory_objects WHERE id = ?").get(memoryId);
+          return row != null && row.status !== "active" && row.extraction_status !== "active";
+        }).length;
+        return { deletedTranscriptId: id, spansDeleted: spanIds.length, evidenceItemsDeleted: evidenceItemIds.length, memoryEvidenceLinksDeleted, evidencePointersDeleted, memoriesDowngraded, conflictsAffected, answersAffected };
+      })();
     }
   };
 }
@@ -1416,151 +1456,17 @@ function createRepositories(db) {
   };
 }
 
-// src/obsidian/pluginTypes.ts
-var OBSIDIAN_VIEW_TYPES = {
-  dashboard: "transcript-memory-dashboard",
-  upload: "transcript-memory-upload",
-  transcript: "transcript-memory-transcript",
-  ask: "transcript-memory-ask",
-  answer: "transcript-memory-answer",
-  evidence: "transcript-memory-evidence",
-  memory: "transcript-memory-memory-object",
-  graph: "transcript-memory-graph",
-  search: "transcript-memory-search",
-  review: "transcript-memory-review"
-};
-var OBSIDIAN_COMMANDS = [
-  { id: "open-dashboard", name: "Open Transcript Memory Dashboard", viewType: OBSIDIAN_VIEW_TYPES.dashboard },
-  { id: "upload-transcript", name: "Upload Transcript", viewType: OBSIDIAN_VIEW_TYPES.upload },
-  { id: "ask-ai", name: "Ask AI About Transcripts", viewType: OBSIDIAN_VIEW_TYPES.ask },
-  { id: "search-vault", name: "Search Transcript Memory Vault", viewType: OBSIDIAN_VIEW_TYPES.search },
-  { id: "open-graph", name: "Open Memory Graph", viewType: OBSIDIAN_VIEW_TYPES.graph },
-  { id: "open-review", name: "Open Review Queue", viewType: OBSIDIAN_VIEW_TYPES.review }
-];
-var OBSIDIAN_RIBBON = { icon: "database", title: "Open Transcript Memory Dashboard" };
-var viewTitle = (type) => ({
-  [OBSIDIAN_VIEW_TYPES.dashboard]: "Transcript Memory Dashboard",
-  [OBSIDIAN_VIEW_TYPES.upload]: "Upload Transcript",
-  [OBSIDIAN_VIEW_TYPES.transcript]: "Transcript Source",
-  [OBSIDIAN_VIEW_TYPES.ask]: "Ask AI",
-  [OBSIDIAN_VIEW_TYPES.answer]: "AI Answer",
-  [OBSIDIAN_VIEW_TYPES.evidence]: "Evidence",
-  [OBSIDIAN_VIEW_TYPES.memory]: "Memory Object",
-  [OBSIDIAN_VIEW_TYPES.graph]: "Memory Graph",
-  [OBSIDIAN_VIEW_TYPES.search]: "Search Transcript Memory",
-  [OBSIDIAN_VIEW_TYPES.review]: "Review Queue"
-})[type];
-var defaultTarget = (type) => ({
-  [OBSIDIAN_VIEW_TYPES.dashboard]: "mv://dashboard",
-  [OBSIDIAN_VIEW_TYPES.upload]: "mv://upload",
-  [OBSIDIAN_VIEW_TYPES.transcript]: "mv://transcripts/missing",
-  [OBSIDIAN_VIEW_TYPES.ask]: "mv://ask",
-  [OBSIDIAN_VIEW_TYPES.answer]: "mv://answers/missing",
-  [OBSIDIAN_VIEW_TYPES.evidence]: "mv://evidence/missing",
-  [OBSIDIAN_VIEW_TYPES.memory]: "mv://memory/missing",
-  [OBSIDIAN_VIEW_TYPES.graph]: "mv://graph",
-  [OBSIDIAN_VIEW_TYPES.search]: "mv://search",
-  [OBSIDIAN_VIEW_TYPES.review]: "mv://review"
-})[type];
-
-// src/obsidian/ObsidianNavigation.ts
-function createObsidianNavigation(app) {
-  const open = async (type, target) => {
-    const leaf = app.workspace.getLeaf("tab");
-    await leaf.setViewState({ type, active: true, state: { target } });
-    app.workspace.revealLeaf(leaf);
-  };
-  return {
-    openDashboard: () => open(OBSIDIAN_VIEW_TYPES.dashboard, "mv://dashboard"),
-    openUpload: () => open(OBSIDIAN_VIEW_TYPES.upload, "mv://upload"),
-    openTranscript: (id, options) => open(OBSIDIAN_VIEW_TYPES.transcript, `mv://transcripts/${encodeURIComponent(id)}${options?.spanId ? `?span=${encodeURIComponent(options.spanId)}` : ""}`),
-    openAskAI: (options) => open(OBSIDIAN_VIEW_TYPES.ask, `mv://ask${options?.transcriptIds?.length ? `?transcriptIds=${options.transcriptIds.map(encodeURIComponent).join(",")}` : ""}`),
-    openAnswer: (id) => open(OBSIDIAN_VIEW_TYPES.answer, `mv://answers/${encodeURIComponent(id)}`),
-    openEvidence: (id) => open(OBSIDIAN_VIEW_TYPES.evidence, `mv://evidence/${encodeURIComponent(id)}`),
-    openMemoryObject: (id) => open(OBSIDIAN_VIEW_TYPES.memory, `mv://memory/${encodeURIComponent(id)}`),
-    openGraph: (options) => {
-      const params = new URLSearchParams();
-      if (options?.selectedNodeId) params.set("selectedNode", options.selectedNodeId);
-      if (options?.selectedEdgeId) params.set("selectedEdge", options.selectedEdgeId);
-      if (options?.query) params.set("q", options.query);
-      return open(OBSIDIAN_VIEW_TYPES.graph, `mv://graph${params.size ? `?${params}` : ""}`);
-    },
-    openSearch: (query) => open(OBSIDIAN_VIEW_TYPES.search, `mv://search${query ? `?q=${encodeURIComponent(query)}` : ""}`),
-    openReviewQueue: (options) => open(OBSIDIAN_VIEW_TYPES.review, options?.reviewItemId ? `mv://review/${encodeURIComponent(options.reviewItemId)}` : "mv://review")
-  };
-}
-
-// src/obsidian/nativeBindings.ts
-var import_node_fs2 = require("node:fs");
-var import_node_path2 = require("node:path");
-var nativeBindingTarget = (runtime) => `${runtime.platform}-${runtime.arch}-abi${runtime.modules ?? "unknown"}`;
-function currentNativeRuntime() {
-  return {
-    platform: process.platform,
-    arch: process.arch,
-    modules: process.versions.modules,
-    electron: process.versions.electron
-  };
-}
-function listPackagedNativeTargets(pluginDirectory) {
-  const nativeDirectory = (0, import_node_path2.join)(pluginDirectory, "native");
-  try {
-    return (0, import_node_fs2.readdirSync)(nativeDirectory, { withFileTypes: true }).filter((entry) => entry.isDirectory() && (0, import_node_fs2.existsSync)((0, import_node_path2.join)(nativeDirectory, entry.name, "better_sqlite3.node"))).map((entry) => entry.name).sort();
-  } catch {
-    return [];
-  }
-}
-function resolveNativeBinding(pluginDirectory, runtime = currentNativeRuntime()) {
-  const target = nativeBindingTarget(runtime);
-  const packagedTargets = listPackagedNativeTargets(pluginDirectory);
-  const bindingPath = (0, import_node_path2.join)(pluginDirectory, "native", target, "better_sqlite3.node");
-  if ((0, import_node_fs2.existsSync)(bindingPath)) return { ok: true, target, bindingPath, packagedTargets, error: null };
-  const electron = runtime.electron ? ` Electron ${runtime.electron}` : "";
-  return {
-    ok: false,
-    target,
-    bindingPath: null,
-    packagedTargets,
-    error: `SQLite native binding unavailable for ${target}.${electron} Packaged targets: ${packagedTargets.join(", ") || "none"}.`
-  };
-}
-function nativeBindingLoadError(resolution, error) {
-  const detail = error instanceof Error ? error.message : String(error);
-  return new Error(`SQLite native binding ${resolution.target} is unavailable or incompatible: ${detail}`);
-}
-
-// src/obsidian/SettingsTab.ts
-var import_obsidian = require("obsidian");
-var TranscriptMemorySettingsTab = class extends import_obsidian.PluginSettingTab {
-  constructor(app, plugin, getHealth, navigation) {
-    super(app, plugin);
-    this.getHealth = getHealth;
-    this.navigation = navigation;
-  }
-  getHealth;
-  navigation;
-  display() {
-    const health = this.getHealth();
-    this.containerEl.empty();
-    this.containerEl.createEl("h2", { text: "Transcript Memory Vault" });
-    new import_obsidian.Setting(this.containerEl).setName("Plugin status").setDesc(health.status);
-    new import_obsidian.Setting(this.containerEl).setName("Database location").setDesc(health.databasePath ?? "Unavailable");
-    new import_obsidian.Setting(this.containerEl).setName("SQLite storage").setDesc(health.realSqliteStorage ? "Connected to real local SQLite storage" : "Not connected");
-    new import_obsidian.Setting(this.containerEl).setName("Migration status").setDesc(`${health.migrationStatus}: ${health.appliedMigrationCount}/${health.packagedMigrationCount} applied`);
-    new import_obsidian.Setting(this.containerEl).setName("Last initialization error").setDesc(health.lastInitializationError ?? "None");
-    new import_obsidian.Setting(this.containerEl).setName("Native binding target").setDesc(health.nativeBindingTarget ?? "Unresolved");
-    new import_obsidian.Setting(this.containerEl).setName("Packaged native targets").setDesc(health.packagedNativeTargets.join(", ") || "None");
-    new import_obsidian.Setting(this.containerEl).setName("Dashboard").addButton((button) => button.setButtonText("Open dashboard").onClick(() => void this.navigation.openDashboard()));
-  }
-};
-
-// src/obsidian/TranscriptMemoryItemView.ts
-var import_obsidian3 = require("obsidian");
+// src/frontend/types.ts
+var DEGRADED_MEMORY_REASON = "Evidence was removed or no longer resolves, possibly because the source transcript was deleted. This memory cannot be approved, but you can reject it to dismiss it.";
 
 // src/frontend/router.ts
 var patterns = [
   { id: "dashboard", pattern: /^\/(?:dashboard\/?)?$/ },
   { id: "upload", pattern: /^\/upload\/?$/ },
+  // The transcripts LIST route must be matched before the transcript DETAIL route below, otherwise
+  // `/transcripts` would be swallowed by the `:id` pattern (it wouldn't — the detail pattern requires a
+  // segment — but ordering keeps the intent explicit and robust to future pattern edits).
+  { id: "transcripts", pattern: /^\/transcripts\/?$/ },
   { id: "transcript", pattern: /^\/transcripts\/([^/]+)\/?$/, names: ["id"] },
   { id: "ask", pattern: /^\/ask\/?$/ },
   { id: "answer", pattern: /^\/answers\/([^/]+)\/?$/, names: ["id"] },
@@ -1587,9 +1493,23 @@ function matchRoute(input) {
   }
   return { id: "not_found", path: url.pathname, params: {}, query: url.searchParams };
 }
+var OBSIDIAN_PROTOCOL_ACTION = "transcript-memory-vault";
+function obsidianRouteFromProtocol(params, opts = {}) {
+  if (typeof params.action === "string" && params.action !== (opts.action ?? OBSIDIAN_PROTOCOL_ACTION)) return null;
+  const route = params.route;
+  if (typeof route !== "string" || !route.startsWith("mv://")) return null;
+  let parsed;
+  try {
+    parsed = matchRoute(route);
+  } catch {
+    return null;
+  }
+  return parsed.id === "not_found" ? null : route;
+}
 var routeHref = {
   dashboard: () => "mv://dashboard",
   upload: () => "mv://upload",
+  transcripts: () => "mv://transcripts",
   ask: () => "mv://ask",
   graph: (query = "") => `mv://graph${query}`,
   search: (query = "") => `mv://search${query}`,
@@ -1609,6 +1529,8 @@ async function navigateInternal(navigation, target) {
       return navigation.openDashboard();
     case "upload":
       return navigation.openUpload();
+    case "transcripts":
+      return navigation.openTranscripts();
     case "transcript":
       return navigation.openTranscript(route.params.id, { spanId: route.query.get("span") ?? void 0 });
     case "ask":
@@ -1653,7 +1575,7 @@ function score(value) {
   return value == null ? "not scored" : `${Math.round(value * 100)}%`;
 }
 function emptyState(title, detail, action) {
-  return `<div class="empty-state"><h3>${escapeHtml(title)}</h3><p>${escapeHtml(detail)}</p>${action ? routeButton(action.href, action.label) : ""}</div>`;
+  return `<div class="empty-state tmv-fade-in"><h3>${escapeHtml(title)}</h3><p>${escapeHtml(detail)}</p>${action ? routeButton(action.href, action.label) : ""}</div>`;
 }
 function routeButton(target, label, className = "route-action") {
   return `<button type="button" class="${escapeHtml(className)}" data-route="${escapeHtml(target)}">${escapeHtml(label)}</button>`;
@@ -1661,14 +1583,100 @@ function routeButton(target, label, className = "route-action") {
 function appShell(title, body) {
   return `<div class="transcript-memory-vault vault-app">
     <header class="app-header">${routeButton("mv://dashboard", "Interview Intelligence Vault", "route-action brand")}<nav aria-label="Primary">
-      ${routeButton("mv://upload", "Upload")}${routeButton("mv://ask", "Ask AI")}${routeButton("mv://search", "Search")}${routeButton("mv://graph", "Graph")}${routeButton("mv://review", "Review")}
+      ${routeButton("mv://dashboard", "Dashboard")}${routeButton("mv://upload", "Upload")}${routeButton("mv://review", "Review")}${routeButton("mv://graph", "Graph")}${routeButton("mv://search", "Search")}${routeButton("mv://transcripts", "Transcripts")}
+      <details class="nav-advanced tmv-advanced"><summary>Advanced</summary><div class="nav-advanced-items">${routeButton("mv://ask", "Internal Ask AI")}${routeButton("mv://dashboard", "Settings & health")}</div></details>
     </nav></header>
     <main><header class="page-header"><h1>${escapeHtml(title)}</h1></header>${body}</main>
   </div>`;
 }
 
+// src/ask-ai/types.ts
+var AI_ANALYSIS_WARNING = "AI analysis \u2014 not from transcript evidence";
+var UNCONFIRMED_DISCLAIMER = "These items are not confirmed transcript-backed facts. They are review-only, tentative, conflicting, or missing evidence.";
+
+// src/ask-ai/errors.ts
+var SynthesisSetupRequiredError = class extends Error {
+  code = "synthesis_setup_required";
+  constructor(message = "Ask AI requires a configured LLM provider. Add a provider, model, and API key in Settings.") {
+    super(message);
+    this.name = "SynthesisSetupRequiredError";
+  }
+};
+var SynthesisFailedError = class extends Error {
+  code = "synthesis_failed";
+  constructor(message = "The AI could not generate an answer right now. Please try again.") {
+    super(message);
+    this.name = "SynthesisFailedError";
+  }
+};
+var EmbeddingSetupRequiredError = class extends Error {
+  code = "embedding_setup_required";
+  constructor(message = "Configure an API embedding provider before using Ask AI. Add an embedding provider, model, dimensions, and API key in Settings.") {
+    super(message);
+    this.name = "EmbeddingSetupRequiredError";
+  }
+};
+var EmbeddingReindexRequiredError = class extends Error {
+  code = "embedding_reindex_required";
+  constructor(message = 'Rebuild the embedding index after changing embedding provider/settings. Run "Rebuild embedding index".') {
+    super(message);
+    this.name = "EmbeddingReindexRequiredError";
+  }
+};
+
 // src/ask-ai/queryUnderstanding.ts
 var unique = (values) => [...new Set(values.filter(Boolean))];
+var EVIDENCE_CHECK = /\b(evidence|support\w*|backs? (this|that|it)|what backs|substantiat\w*|corroborat\w*|proof|prove[sd]?)\b/i;
+var CONFLICT_RISK = /\b(conflict\w*|contradict\w*|disagree\w*|tension\w*|risk\w*|problem\w*|issue\w*|concern\w*|blocker\w*|pitfall\w*|drawback\w*|downside\w*|gap\w*)\b|\bwhat'?s wrong\b/i;
+var COMPARISON = /\b(compare\w*|comparison\w*|versus|vs\.?|difference between|which is better|trade-?offs?|better option)\b/i;
+var SUMMARY = /\b(summar\w*|overview|recap\w*|tl;?dr|gist|high[- ]level)\b/i;
+var PLANNING_DRAFT = /\b(draft\w*|outlin\w*|compos\w*)\b|\bmake me\b|\bplan for\b|\b(make|create|build|prepare|writ\w*|put together|generat\w*)\b[\s\w]{0,20}\b(plan\w*|email\w*|roadmap\w*|proposal\w*|agenda|checklist\w*|memo\w*|message\w*|doc\w*|document\w*|report\w*|letter\w*)\b/i;
+var ADVICE_STRATEGY = /\bhow (do|can|should|might|would) (i|we|you)\b|\bhow to\b|\bwhat should (i|we)\b|\bshould (i|we)\b|\b(recommend\w*|advice|advis\w*|strateg\w*|best way|improv\w*|grow\w*|optimi[sz]\w*|increas\w*|scale up|next steps?)\b/i;
+var DECISION_LOOKUP = /\b(decid\w*|decision\w*|agree\w*|chose|choos\w*|chosen|settled on|conclud\w*|opted? for)\b/i;
+function classifyIntent(lower) {
+  const analysis = PLANNING_DRAFT.test(lower) ? "planning_draft" : ADVICE_STRATEGY.test(lower) ? "advice_strategy" : null;
+  const lookup = EVIDENCE_CHECK.test(lower) ? "evidence_check" : DECISION_LOOKUP.test(lower) ? "decision_lookup" : null;
+  if (analysis && lookup) return "mixed";
+  if (EVIDENCE_CHECK.test(lower)) return "evidence_check";
+  if (CONFLICT_RISK.test(lower)) return "conflict_risk";
+  if (COMPARISON.test(lower)) return "comparison";
+  if (SUMMARY.test(lower)) return "summary";
+  if (analysis) return analysis;
+  if (DECISION_LOOKUP.test(lower)) return "decision_lookup";
+  return "factual_lookup";
+}
+function contractForIntent(intent) {
+  const base = {
+    requireEvidenceForFactualClaims: true,
+    allowGeneralReasoning: false,
+    allowRecommendations: false,
+    refuseIfNoEvidence: true,
+    includeReviewOnlyItems: false,
+    includeConflicts: false,
+    allowDrafting: false
+  };
+  switch (intent) {
+    case "decision_lookup":
+      return { ...base, includeConflicts: true };
+    case "evidence_check":
+      return { ...base, includeConflicts: true };
+    case "comparison":
+      return { ...base, includeConflicts: true };
+    case "conflict_risk":
+      return { ...base, allowGeneralReasoning: true, refuseIfNoEvidence: false, includeReviewOnlyItems: true, includeConflicts: true };
+    case "advice_strategy":
+      return { ...base, allowGeneralReasoning: true, allowRecommendations: true, refuseIfNoEvidence: false, includeReviewOnlyItems: true, includeConflicts: true };
+    case "planning_draft":
+      return { ...base, allowGeneralReasoning: true, allowRecommendations: true, refuseIfNoEvidence: false, includeReviewOnlyItems: true, includeConflicts: true, allowDrafting: true };
+    case "mixed":
+      return { ...base, allowGeneralReasoning: true, allowRecommendations: true, refuseIfNoEvidence: false, includeReviewOnlyItems: true, includeConflicts: true };
+    case "summary":
+      return base;
+    case "factual_lookup":
+    default:
+      return base;
+  }
+}
 function understandQuestion(question, options = {}) {
   const normalizedQuestion = question.trim().replace(/\s+/g, " ");
   if (!normalizedQuestion) throw new ValidationError("Ask AI question must not be empty");
@@ -1692,10 +1700,13 @@ function understandQuestion(question, options = {}) {
   ]);
   const quoted = [...normalizedQuestion.matchAll(/["']([^"']+)["']/g)].map((match) => match[1]);
   const timeHints = unique(normalizedQuestion.match(/\b(?:recently|today|yesterday|last week|last month|before|after|20\d{2}|january|february|march|april|may|june|july|august|september|october|november|december)\b/gi) ?? []);
+  const intent = classifyIntent(lower);
   return {
     originalQuestion: question,
     normalizedQuestion,
     answerMode,
+    intent,
+    answerContract: contractForIntent(intent),
     detectedEntities,
     detectedTopics: quoted,
     timeHints,
@@ -1771,7 +1782,36 @@ async function generateClaimsFromEvidence(query, evidence, citations, options) {
     evidence.find((item) => item.stance === "supports" || item.stance === "updates"),
     evidence.find((item) => item.stance === "opposes")
   ].filter((item) => item != null);
-  const proposed = options.confidence === "conflicting" ? conflictEvidence.map((item) => ({ kind: kinds[0] ?? "fact", text: defaultClaimText(kinds[0] ?? "fact", [item]), evidencePointerIds: [item.evidencePointerId] })) : options.llm ? await options.llm.generateClaims({ query, evidence }) : kinds.map((kind) => ({ kind, text: defaultClaimText(kind, evidence), evidencePointerIds: evidence.map((item) => item.evidencePointerId) }));
+  const deterministicClaims = () => kinds.map((kind) => ({ kind, text: defaultClaimText(kind, evidence), evidencePointerIds: evidence.map((item) => item.evidencePointerId) }));
+  let proposed;
+  if (options.confidence === "conflicting") {
+    options.onSynthesis?.("conflict");
+    proposed = conflictEvidence.map((item) => ({ kind: kinds[0] ?? "fact", text: defaultClaimText(kinds[0] ?? "fact", [item]), evidencePointerIds: [item.evidencePointerId] }));
+  } else if (options.llm) {
+    try {
+      const llmClaims = await options.llm.generateClaims({ query, evidence });
+      if (llmClaims.length) {
+        options.onSynthesis?.("llm");
+        proposed = llmClaims;
+      } else if (options.requireLlm) {
+        options.onSynthesis?.("llm");
+        return [];
+      } else {
+        options.onSynthesis?.("deterministic");
+        proposed = deterministicClaims();
+      }
+    } catch (error) {
+      if (error instanceof SynthesisFailedError) throw error;
+      if (options.requireLlm) throw new SynthesisFailedError();
+      options.onSynthesis?.("deterministic");
+      proposed = deterministicClaims();
+    }
+  } else if (options.requireLlm) {
+    throw new SynthesisSetupRequiredError();
+  } else {
+    options.onSynthesis?.("deterministic");
+    proposed = deterministicClaims();
+  }
   return proposed.flatMap((claim, index) => {
     const pointers = [...new Set(claim.evidencePointerIds)].filter((id) => selectedPointers.has(id));
     if (!claim.text.trim() || !pointers.length) return [];
@@ -1791,50 +1831,187 @@ async function generateClaimsFromEvidence(query, evidence, citations, options) {
   });
 }
 
-// src/ask-ai/citations.ts
+// src/ask-ai/analysisGeneration.ts
 var import_node_crypto3 = require("node:crypto");
-var stableId2 = (value) => `aic_${(0, import_node_crypto3.createHash)("sha256").update(value).digest("hex").slice(0, 24)}`;
-function buildCitations(evidence) {
-  const seen = /* @__PURE__ */ new Set();
-  return evidence.filter((item) => {
-    if (seen.has(item.evidencePointerId)) return false;
-    seen.add(item.evidencePointerId);
-    return true;
-  }).map((item, index) => ({
-    id: stableId2(item.evidencePointerId),
-    label: `[${index + 1}]`,
-    evidencePointerId: item.evidencePointerId,
-    sourcePointerId: item.sourcePointerId,
-    transcriptId: item.transcriptId,
-    spanId: item.spanId,
-    quotePreview: item.quotePreview,
-    clickbackUri: item.clickbackUri
-  }));
+var ANALYSIS_KINDS = ["recommendation", "inference", "pattern", "fact"];
+var stableId2 = (value) => `aianalysis_${(0, import_node_crypto3.createHash)("sha256").update(value).digest("hex").slice(0, 24)}`;
+function buildAnalysisClaim(index, item) {
+  return {
+    id: stableId2(`${index}:${item.kind}:${item.text}`),
+    kind: item.kind,
+    text: item.text.trim(),
+    supportStatus: "ai_analysis",
+    evidencePointerIds: [],
+    citationIds: [],
+    warning: AI_ANALYSIS_WARNING,
+    explanation: item.explanation
+  };
 }
-var renderCitation = (citation) => `${citation.label}(${citation.clickbackUri})`;
-
-// src/ask-ai/answerRendering.ts
-function renderAnswer(input) {
-  if (input.confidence === "no_evidence" || !input.claims.length) return "I don't have enough transcript-backed evidence to answer that.";
-  const citations = new Map(input.citations.map((item) => [item.id, item]));
-  const lines = input.claims.map((claim) => {
-    const links2 = claim.citationIds.map((id) => citations.get(id)).filter((item) => item != null).map(renderCitation);
-    if (!links2.length) throw new ValidationError(`Ask AI claim has no selected citation: ${claim.id}`);
-    const label = claim.kind === "fact" ? "" : `**${claim.kind[0].toUpperCase()}${claim.kind.slice(1)}:** `;
-    return `${label}${claim.text} ${links2.join(" ")}`;
+var ANALYSIS_SYSTEM = [
+  "You provide general analysis, recommendations, and frameworks based on reasoning \u2014 NOT facts from the user's transcripts or vault.",
+  "Do NOT claim anything comes from the transcripts. Do NOT invent specific vault facts, names, numbers, decisions, or quotes.",
+  "Cite nothing. The provided evidence is non-citable background only; if it is missing or weak, say so plainly.",
+  "Keep items concise and clearly actionable. Label them as recommendation or inference. Respond with JSON only."
+].join(" ");
+function buildAnalysisPrompt(query, evidence) {
+  const context = evidence.length ? evidence.slice(0, 5).map((item, index) => `${index + 1}. ${item.quotePreview}`).join("\n") : "(no transcript evidence was found for this question)";
+  return [
+    `Question: ${query.originalQuestion}`,
+    "",
+    "Non-citable background context (do NOT repeat as fact, do NOT cite):",
+    context,
+    "",
+    'Return JSON: {"analysis":[{"kind":"recommendation|inference","text":"...","explanation":"<optional>"}]}',
+    "Provide a few high-value recommendations or framings. If transcript evidence is missing or weak, note that the analysis is reasoning, not transcript-backed."
+  ].join("\n");
+}
+function parseAnalysisClaims(rawText) {
+  let parsed;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch {
+    return [];
+  }
+  const items = parsed?.analysis;
+  if (!Array.isArray(items)) return [];
+  const claims = [];
+  items.forEach((raw, index) => {
+    if (!raw || typeof raw !== "object") return;
+    const candidate = raw;
+    const text = candidate.text;
+    if (typeof text !== "string" || !text.trim()) return;
+    const kind = typeof candidate.kind === "string" && ANALYSIS_KINDS.includes(candidate.kind) ? candidate.kind : "recommendation";
+    const explanation = typeof candidate.explanation === "string" ? candidate.explanation : void 0;
+    claims.push(buildAnalysisClaim(index, { kind, text, explanation }));
   });
-  const intro = input.confidence === "weak" ? "The evidence I found is weak, so this should be treated cautiously." : input.confidence === "conflicting" ? "The evidence conflicts, so I can't give one clean answer. Both sides are shown below." : input.confidence === "mixed" ? "The transcript evidence supports a qualified answer." : "Based on the transcript evidence:";
-  return `${intro}
-
-${lines.join("\n\n")}`;
+  return claims;
+}
+function createLlmAskAIAnalysisModel(provider, options = {}) {
+  return {
+    async analyze({ query, evidence }) {
+      const requestOptions = {};
+      if (options.timeoutMs != null) requestOptions.timeoutMs = options.timeoutMs;
+      let text;
+      try {
+        text = (await provider.complete({ system: ANALYSIS_SYSTEM, prompt: buildAnalysisPrompt(query, evidence), responseFormat: "json" }, requestOptions)).text;
+      } catch {
+        return [];
+      }
+      return parseAnalysisClaims(text).map((claim) => ({ kind: claim.kind, text: claim.text, explanation: claim.explanation }));
+    }
+  };
 }
 
-// src/ask-ai/followups.ts
-function suggestFollowups(confidence, query) {
-  if (confidence === "no_evidence") return ["Do you want to search only within a specific transcript?", "Do you want to import more transcripts related to this topic?"];
-  if (confidence === "weak") return ["Do you want to see the exact transcript spans I found?", "Do you want to broaden the search?"];
-  if (confidence === "conflicting") return ["Do you want to compare the conflicting transcript moments?", "Do you want to review which source is newer?"];
-  return query.needsChronology ? ["Do you want the answer grouped by speaker?", "Do you want the supporting transcript clips?"] : ["Do you want a timeline of this?", "Do you want the answer grouped by speaker?", "Do you want the supporting transcript clips?"];
+// src/conflicts/rules.ts
+var stopwords = /* @__PURE__ */ new Set(["a", "an", "and", "are", "as", "be", "but", "for", "i", "in", "is", "it", "of", "on", "or", "the", "to", "we"]);
+var conditional = /\b(if|when|unless|depending|except|only when|in uncertain|for uncertain|high[- ]confidence|low[- ]confidence)\b/i;
+var negative = /\b(no|not|never|avoid|reject|without|cannot|can't|shouldn't|mustn't|do not|don't)\b/i;
+var assertion = /\b(should|must|prefer|want|accept|use|require|allow|is|are|will)\b/i;
+var tensionPairs = [
+  [/\bautomatic|automated|speed|fast\b/i, /\bmanual|review|accurate|accuracy\b/i],
+  [/\bsimple|simplicity\b/i, /\bvisible|reviewable|auditable|transparent\b/i],
+  [/\bprivate|privacy\b/i, /\bshare|shared|collaborative\b/i]
+];
+var round = (value) => Math.round(Math.max(0, Math.min(1, value)) * 1e3) / 1e3;
+var tokens = (text) => new Set(text.toLowerCase().match(/[a-z0-9]+/g)?.filter((token) => token.length > 2 && !stopwords.has(token)) ?? []);
+var overlap = (a, b) => {
+  const left = tokens(a), right = tokens(b);
+  const shared = [...left].filter((token) => right.has(token)).length;
+  return round(shared / Math.max(1, Math.min(left.size, right.size)));
+};
+function temporal(candidate) {
+  const left = candidate.leftTimestamp ? Date.parse(candidate.leftTimestamp) : Number.NaN;
+  const right = candidate.rightTimestamp ? Date.parse(candidate.rightTimestamp) : Number.NaN;
+  if (!Number.isFinite(left) || !Number.isFinite(right) || left === right) return { score: 0, newerTargetId: null, olderTargetId: null };
+  const distance = Math.min(1, Math.abs(left - right) / (1e3 * 60 * 60 * 24 * 30));
+  return {
+    score: round(distance),
+    newerTargetId: left > right ? candidate.leftTargetId : candidate.rightTargetId,
+    olderTargetId: left > right ? candidate.rightTargetId : candidate.leftTargetId
+  };
+}
+function scoreConflict(candidate, kind, components, options = {}) {
+  const validated = new Set(options.validatedEvidenceIds ?? [...candidate.leftEvidenceIds, ...candidate.rightEvidenceIds]);
+  const leftValid = candidate.leftEvidenceIds.filter((id) => validated.has(id));
+  const rightValid = candidate.rightEvidenceIds.filter((id) => validated.has(id));
+  if (!leftValid.length || !rightValid.length) return round(0.15 + 0.2 * components.topicOverlap);
+  const average = (ids) => ids.reduce((sum, id) => sum + (options.evidenceScores?.[id] ?? 0.7), 0) / ids.length;
+  const quality = Math.min(average(leftValid), average(rightValid));
+  const correctionBoost = new Set(options.userCorrectionTargetIds ?? []).has(candidate.leftTargetId) || new Set(options.userCorrectionTargetIds ?? []).has(candidate.rightTargetId) ? 0.08 : 0;
+  const base = kind === "direct_contradiction" ? 0.45 + 0.2 * components.topicOverlap + 0.2 * quality + 0.15 * components.polarityOpposition : kind === "temporal_update" ? 0.4 + 0.15 * components.topicOverlap + 0.2 * quality + 0.2 * components.temporalDistance : kind === "conditional_difference" ? 0.4 + 0.15 * components.topicOverlap + 0.2 * quality + 0.15 * components.conditionality : kind === "tension" ? 0.4 + 0.2 * components.topicOverlap + 0.2 * quality : 0.15 + 0.15 * components.topicOverlap;
+  const scored = round(base + correctionBoost);
+  if (quality < 0.45) return Math.min(scored, 0.59);
+  if (quality < 0.65) return Math.min(scored, 0.79);
+  return scored;
+}
+function classifyConflictCandidate(candidate, options = {}) {
+  const topicOverlap = candidate.sharedEntities?.length || candidate.sharedTopics?.length ? 1 : overlap(candidate.leftText, candidate.rightText);
+  const leftNegative = negative.test(candidate.leftText), rightNegative = negative.test(candidate.rightText);
+  const polarityOpposition = leftNegative !== rightNegative && assertion.test(candidate.leftText) && assertion.test(candidate.rightText) ? 1 : 0;
+  const conditionality = conditional.test(candidate.leftText) || conditional.test(candidate.rightText) ? 1 : 0;
+  const temporalInfo = temporal(candidate);
+  const validated = new Set(options.validatedEvidenceIds ?? [...candidate.leftEvidenceIds, ...candidate.rightEvidenceIds]);
+  const evidenceCoverage = candidate.leftEvidenceIds.some((id) => validated.has(id)) && candidate.rightEvidenceIds.some((id) => validated.has(id)) ? 1 : 0;
+  const tension = tensionPairs.some(([left, right]) => left.test(candidate.leftText) && right.test(candidate.rightText) || right.test(candidate.leftText) && left.test(candidate.rightText));
+  const components = { topicOverlap, polarityOpposition, conditionality, temporalDistance: temporalInfo.score, evidenceCoverage };
+  let kind = "weak_or_ambiguous";
+  if (evidenceCoverage && topicOverlap >= 0.15) {
+    if (conditionality && (polarityOpposition || tension)) kind = "conditional_difference";
+    else if ((options.preferTemporalUpdate ?? candidate.preferTemporalUpdate) && temporalInfo.score > 0 && (polarityOpposition || tension)) kind = "temporal_update";
+    else if (polarityOpposition) kind = "direct_contradiction";
+    else if (tension) kind = "tension";
+  }
+  const confidence = scoreConflict(candidate, kind, components, options);
+  const labels = {
+    direct_contradiction: "The two source-backed statements directly oppose each other.",
+    tension: "The statements express competing goals or constraints.",
+    temporal_update: "The newer source-backed statement appears to update the older one.",
+    conditional_difference: "The statements differ under an explicit condition or context.",
+    weak_or_ambiguous: "The pair lacks enough shared context or source-backed evidence for a reliable conflict."
+  };
+  return {
+    kind,
+    confidence,
+    summary: `${kind.replaceAll("_", " ")} between ${candidate.leftTargetId} and ${candidate.rightTargetId}`,
+    explanation: `${labels[kind]} Topic overlap=${topicOverlap.toFixed(3)}; polarity opposition=${polarityOpposition.toFixed(3)}; conditionality=${conditionality.toFixed(3)}; temporal clarity=${temporalInfo.score.toFixed(3)}; validated-side coverage=${evidenceCoverage.toFixed(3)}; confidence=${confidence.toFixed(3)}.`,
+    componentScores: components,
+    newerTargetId: kind === "temporal_update" ? temporalInfo.newerTargetId : null,
+    olderTargetId: kind === "temporal_update" ? temporalInfo.olderTargetId : null
+  };
+}
+
+// src/conflicts/detector.ts
+var intersection = (left = [], right = []) => left.filter((item) => right.includes(item));
+function generateConflictCandidates(statements) {
+  const candidates = [];
+  for (let leftIndex = 0; leftIndex < statements.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < statements.length; rightIndex += 1) {
+      const left = statements[leftIndex], right = statements[rightIndex];
+      const sharedEntities = intersection(left.entities, right.entities);
+      const sharedTopics = intersection(left.topics, right.topics);
+      const words = new Set(left.text.toLowerCase().match(/[a-z0-9]+/g) ?? []);
+      const lexicalOverlap = (right.text.toLowerCase().match(/[a-z0-9]+/g) ?? []).some((word) => word.length > 3 && words.has(word));
+      if (!sharedEntities.length && !sharedTopics.length && !lexicalOverlap) continue;
+      candidates.push({
+        leftTargetId: left.targetId,
+        leftTargetType: left.targetType,
+        leftText: left.text,
+        leftEvidenceIds: left.evidenceIds,
+        leftTimestamp: left.timestamp,
+        rightTargetId: right.targetId,
+        rightTargetType: right.targetType,
+        rightText: right.text,
+        rightEvidenceIds: right.evidenceIds,
+        rightTimestamp: right.timestamp,
+        sharedEntities,
+        sharedTopics
+      });
+    }
+  }
+  return candidates;
+}
+function detectConflicts(statements, options = {}) {
+  return generateConflictCandidates(statements).map((candidate) => ({ candidate, classification: classifyConflictCandidate(candidate, options) }));
 }
 
 // src/provenance/pointerFormat.ts
@@ -2042,6 +2219,9 @@ function createAnswerClaim(db, input) {
 function linkAnswerClaimToEvidence(db, input) {
   return createEvidencePointer(db, { targetType: "answer_claim", targetId: input.answerClaimId, transcriptId: input.transcriptId, spanId: input.spanId, evidenceRole: input.evidenceRole, evidenceStrength: input.evidenceStrength, confidence: input.confidence, ...input.scores });
 }
+function linkMemoryObjectToSpan(db, input) {
+  return createEvidencePointer(db, { targetType: "memory_object", targetId: input.memoryObjectId, transcriptId: input.transcriptId, spanId: input.spanId, evidenceRole: input.evidenceRole ?? "support", evidenceStrength: input.evidenceStrength ?? "unknown", confidence: input.confidence ?? 0.5 });
+}
 
 // src/provenance/citations.ts
 function formatCitationLabel(order) {
@@ -2071,84 +2251,6 @@ function createCitationLinksForAnswer(db, input) {
       return db.prepare("SELECT * FROM citation_links WHERE citation_link_id=?").get(id);
     });
   })();
-}
-
-// src/conflicts/rules.ts
-var stopwords = /* @__PURE__ */ new Set(["a", "an", "and", "are", "as", "be", "but", "for", "i", "in", "is", "it", "of", "on", "or", "the", "to", "we"]);
-var conditional = /\b(if|when|unless|depending|except|only when|in uncertain|for uncertain|high[- ]confidence|low[- ]confidence)\b/i;
-var negative = /\b(no|not|never|avoid|reject|without|cannot|can't|shouldn't|mustn't|do not|don't)\b/i;
-var assertion = /\b(should|must|prefer|want|accept|use|require|allow|is|are|will)\b/i;
-var tensionPairs = [
-  [/\bautomatic|automated|speed|fast\b/i, /\bmanual|review|accurate|accuracy\b/i],
-  [/\bsimple|simplicity\b/i, /\bvisible|reviewable|auditable|transparent\b/i],
-  [/\bprivate|privacy\b/i, /\bshare|shared|collaborative\b/i]
-];
-var round = (value) => Math.round(Math.max(0, Math.min(1, value)) * 1e3) / 1e3;
-var tokens = (text) => new Set(text.toLowerCase().match(/[a-z0-9]+/g)?.filter((token) => token.length > 2 && !stopwords.has(token)) ?? []);
-var overlap = (a, b) => {
-  const left = tokens(a), right = tokens(b);
-  const shared = [...left].filter((token) => right.has(token)).length;
-  return round(shared / Math.max(1, Math.min(left.size, right.size)));
-};
-function temporal(candidate) {
-  const left = candidate.leftTimestamp ? Date.parse(candidate.leftTimestamp) : Number.NaN;
-  const right = candidate.rightTimestamp ? Date.parse(candidate.rightTimestamp) : Number.NaN;
-  if (!Number.isFinite(left) || !Number.isFinite(right) || left === right) return { score: 0, newerTargetId: null, olderTargetId: null };
-  const distance = Math.min(1, Math.abs(left - right) / (1e3 * 60 * 60 * 24 * 30));
-  return {
-    score: round(distance),
-    newerTargetId: left > right ? candidate.leftTargetId : candidate.rightTargetId,
-    olderTargetId: left > right ? candidate.rightTargetId : candidate.leftTargetId
-  };
-}
-function scoreConflict(candidate, kind, components, options = {}) {
-  const validated = new Set(options.validatedEvidenceIds ?? [...candidate.leftEvidenceIds, ...candidate.rightEvidenceIds]);
-  const leftValid = candidate.leftEvidenceIds.filter((id) => validated.has(id));
-  const rightValid = candidate.rightEvidenceIds.filter((id) => validated.has(id));
-  if (!leftValid.length || !rightValid.length) return round(0.15 + 0.2 * components.topicOverlap);
-  const average = (ids) => ids.reduce((sum, id) => sum + (options.evidenceScores?.[id] ?? 0.7), 0) / ids.length;
-  const quality = Math.min(average(leftValid), average(rightValid));
-  const correctionBoost = new Set(options.userCorrectionTargetIds ?? []).has(candidate.leftTargetId) || new Set(options.userCorrectionTargetIds ?? []).has(candidate.rightTargetId) ? 0.08 : 0;
-  const base = kind === "direct_contradiction" ? 0.45 + 0.2 * components.topicOverlap + 0.2 * quality + 0.15 * components.polarityOpposition : kind === "temporal_update" ? 0.4 + 0.15 * components.topicOverlap + 0.2 * quality + 0.2 * components.temporalDistance : kind === "conditional_difference" ? 0.4 + 0.15 * components.topicOverlap + 0.2 * quality + 0.15 * components.conditionality : kind === "tension" ? 0.4 + 0.2 * components.topicOverlap + 0.2 * quality : 0.15 + 0.15 * components.topicOverlap;
-  const scored = round(base + correctionBoost);
-  if (quality < 0.45) return Math.min(scored, 0.59);
-  if (quality < 0.65) return Math.min(scored, 0.79);
-  return scored;
-}
-function classifyConflictCandidate(candidate, options = {}) {
-  const topicOverlap = candidate.sharedEntities?.length || candidate.sharedTopics?.length ? 1 : overlap(candidate.leftText, candidate.rightText);
-  const leftNegative = negative.test(candidate.leftText), rightNegative = negative.test(candidate.rightText);
-  const polarityOpposition = leftNegative !== rightNegative && assertion.test(candidate.leftText) && assertion.test(candidate.rightText) ? 1 : 0;
-  const conditionality = conditional.test(candidate.leftText) || conditional.test(candidate.rightText) ? 1 : 0;
-  const temporalInfo = temporal(candidate);
-  const validated = new Set(options.validatedEvidenceIds ?? [...candidate.leftEvidenceIds, ...candidate.rightEvidenceIds]);
-  const evidenceCoverage = candidate.leftEvidenceIds.some((id) => validated.has(id)) && candidate.rightEvidenceIds.some((id) => validated.has(id)) ? 1 : 0;
-  const tension = tensionPairs.some(([left, right]) => left.test(candidate.leftText) && right.test(candidate.rightText) || right.test(candidate.leftText) && left.test(candidate.rightText));
-  const components = { topicOverlap, polarityOpposition, conditionality, temporalDistance: temporalInfo.score, evidenceCoverage };
-  let kind = "weak_or_ambiguous";
-  if (evidenceCoverage && topicOverlap >= 0.15) {
-    if (conditionality && (polarityOpposition || tension)) kind = "conditional_difference";
-    else if ((options.preferTemporalUpdate ?? candidate.preferTemporalUpdate) && temporalInfo.score > 0 && (polarityOpposition || tension)) kind = "temporal_update";
-    else if (polarityOpposition) kind = "direct_contradiction";
-    else if (tension) kind = "tension";
-  }
-  const confidence = scoreConflict(candidate, kind, components, options);
-  const labels = {
-    direct_contradiction: "The two source-backed statements directly oppose each other.",
-    tension: "The statements express competing goals or constraints.",
-    temporal_update: "The newer source-backed statement appears to update the older one.",
-    conditional_difference: "The statements differ under an explicit condition or context.",
-    weak_or_ambiguous: "The pair lacks enough shared context or source-backed evidence for a reliable conflict."
-  };
-  return {
-    kind,
-    confidence,
-    summary: `${kind.replaceAll("_", " ")} between ${candidate.leftTargetId} and ${candidate.rightTargetId}`,
-    explanation: `${labels[kind]} Topic overlap=${topicOverlap.toFixed(3)}; polarity opposition=${polarityOpposition.toFixed(3)}; conditionality=${conditionality.toFixed(3)}; temporal clarity=${temporalInfo.score.toFixed(3)}; validated-side coverage=${evidenceCoverage.toFixed(3)}; confidence=${confidence.toFixed(3)}.`,
-    componentScores: components,
-    newerTargetId: kind === "temporal_update" ? temporalInfo.newerTargetId : null,
-    olderTargetId: kind === "temporal_update" ? temporalInfo.olderTargetId : null
-  };
 }
 
 // src/conflicts/repository.ts
@@ -2423,6 +2525,62 @@ function createConflictRepository(db, options = {}) {
   };
 }
 
+// src/conflicts/liveDetection.ts
+function gatherEvidenceBackedStatements(db) {
+  const rows = db.prepare(`SELECT m.id, m.title, m.generated_text, m.created_at, e.evidence_pointer_id, e.transcript_id
+    FROM memory_objects m
+    JOIN evidence_pointers e ON e.target_type IN ('memory_object','claim','summary') AND e.target_id=m.id
+    WHERE m.duplicate_of_id IS NULL
+      AND (m.extraction_status='active' OR (m.extraction_status IS NULL AND m.status='active'))
+    ORDER BY m.id, e.evidence_pointer_id`).all();
+  const byMemory = /* @__PURE__ */ new Map();
+  for (const row of rows) {
+    if (!resolveEvidencePointer(db, row.evidence_pointer_id).ok) continue;
+    let statement = byMemory.get(row.id);
+    if (!statement) {
+      statement = {
+        targetId: row.id,
+        targetType: "memory_object",
+        // Same text shape the live activation gate compares (title + body), so the persisted pair
+        // classifies consistently with the gate that may have routed one side to review.
+        text: `${row.title ?? ""}. ${row.generated_text}`,
+        evidenceIds: [],
+        timestamp: row.created_at,
+        transcriptIds: /* @__PURE__ */ new Set()
+      };
+      byMemory.set(row.id, statement);
+    }
+    statement.evidenceIds.push(row.evidence_pointer_id);
+    if (row.transcript_id) statement.transcriptIds.add(row.transcript_id);
+  }
+  return [...byMemory.values()].filter((statement) => statement.evidenceIds.length > 0);
+}
+function persistDetected(db, statements, touches, options) {
+  if (statements.length < 2) return [];
+  const repo = createConflictRepository(db, { now: options.now });
+  const persisted = [];
+  for (const detected of detectConflicts(statements)) {
+    if (detected.classification.kind === "weak_or_ambiguous") continue;
+    if (!touches(detected.candidate.leftTargetId, detected.candidate.rightTargetId)) continue;
+    try {
+      persisted.push(repo.createConflictAssessment({ candidate: detected.candidate }));
+    } catch {
+    }
+  }
+  return persisted;
+}
+function detectAndPersistConflictsForTranscript(db, transcriptId, options = {}) {
+  const statements = gatherEvidenceBackedStatements(db);
+  const inTranscript = new Set(statements.filter((s) => s.transcriptIds.has(transcriptId)).map((s) => s.targetId));
+  if (!inTranscript.size) return [];
+  return persistDetected(db, statements, (left, right) => inTranscript.has(left) || inTranscript.has(right), options);
+}
+function detectAndPersistConflictsForMemory(db, memoryId, options = {}) {
+  const statements = gatherEvidenceBackedStatements(db);
+  if (!statements.some((s) => s.targetId === memoryId)) return [];
+  return persistDetected(db, statements, (left, right) => left === memoryId || right === memoryId, options);
+}
+
 // src/conflicts/render.ts
 function renderConflictContext(conflicts) {
   const active = conflicts.filter((conflict) => conflict.status === "active");
@@ -2472,164 +2630,1182 @@ function conflictEvidenceForAnswer(conflicts) {
   return [...new Map(items.map((item) => [item.evidencePointerId, item])).values()];
 }
 
-// src/ask-ai/repository.ts
-var bundleStatus = (confidence) => confidence === "no_evidence" ? "weak" : confidence;
-var answerStatus = (confidence) => confidence === "no_evidence" ? "refused_no_evidence" : confidence === "weak" ? "weak_evidence" : confidence === "conflicting" ? "conflicting_evidence" : "answered";
-var answerConfidence = (confidence) => confidence === "strong" ? "high" : confidence === "mixed" || confidence === "conflicting" ? "medium" : "low";
-var itemStance = (stance) => stance === "opposes" ? "contradicts" : stance === "qualifies" ? "qualifies" : stance === "supports" || stance === "updates" ? "supports" : "unknown";
-var pointerRole = (stance) => stance === "opposes" ? "opposition" : stance === "qualifies" ? "conditional" : stance === "supports" || stance === "updates" ? "support" : "unclear";
-var pointerStrength = (strength) => strength === "no_evidence" ? "weak" : strength;
-var claimSupportStatus = (status) => status === "supported" ? "supported" : status === "weakly_supported" ? "weakly_supported" : status === "conflicted" ? "conflicting" : "unsupported";
-function persistAskAIResponse(db, response) {
-  db.transaction(() => {
-    const repos = createRepositories(db);
-    const bundle = repos.evidence.createEvidenceBundle({
-      purpose: "ask_ai",
-      query_text: response.queryUnderstanding.normalizedQuestion,
-      status: bundleStatus(response.evidenceConfidence),
-      overall_score: response.evidence.length ? Math.max(...response.evidence.map((item) => item.evidenceScore)) : null,
-      metadata: { ask_ai_run_id: response.id, score_run_id: response.scoreRunId ?? null }
-    });
-    response.evidence.forEach((item, index) => {
-      const pointer = resolveEvidencePointer(db, item.evidencePointerId);
-      if (!pointer.ok || pointer.evidence.transcript_id !== item.transcriptId || pointer.evidence.span_id !== item.spanId) {
-        throw new ValidationError(`Ask AI evidence pointer is broken or mismatched: ${item.evidencePointerId}`);
+// src/retrieval/embeddingProvider.ts
+var import_node_crypto5 = require("node:crypto");
+var DeterministicTestEmbeddingProvider = class {
+  constructor(dimensions = 32) {
+    this.dimensions = dimensions;
+  }
+  dimensions;
+  name = "deterministic-test";
+  model = "token-hash-v1";
+  async embedTexts(texts) {
+    return texts.map((text) => {
+      const vector = Array(this.dimensions).fill(0);
+      for (const token of text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []) {
+        const hash = (0, import_node_crypto5.createHash)("sha256").update(token).digest();
+        vector[hash[0] % this.dimensions] += hash[1] % 2 ? 1 : -1;
       }
-      const sourcePointerId = item.sourcePointerId ?? pointer.evidence.source_pointer_uri;
-      if (!resolveSourcePointer(db, sourcePointerId).ok) throw new ValidationError(`Ask AI source pointer is broken: ${sourcePointerId}`);
-      repos.evidence.addEvidenceItem(bundle.id, {
-        span_id: item.spanId,
-        retrieval_rank: index + 1,
-        final_score: item.evidenceScore,
-        stance: itemStance(item.stance),
-        reason: item.scoringExplanation,
-        metadata: { evidence_pointer_id: item.evidencePointerId, source_pointer_id: sourcePointerId }
-      });
+      return vector;
     });
-    const answer = repos.answers.createAnswer({
-      id: response.id,
-      question_text: response.question,
-      answer_text: response.answerMarkdown,
-      evidence_bundle_id: bundle.id,
-      confidence: answerConfidence(response.evidenceConfidence),
-      answer_status: answerStatus(response.evidenceConfidence),
-      metadata: { ask_ai: true, score_run_id: response.scoreRunId ?? null }
-    });
-    const selected = new Map(response.evidence.map((item) => [item.evidencePointerId, item]));
-    response.claims.forEach((claim, index) => {
-      const stored = createAnswerClaim(db, { answerId: answer.id, claimText: claim.text, claimOrder: index });
-      db.prepare("INSERT INTO ask_ai_claim_metadata(answer_claim_id,kind,explanation) VALUES (?,?,?)").run(stored.answer_claim_id, claim.kind, claim.explanation ?? null);
-      claim.evidencePointerIds.forEach((pointerId) => {
-        const item = selected.get(pointerId);
-        if (!item) throw new ValidationError(`Ask AI claim references unselected evidence: ${pointerId}`);
-        linkAnswerClaimToEvidence(db, {
-          answerClaimId: stored.answer_claim_id,
-          transcriptId: item.transcriptId,
-          spanId: item.spanId,
-          evidenceRole: pointerRole(item.stance),
-          evidenceStrength: pointerStrength(item.evidenceConfidence),
-          confidence: item.evidenceScore,
-          scores: { relevanceScore: item.relevanceScore, finalScore: item.evidenceScore }
-        });
-      });
-    });
-    createCitationLinksForAnswer(db, { answerId: answer.id });
-    db.prepare(`INSERT INTO ask_ai_runs(
-      id,question,normalized_question,answer_markdown,evidence_confidence,query_understanding_json,answer_id,score_run_id,not_enough_evidence,created_at
-    ) VALUES (?,?,?,?,?,?,?,?,?,?)`).run(
-      response.id,
-      response.question,
-      response.queryUnderstanding.normalizedQuestion,
-      response.answerMarkdown,
-      response.evidenceConfidence,
-      JSON.stringify(response.queryUnderstanding),
-      answer.id,
-      response.scoreRunId ?? null,
-      response.notEnoughEvidence ? 1 : 0,
-      response.createdAt
-    );
-    response.evidence.forEach((item, index) => db.prepare(`INSERT INTO ask_ai_run_evidence(
-      ask_ai_run_id,evidence_pointer_id,source_pointer_id,transcript_id,span_id,rank,evidence_score,evidence_confidence,quote_preview,scoring_explanation
-    ) VALUES (?,?,?,?,?,?,?,?,?,?)`).run(
-      response.id,
-      item.evidencePointerId,
-      item.sourcePointerId ?? null,
-      item.transcriptId,
-      item.spanId,
-      index + 1,
-      item.evidenceScore,
-      item.evidenceConfidence,
-      item.quotePreview,
-      item.scoringExplanation
-    ));
-    response.suggestedFollowups.forEach((text, index) => db.prepare(
-      "INSERT INTO ask_ai_suggested_followups(id,ask_ai_run_id,text,rank) VALUES (?,?,?,?)"
-    ).run(createId("aif_"), response.id, text, index + 1));
-    response.conflicts.forEach((conflict) => db.prepare(
-      "INSERT INTO ask_ai_run_conflicts(ask_ai_run_id,conflict_assessment_id) VALUES (?,?)"
-    ).run(response.id, conflict.id));
-  })();
+  }
+};
+var NoopEmbeddingProvider = class {
+  name = "noop";
+  model = "disabled";
+  dimensions = 0;
+  async embedTexts(texts) {
+    return texts.map(() => []);
+  }
+};
+
+// src/retrieval/externalEmbeddingProvider.ts
+var EmbeddingError = class extends Error {
+  context;
+  constructor(message, context, options) {
+    super(message, options);
+    this.name = new.target.name;
+    this.context = context;
+  }
+};
+var EmbeddingAuthError = class extends EmbeddingError {
+};
+var EmbeddingRateLimitError = class extends EmbeddingError {
+};
+var EmbeddingProviderError = class extends EmbeddingError {
+};
+var EmbeddingResponseError = class extends EmbeddingError {
+};
+var REDACTED = "[redacted]";
+function redactSecret(text, secret) {
+  if (!secret || !secret.trim()) return text;
+  return text.split(secret).join(REDACTED);
 }
-function getAskAIResponse(db, id) {
-  const run = db.prepare("SELECT * FROM ask_ai_runs WHERE id=?").get(id);
-  if (!run) throw new NotFoundError(`Ask AI run not found: ${id}`);
-  const evidenceRows = db.prepare("SELECT * FROM ask_ai_run_evidence WHERE ask_ai_run_id=? ORDER BY rank").all(id);
-  const claimRows = db.prepare(`SELECT c.*,m.kind,m.explanation FROM answer_claims c JOIN ask_ai_claim_metadata m ON m.answer_claim_id=c.answer_claim_id
-    WHERE c.answer_id=? ORDER BY c.claim_order`).all(run.answer_id);
-  const linkRows = db.prepare(`SELECT l.*,e.source_pointer_uri,e.transcript_id,e.span_id,e.quote_preview
-    FROM citation_links l JOIN evidence_pointers e ON e.evidence_pointer_id=l.evidence_pointer_id
-    WHERE l.answer_id=? ORDER BY l.citation_order`).all(run.answer_id);
-  const followups = db.prepare("SELECT text FROM ask_ai_suggested_followups WHERE ask_ai_run_id=? ORDER BY rank").all(id);
-  const conflicts = db.prepare("SELECT conflict_assessment_id FROM ask_ai_run_conflicts WHERE ask_ai_run_id=? ORDER BY conflict_assessment_id").all(id).map((row) => createConflictRepository(db).get(row.conflict_assessment_id)).filter(Boolean);
-  const citations = linkRows.map((item) => ({
-    id: String(item.citation_link_id),
-    label: String(item.citation_label),
-    evidencePointerId: String(item.evidence_pointer_id),
-    sourcePointerId: String(item.source_pointer_uri),
-    transcriptId: String(item.transcript_id),
-    spanId: String(item.span_id),
-    quotePreview: String(item.quote_preview),
-    clickbackUri: `mv://evidence/${String(item.evidence_pointer_id)}`
-  }));
-  return {
-    id,
-    question: String(run.question),
-    answerMarkdown: String(run.answer_markdown),
-    evidenceConfidence: run.evidence_confidence,
-    notEnoughEvidence: Boolean(run.not_enough_evidence),
-    createdAt: String(run.created_at),
-    queryUnderstanding: JSON.parse(String(run.query_understanding_json)),
-    scoreRunId: run.score_run_id == null ? void 0 : String(run.score_run_id),
-    evidence: evidenceRows.map((item) => ({
-      evidencePointerId: String(item.evidence_pointer_id),
-      sourcePointerId: item.source_pointer_id == null ? void 0 : String(item.source_pointer_id),
-      transcriptId: String(item.transcript_id),
-      spanId: String(item.span_id),
-      quotePreview: String(item.quote_preview),
-      evidenceScore: Number(item.evidence_score),
-      evidenceConfidence: item.evidence_confidence,
-      scoringExplanation: String(item.scoring_explanation),
-      clickbackUri: `mv://evidence/${String(item.evidence_pointer_id)}`,
-      stance: "unknown",
-      sourceKind: "raw_transcript_span"
-    })),
-    claims: claimRows.map((item) => {
-      const claimCitations = citations.filter((citation) => linkRows.some((link) => link.answer_claim_id === item.answer_claim_id && link.citation_link_id === citation.id));
-      return {
-        id: String(item.answer_claim_id),
-        kind: item.kind,
-        text: String(item.claim_text),
-        supportStatus: claimSupportStatus(item.support_status),
-        evidencePointerIds: claimCitations.map((citation) => citation.evidencePointerId),
-        citationIds: claimCitations.map((citation) => citation.id),
-        explanation: item.explanation == null ? void 0 : String(item.explanation)
-      };
-    }),
-    citations,
-    suggestedFollowups: followups.map((item) => item.text),
-    conflicts
+var DEFAULT_BASE_URL = "https://api.openai.com/v1";
+function createHttpEmbeddingTransport(fetchImpl = globalThis.fetch) {
+  return async (request) => {
+    const controller = new AbortController();
+    const onExternalAbort = () => controller.abort();
+    request.signal?.addEventListener("abort", onExternalAbort, { once: true });
+    let timer;
+    if (request.timeoutMs != null) timer = setTimeout(() => controller.abort(), request.timeoutMs);
+    try {
+      const response = await fetchImpl(request.url, {
+        method: request.method,
+        headers: request.headers,
+        body: request.body,
+        signal: controller.signal
+      });
+      let body = null;
+      try {
+        body = await response.json();
+      } catch {
+        try {
+          body = await response.text();
+        } catch {
+          body = null;
+        }
+      }
+      return { status: response.status, body };
+    } finally {
+      if (timer) clearTimeout(timer);
+      request.signal?.removeEventListener("abort", onExternalAbort);
+    }
   };
 }
+var ExternalEmbeddingProvider = class {
+  // Only name/model/dimensions are public. The secret-bearing internals are true ECMAScript
+  // private fields (#), which are not reflectable: they never appear in JSON.stringify, object
+  // spread, Object.keys/getOwnPropertyNames, Reflect.ownKeys, or util.inspect.
+  name;
+  model;
+  dimensions;
+  #apiKey;
+  #baseUrl;
+  #transport;
+  #timeoutMs;
+  constructor(config) {
+    if (!config.apiKey || !config.apiKey.trim()) {
+      throw new EmbeddingAuthError("External embedding provider requires a non-blank API key", { provider: config.provider, model: config.model });
+    }
+    if (!Number.isInteger(config.dimensions) || config.dimensions <= 0) {
+      throw new EmbeddingResponseError("External embedding provider requires positive integer dimensions", { provider: config.provider, model: config.model });
+    }
+    this.name = config.provider;
+    this.model = config.model;
+    this.dimensions = config.dimensions;
+    this.#apiKey = config.apiKey.trim();
+    this.#baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
+    this.#transport = config.transport ?? createHttpEmbeddingTransport();
+    this.#timeoutMs = config.timeoutMs;
+  }
+  context(status) {
+    return { provider: this.name, model: this.model, status };
+  }
+  async embedTexts(texts) {
+    if (!texts.length) return [];
+    let response;
+    try {
+      response = await this.#transport({
+        url: `${this.#baseUrl}/embeddings`,
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.#apiKey}` },
+        body: JSON.stringify({ model: this.model, input: texts }),
+        timeoutMs: this.#timeoutMs
+      });
+    } catch (error) {
+      const detail = redactSecret(error instanceof Error ? error.message : String(error), this.#apiKey);
+      throw new EmbeddingProviderError(`Embedding request failed: ${detail}`, this.context());
+    }
+    if (response.status === 401 || response.status === 403) {
+      throw new EmbeddingAuthError("Embedding provider rejected the API key", this.context(response.status));
+    }
+    if (response.status === 429) {
+      throw new EmbeddingRateLimitError("Embedding provider rate limit exceeded", this.context(response.status));
+    }
+    if (response.status < 200 || response.status >= 300) {
+      throw new EmbeddingProviderError(`Embedding provider returned status ${response.status}`, this.context(response.status));
+    }
+    const data = response.body?.data;
+    if (!Array.isArray(data) || data.length !== texts.length) {
+      throw new EmbeddingResponseError("Embedding response did not contain one vector per input", this.context(response.status));
+    }
+    const ordered = [...data].sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+    return ordered.map((item) => {
+      const vector = item.embedding;
+      if (!Array.isArray(vector) || vector.length !== this.dimensions || vector.some((value) => typeof value !== "number" || !Number.isFinite(value))) {
+        throw new EmbeddingResponseError(`Embedding response vector did not match expected ${this.dimensions} finite dimensions`, this.context(response.status));
+      }
+      return vector;
+    });
+  }
+};
+var createExternalEmbeddingProvider = (config) => new ExternalEmbeddingProvider(config);
+
+// src/retrieval/embeddingSpace.ts
+var embeddingSpaceOf = (provider) => ({
+  provider: provider.name,
+  model: provider.model,
+  dimensions: provider.dimensions
+});
+var sameEmbeddingSpace = (a, b) => a.provider === b.provider && a.model === b.model && a.dimensions === b.dimensions;
+var isVectorCapable = (space) => space.dimensions > 0;
+var DEFAULT_EMBEDDING_PROVIDER_ID = "deterministic-test";
+var TOKEN_HASH_MODEL = "token-hash-v1";
+function resolveEmbeddingProvider(id = DEFAULT_EMBEDDING_PROVIDER_ID, options) {
+  if (options?.external) {
+    const external = options.external;
+    if (external.apiKey && external.apiKey.trim().length > 0) {
+      return { provider: createExternalEmbeddingProvider(external), requestedId: external.provider, usedFallback: false };
+    }
+    return {
+      provider: new DeterministicTestEmbeddingProvider(options?.dimensions),
+      requestedId: external.provider,
+      usedFallback: true,
+      reason: `Embedding provider "${external.provider}" has no API key configured; using local deterministic ${TOKEN_HASH_MODEL}.`
+    };
+  }
+  if (id === "noop" || id === "disabled") {
+    return { provider: new NoopEmbeddingProvider(), requestedId: id, usedFallback: false };
+  }
+  if (id === DEFAULT_EMBEDDING_PROVIDER_ID || id === TOKEN_HASH_MODEL) {
+    return { provider: new DeterministicTestEmbeddingProvider(options?.dimensions), requestedId: id, usedFallback: false };
+  }
+  return {
+    provider: new DeterministicTestEmbeddingProvider(options?.dimensions),
+    requestedId: id,
+    usedFallback: true,
+    reason: `Embedding provider "${id}" is not available yet; using local deterministic ${TOKEN_HASH_MODEL}.`
+  };
+}
+
+// src/retrieval/reindexStatus.ts
+var isProvider = (value) => typeof value.embedTexts === "function";
+function detectReindexNeeded(db, active, options = {}) {
+  const activeSpace = isProvider(active) ? embeddingSpaceOf(active) : active;
+  const vectorCapable = isVectorCapable(activeSpace);
+  const types = options.targetTypes;
+  const typeClause = types && types.length ? ` WHERE target_type IN (${types.map(() => "?").join(",")})` : "";
+  const typeArgs = types && types.length ? types : [];
+  const documentCount = db.prepare(`SELECT COUNT(*) c FROM retrieval_documents${typeClause}`).get(...typeArgs).c;
+  const joinTypeClause = types && types.length ? ` AND d.target_type IN (${types.map(() => "?").join(",")})` : "";
+  const embeddedUnderActive = db.prepare(
+    `SELECT COUNT(*) c FROM retrieval_documents d
+     JOIN search_embeddings e ON e.target_type=d.target_type AND e.target_id=d.target_id
+     WHERE e.embedding_provider=? AND e.embedding_model=? AND e.embedding_dim=?${joinTypeClause}`
+  ).get(activeSpace.provider, activeSpace.model, activeSpace.dimensions, ...typeArgs).c;
+  const missingUnderActive = Math.max(0, documentCount - embeddedUnderActive);
+  const indexedSpaces = db.prepare(
+    `SELECT embedding_provider provider, embedding_model model, embedding_dim dimensions, COUNT(*) count
+     FROM search_embeddings${typeClause}
+     GROUP BY embedding_provider, embedding_model, embedding_dim
+     ORDER BY embedding_provider, embedding_model, embedding_dim`
+  ).all(...typeArgs);
+  const foreignSpaces = indexedSpaces.filter((space) => !sameEmbeddingSpace(space, activeSpace));
+  const reasons = [];
+  if (!vectorCapable) reasons.push("Embeddings are disabled for the active provider (0 dimensions).");
+  if (documentCount === 0) reasons.push("No indexed documents to embed.");
+  if (vectorCapable && documentCount > 0 && missingUnderActive > 0) {
+    reasons.push(`${missingUnderActive} of ${documentCount} document(s) are not embedded under the active space (${activeSpace.provider}/${activeSpace.model}@${activeSpace.dimensions}).`);
+  }
+  if (foreignSpaces.length) {
+    const total = foreignSpaces.reduce((sum, space) => sum + space.count, 0);
+    reasons.push(`${total} embedding(s) are indexed under a different provider/model and are ignored by vector search.`);
+  }
+  const needsReindex = vectorCapable && documentCount > 0 && missingUnderActive > 0;
+  return { activeSpace, vectorCapable, documentCount, embeddedUnderActive, missingUnderActive, indexedSpaces, foreignSpaces, needsReindex, reasons };
+}
+
+// src/memory/dedup.ts
+function dedupeCanonicalMemories(db, options = {}) {
+  const ts = options.now ?? now;
+  const result = { canonicalGroups: 0, duplicatesSuperseded: 0, evidenceLinksConsolidated: 0 };
+  return db.transaction(() => {
+    const rows = db.prepare(`SELECT id, object_fingerprint, COALESCE(extraction_type,type) AS type, user_corrected, created_at
+      FROM memory_objects
+      WHERE object_fingerprint IS NOT NULL AND duplicate_of_id IS NULL
+        AND status NOT IN ('superseded','rejected')
+        AND (extraction_status IS NULL OR extraction_status NOT IN ('superseded','rejected'))`).all();
+    const groups = /* @__PURE__ */ new Map();
+    for (const row of rows) {
+      const key = `${row.type}|${row.object_fingerprint}`;
+      const list = groups.get(key);
+      if (list) list.push(row);
+      else groups.set(key, [row]);
+    }
+    for (const members of groups.values()) {
+      if (members.length < 2) continue;
+      const sorted = [...members].sort((a, b) => b.user_corrected - a.user_corrected || a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
+      const canonical = sorted[0];
+      let changed = false;
+      for (const dup of sorted.slice(1)) {
+        if (dup.user_corrected === 1) continue;
+        const evidence = db.prepare("SELECT span_id, transcript_id, turn_id, evidence_score FROM memory_object_evidence WHERE memory_id=?").all(dup.id);
+        for (const e of evidence) {
+          if (!db.prepare("SELECT 1 FROM memory_object_evidence WHERE memory_id=? AND span_id=? LIMIT 1").get(canonical.id, e.span_id)) {
+            const newId = stableProvenanceId("mev_", `${canonical.id}:${e.span_id}:supporting`);
+            db.prepare(`INSERT OR IGNORE INTO memory_object_evidence(
+              id,memory_id,span_id,role,evidence_score,created_at,metadata_json,transcript_id,turn_id,extraction_role
+            ) VALUES (?,?,?,'source',?,?, '{}',?,?, 'supporting')`).run(newId, canonical.id, e.span_id, e.evidence_score, ts(), e.transcript_id, e.turn_id);
+            result.evidenceLinksConsolidated += 1;
+          }
+          if (e.transcript_id) {
+            try {
+              linkMemoryObjectToSpan(db, { memoryObjectId: canonical.id, transcriptId: e.transcript_id, spanId: e.span_id });
+            } catch {
+            }
+          }
+        }
+        const updated = db.prepare(`UPDATE memory_objects
+          SET duplicate_of_id=?, status='superseded',
+              extraction_status=CASE WHEN extraction_status IS NULL THEN NULL ELSE 'superseded' END,
+              updated_at=?
+          WHERE id=? AND user_corrected=0`).run(canonical.id, ts(), dup.id);
+        if (updated.changes > 0) {
+          result.duplicatesSuperseded += updated.changes;
+          changed = true;
+        }
+      }
+      if (changed) result.canonicalGroups += 1;
+    }
+    return result;
+  })();
+}
+
+// src/memory/extraction/prompt.ts
+var MEMORY_EXTRACTION_PROMPT_VERSION = "mvp-memory-extraction-v1";
+var MEMORY_EXTRACTION_LLM_PROMPT_VERSION = "mvp-memory-extraction-llm-v1";
+var MEMORY_EXTRACTION_LLM_SYSTEM = "You extract source-backed memory objects strictly from the transcript spans provided. Use ONLY the listed spans; never invent facts or cite span_ids that are not listed. Every object must include a supportingQuote copied verbatim from one of the spans it cites. Prefer fewer high-quality objects. Respond with JSON only.";
+function buildLlmMemoryExtractionPrompt(window) {
+  return [
+    'Extract memory objects as JSON: {"objects":[{"type":"topic|quote|question|decision|action_item|objection|advice_idea","title":"...","body":"...","evidenceSpanIds":["<span_id>"],"supportingQuote":"<verbatim substring of a cited span>"}]}',
+    'Cite only the span_ids below. Each object must include a supportingQuote copied verbatim from one cited span. If nothing is well supported, return {"objects":[]}.',
+    "",
+    "Spans:",
+    window.text
+  ].join("\n");
+}
+
+// src/memory/extraction/llmExtractor.ts
+var MemoryExtractionError = class extends Error {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "MemoryExtractionError";
+  }
+};
+var VALID_TYPES = ["topic", "quote", "question", "decision", "action_item", "objection", "advice_idea"];
+var normalizeForMatch = (value) => value.toLowerCase().replace(/\s+/g, " ").trim();
+var GROUNDED_CONFIDENCE = 0.9;
+function parseAndGroundMemoryCandidates(rawText, window) {
+  let parsed;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch {
+    throw new MemoryExtractionError("LLM memory extraction output was not valid JSON");
+  }
+  if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.objects)) {
+    throw new MemoryExtractionError("LLM memory extraction output did not contain an objects array");
+  }
+  const spanTextById = new Map(window.spans.map((span) => [span.spanId, normalizeForMatch(span.text)]));
+  const grounded = [];
+  for (const raw of parsed.objects) {
+    if (!raw || typeof raw !== "object") continue;
+    const candidate = raw;
+    if (typeof candidate.type !== "string" || !VALID_TYPES.includes(candidate.type)) continue;
+    if (typeof candidate.title !== "string" || !candidate.title.trim()) continue;
+    if (typeof candidate.body !== "string" || !candidate.body.trim()) continue;
+    const ids = candidate.evidenceSpanIds;
+    if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string")) continue;
+    const evidenceSpanIds = [...new Set(ids)].filter((id) => spanTextById.has(id));
+    if (!evidenceSpanIds.length) continue;
+    const quote2 = candidate.supportingQuote;
+    if (typeof quote2 !== "string" || !quote2.trim()) continue;
+    const needle = normalizeForMatch(quote2);
+    const anchored = needle.length > 0 && evidenceSpanIds.some((id) => spanTextById.get(id)?.includes(needle));
+    if (!anchored) continue;
+    grounded.push({
+      type: candidate.type,
+      title: candidate.title.trim(),
+      body: candidate.body.trim(),
+      evidenceSpanIds,
+      confidence: GROUNDED_CONFIDENCE,
+      // pipeline-assessed grounding confidence, NOT the LLM's self-report (see header)
+      reason: quote2.trim()
+      // grounded supportingQuote -> persisted in metadata_json.extraction_reason for audit
+    });
+  }
+  return grounded;
+}
+function createLlmMemoryExtractor(provider, options = {}) {
+  const fallback = options.fallback;
+  return {
+    kind: "llm",
+    model: provider.model,
+    promptVersion: MEMORY_EXTRACTION_LLM_PROMPT_VERSION,
+    async extract(window) {
+      const requestOptions = {};
+      if (options.timeoutMs != null) requestOptions.timeoutMs = options.timeoutMs;
+      let text;
+      try {
+        text = (await provider.complete({ system: MEMORY_EXTRACTION_LLM_SYSTEM, prompt: buildLlmMemoryExtractionPrompt(window), responseFormat: "json" }, requestOptions)).text;
+      } catch {
+        if (fallback) return fallback.extract(window);
+        throw new MemoryExtractionError("LLM memory extraction request failed");
+      }
+      let grounded;
+      try {
+        grounded = parseAndGroundMemoryCandidates(text, window);
+      } catch {
+        if (fallback) return fallback.extract(window);
+        throw new MemoryExtractionError("LLM memory extraction output was not valid");
+      }
+      return grounded.length ? grounded : fallback ? fallback.extract(window) : grounded;
+    }
+  };
+}
+
+// src/memory/extraction/normalize.ts
+function normalizeMemoryText(title, body) {
+  return `${title} ${body}`.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
+}
+function memoryFingerprint(type, normalizedText) {
+  return contentHash(`${type}:${normalizedText}`);
+}
+function tokenJaccard(a, b) {
+  const left = new Set(a.split(/\s+/).filter(Boolean)), right = new Set(b.split(/\s+/).filter(Boolean));
+  const intersection2 = [...left].filter((token) => right.has(token)).length;
+  const union = (/* @__PURE__ */ new Set([...left, ...right])).size;
+  return union ? intersection2 / union : 0;
+}
+
+// src/memory/extraction/confidence.ts
+var vague = /* @__PURE__ */ new Set(["ai", "transcript", "discussion", "project", "thing", "something"]);
+var TENTATIVE = /\b(maybe|perhaps|possibly|probably|might|tentative\w*|i think|i guess|i'?m not sure|not sure|unsure|consider(?:ing)?|may want|proposed|proposal|instead\?)\b/i;
+function isTentativeStatement(...texts) {
+  return texts.some((text) => typeof text === "string" && TENTATIVE.test(text));
+}
+var clamp = (value) => Math.max(0, Math.min(1, value));
+function scoreCandidateConfidence(candidate, spans) {
+  const extractor = clamp(candidate.confidence);
+  const coverage = Math.min(1, 0.8 + Math.max(0, spans.length - 1) * 0.1);
+  const normalizedTitle = candidate.title.toLowerCase().trim();
+  const titleWords = normalizedTitle.split(/\s+/).filter(Boolean).length;
+  const specificity = vague.has(normalizedTitle) || titleWords < 2 ? 0.3 : Math.min(1, 0.6 + titleWords * 0.07);
+  const typeRule = candidate.type === "quote" ? 1 : candidate.type === "decision" || candidate.type === "action_item" ? 0.95 : candidate.type === "objection" || candidate.type === "question" ? 0.85 : 0.8;
+  const finalConfidence = clamp(0.5 * extractor + 0.2 * coverage + 0.15 * specificity + 0.15 * typeRule);
+  const confidenceLabel2 = finalConfidence >= 0.85 ? "high" : finalConfidence >= 0.6 ? "medium" : "low";
+  const tentative = isTentativeStatement(candidate.title, candidate.body);
+  const decisionLike = candidate.type === "decision" || candidate.type === "action_item";
+  const status = tentative ? "needs_review" : confidenceLabel2 === "high" ? "active" : confidenceLabel2 === "medium" ? "needs_review" : decisionLike ? "needs_review" : "weak";
+  return { finalConfidence, confidenceLabel: confidenceLabel2, status };
+}
+
+// src/memory/extraction/bodyQuoteSupport.ts
+var STOPWORDS = /* @__PURE__ */ new Set([
+  "a",
+  "an",
+  "and",
+  "the",
+  "to",
+  "of",
+  "in",
+  "on",
+  "for",
+  "is",
+  "are",
+  "be",
+  "was",
+  "were",
+  "been",
+  "it",
+  "its",
+  "this",
+  "that",
+  "these",
+  "those",
+  "as",
+  "at",
+  "by",
+  "with",
+  "from",
+  "into",
+  "after",
+  "before",
+  "we",
+  "i",
+  "you",
+  "they",
+  "he",
+  "she",
+  "our",
+  "their",
+  "your",
+  "his",
+  "her",
+  "them",
+  "us",
+  "me",
+  "but",
+  "or",
+  "so",
+  "then",
+  "up",
+  "out",
+  "about",
+  "over",
+  "back",
+  "also",
+  "just",
+  "there",
+  "here"
+]);
+var NEGATIONS = /* @__PURE__ */ new Set(["not", "no", "never", "cannot", "without"]);
+var TENTATIVE2 = /* @__PURE__ */ new Set(["maybe", "might", "could", "consider", "considered", "considering", "discuss", "discussed", "discussing", "proposed", "propose", "possibly", "thinking"]);
+var COMMITMENT = /* @__PURE__ */ new Set(["decided", "decide", "agreed", "agree", "confirmed", "confirm", "will", "must", "needs", "need", "final"]);
+var KNOWN_TECH = /* @__PURE__ */ new Set(["sqlite", "sql", "postgresql", "postgres", "mysql", "mongodb", "markdown", "mcp", "obsidian", "claude", "redis", "duckdb"]);
+var SAFE_EQUIVALENCES = [
+  [/\bcannot be edited\b/g, "immutable"],
+  [/\bcan ?not be edited\b/g, "immutable"],
+  [/\bshould be immutable\b/g, "immutable"],
+  [/\bmust be immutable\b/g, "immutable"],
+  [/\b(?:is|are) immutable\b/g, "immutable"],
+  [/\bonly a disposable view\b/g, "disposable"],
+  [/\bdisposable view\b/g, "disposable"]
+];
+var NEG_CONTRACTIONS = [
+  [/\bcan't\b/g, "cannot"],
+  [/\bcannot\b/g, "cannot"],
+  [/\bwon't\b/g, "will not"],
+  [/\bdon't\b/g, "do not"],
+  [/\bdoesn't\b/g, "does not"],
+  [/\bdidn't\b/g, "did not"],
+  [/\bshouldn't\b/g, "should not"],
+  [/\bisn't\b/g, "is not"],
+  [/\baren't\b/g, "are not"],
+  [/\bwasn't\b/g, "was not"],
+  [/\bweren't\b/g, "were not"]
+];
+function normalize(text) {
+  let value = text.toLowerCase();
+  for (const [pattern, replacement] of NEG_CONTRACTIONS) value = value.replace(pattern, replacement);
+  for (const [pattern, replacement] of SAFE_EQUIVALENCES) value = value.replace(pattern, replacement);
+  return value;
+}
+var tokenize = (normalizedText) => normalizedText.split(/[^a-z0-9]+/).filter(Boolean);
+function entityTokens(originalText) {
+  const set = /* @__PURE__ */ new Set();
+  for (const raw of originalText.split(/[^A-Za-z0-9]+/).filter(Boolean)) {
+    const lower = raw.toLowerCase();
+    const isAcronym = /[A-Z]/.test(raw) && /^[A-Z0-9]{2,}$/.test(raw);
+    const isCapitalized = /^[A-Z][a-zA-Z0-9]+$/.test(raw) && raw.length > 1;
+    if (KNOWN_TECH.has(lower) || isAcronym || isCapitalized) set.add(lower);
+  }
+  return set;
+}
+function assessBodyQuoteSupport(body, quote2) {
+  const reasons = [];
+  const bodyNorm = normalize(body);
+  const quoteNorm = normalize(quote2);
+  const bodyTokens = tokenize(bodyNorm);
+  const quoteTokens = tokenize(quoteNorm);
+  const bodySet = new Set(bodyTokens);
+  const quoteSet = new Set(quoteTokens);
+  if (!bodyTokens.length || !quoteTokens.length) {
+    return { status: "unsupported", reasons: ["empty body or quote"] };
+  }
+  const bodyHasNeg = [...NEGATIONS].some((token) => bodySet.has(token));
+  const quoteHasNeg = [...NEGATIONS].some((token) => quoteSet.has(token));
+  if (bodyHasNeg !== quoteHasNeg) reasons.push("negation mismatch between body and quote");
+  const quoteTentative = [...TENTATIVE2].some((token) => quoteSet.has(token));
+  const quoteCommitment = [...COMMITMENT].some((token) => quoteSet.has(token));
+  const bodyCommitment = [...COMMITMENT].some((token) => bodySet.has(token));
+  if (quoteTentative && !quoteCommitment && bodyCommitment) reasons.push("body asserts a commitment the quote only discusses tentatively");
+  const bodyEntities = entityTokens(body);
+  const missingEntities = [...bodyEntities].filter((token) => !quoteSet.has(token));
+  if (missingEntities.length) reasons.push(`body introduces entities absent from the quote: ${missingEntities.join(", ")}`);
+  const bodyKeyTokens = bodyTokens.filter((token) => !STOPWORDS.has(token));
+  const keyTokens = bodyKeyTokens.length ? bodyKeyTokens : bodyTokens;
+  const covered = keyTokens.filter((token) => quoteSet.has(token)).length;
+  const coverage = covered / keyTokens.length;
+  if (reasons.length || coverage < 0.5) {
+    if (coverage < 0.5) reasons.push(`body-key-token coverage ${coverage.toFixed(2)} below 0.50`);
+    return { status: "unsupported", reasons };
+  }
+  if (coverage >= 0.75) return { status: "strong", reasons: [] };
+  return { status: "uncertain", reasons: [`body-key-token coverage ${coverage.toFixed(2)} between 0.50 and 0.75`] };
+}
+
+// src/memory/extraction/validator.ts
+var validTypes = /* @__PURE__ */ new Set(["topic", "quote", "question", "decision", "action_item", "objection", "advice_idea"]);
+var genericTopics = /* @__PURE__ */ new Set(["ai", "transcript", "discussion", "project"]);
+function validateMemoryCandidate(candidate, window) {
+  if (!validTypes.has(candidate.type)) return { ok: false, problem: `Invalid memory object type: ${String(candidate.type)}` };
+  if (!candidate.title?.trim() || !candidate.body?.trim()) return { ok: false, problem: "Candidate title and body are required" };
+  if (candidate.title.length > 300 || candidate.body.length > 4e3) return { ok: false, problem: "Candidate title or body is too long" };
+  if (!candidate.evidenceSpanIds?.length) return { ok: false, problem: "Candidate has no evidence spans" };
+  const spanMap = new Map(window.spans.map((span) => [span.spanId, span]));
+  const evidenceSpans = [...new Set(candidate.evidenceSpanIds)].map((id) => spanMap.get(id));
+  if (evidenceSpans.some((span) => !span)) return { ok: false, problem: "Candidate references a span outside its extraction window" };
+  const validSpans = evidenceSpans.filter((span) => span != null);
+  if (validSpans.some((span) => span.transcriptId !== window.transcriptId)) return { ok: false, problem: "Evidence span belongs to another transcript" };
+  if (candidate.type === "quote" && !validSpans.some((span) => span.text.includes(candidate.body))) return { ok: false, problem: "Quote body is not exact source text" };
+  if (candidate.type === "topic" && genericTopics.has(candidate.title.trim().toLowerCase())) return { ok: false, problem: "Topic is too generic" };
+  if (/\bthe transcript proves\b/i.test(candidate.body) && !validSpans.some((span) => /the transcript proves/i.test(span.text))) {
+    return { ok: false, problem: "Candidate contains an unsupported meta-claim" };
+  }
+  const clamped = { ...candidate, confidence: Math.max(0, Math.min(1, Number.isFinite(candidate.confidence) ? candidate.confidence : 0)) };
+  const normalizedText = normalizeMemoryText(clamped.title, clamped.body);
+  const fingerprint = memoryFingerprint(clamped.type, normalizedText);
+  const scored = scoreCandidateConfidence(clamped, validSpans);
+  return { ok: true, candidate: { ...clamped, transcriptId: window.transcriptId, normalizedText, fingerprint, evidenceSpans: validSpans, ...scored } };
+}
+
+// src/memory/extraction/duplicateDetection.ts
+function findDuplicateMemoryObject(db, candidate) {
+  const spanIds = new Set(candidate.evidenceSpans.map((span) => span.spanId));
+  const overlaps = (id) => db.prepare("SELECT span_id FROM memory_object_evidence WHERE memory_id=?").all(id).some((row) => spanIds.has(row.span_id));
+  const exacts = db.prepare(`SELECT * FROM memory_objects WHERE object_fingerprint=? ORDER BY user_corrected DESC, created_at`).all(candidate.fingerprint);
+  const exact = exacts.find((object) => overlaps(object.id)) ?? exacts[0];
+  if (exact) return { object: exact, kind: "exact", evidenceOverlaps: overlaps(exact.id) };
+  const candidates = db.prepare(`SELECT * FROM memory_objects WHERE extraction_type=? AND normalized_text IS NOT NULL ORDER BY user_corrected DESC, created_at`).all(candidate.type);
+  for (const existing of candidates) {
+    if (tokenJaccard(candidate.normalizedText, existing.normalized_text) >= 0.82) return { object: existing, kind: "near", evidenceOverlaps: overlaps(existing.id) };
+  }
+  return null;
+}
+
+// src/memory/extraction/repository.ts
+var legacyType = { topic: "topic", quote: "quote", question: "question", decision: "decision", action_item: "task", objection: "concept", advice_idea: "concept" };
+var legacyStatus = { active: "active", weak: "needs_review", needs_review: "needs_review" };
+function createExtractionRun(db, input) {
+  if (!db.prepare("SELECT 1 FROM transcripts WHERE id=?").get(input.transcriptId)) throw new NotFoundError(`Transcript not found: ${input.transcriptId}`);
+  const id = createId("xrun_");
+  db.prepare(`INSERT INTO extraction_runs(id,transcript_id,started_at,status,extractor_kind,extractor_model,prompt_version,config_json)
+    VALUES (?,?,?,'running',?,?,?,?)`).run(id, input.transcriptId, now(), input.extractorKind, input.extractorModel ?? null, input.promptVersion, json(input.config));
+  return id;
+}
+function completeExtractionRun(db, id) {
+  db.prepare("UPDATE extraction_runs SET status='completed',completed_at=? WHERE id=?").run(now(), id);
+}
+function failExtractionRun(db, id, error) {
+  db.prepare("UPDATE extraction_runs SET status='failed',completed_at=?,error_message=? WHERE id=?").run(now(), error, id);
+}
+function loadSpansForTranscript(db, transcriptId) {
+  return db.prepare(`SELECT s.transcript_id transcriptId,
+    (SELECT tt.id FROM transcript_turns tt WHERE tt.transcript_id=s.transcript_id AND tt.start_char<=s.start_char AND tt.end_char>=s.end_char ORDER BY tt.turn_index LIMIT 1) turnId,
+    s.id spanId,s.speaker_label speaker,s.start_char startOffset,s.end_char endOffset,s.text,s.start_time_ms startTimeMs,s.end_time_ms endTimeMs
+    FROM transcript_spans s WHERE s.transcript_id=? ORDER BY s.ordinal`).all(transcriptId);
+}
+function buildExtractionWindows(spans, maxWindowChars = 4e3, overlapSpans = 0) {
+  if (!spans.length) return [];
+  const windows = [];
+  let start = 0;
+  while (start < spans.length) {
+    const selected = [];
+    let chars = 0, index = start;
+    while (index < spans.length && (!selected.length || chars + spans[index].text.length <= maxWindowChars)) {
+      selected.push(spans[index]);
+      chars += spans[index].text.length;
+      index++;
+    }
+    const transcriptId = selected[0].transcriptId;
+    windows.push({
+      transcriptId,
+      windowId: stableProvenanceId("win_", `${transcriptId}:${selected.map((span) => span.spanId).join(":")}`),
+      spans: selected,
+      text: selected.map((span) => `[span_id=${span.spanId} speaker=${span.speaker ?? "unknown"}]
+${span.text}`).join("\n\n")
+    });
+    if (index >= spans.length) break;
+    start = Math.max(start + 1, index - Math.max(0, overlapSpans));
+  }
+  return windows;
+}
+function storeMemoryObjectWithEvidence(db, runId, promptVersion, candidate, duplicateOfId = null) {
+  const sortedSpanIds = candidate.evidenceSpans.map((span) => span.spanId).sort();
+  const id = stableProvenanceId("mem_", `${candidate.transcriptId}:${candidate.type}:${candidate.normalizedText}:${sortedSpanIds.join(":")}`);
+  return db.transaction(() => {
+    const timestamp = now();
+    db.prepare(`INSERT OR IGNORE INTO memory_objects(
+      id,type,title,generated_text,normalized_text,status,confidence,created_by,created_at,updated_at,metadata_json,
+      extraction_type,extraction_status,generated_by,generated_at,extraction_run_id,prompt_version,confidence_label,object_fingerprint,duplicate_of_id
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'needs_review',?,?,?,?,?,?,?)`).run(
+      id,
+      legacyType[candidate.type],
+      candidate.title,
+      candidate.body,
+      candidate.normalizedText,
+      legacyStatus[candidate.status],
+      candidate.finalConfidence,
+      "agent",
+      timestamp,
+      timestamp,
+      json({ extraction_reason: candidate.reason ?? null }),
+      candidate.type,
+      "memory_extraction_pipeline",
+      timestamp,
+      runId,
+      promptVersion,
+      candidate.confidenceLabel,
+      candidate.fingerprint,
+      duplicateOfId
+    );
+    for (const [index, span] of candidate.evidenceSpans.entries()) {
+      const evidenceId = stableProvenanceId("mev_", `${id}:${span.spanId}:primary`);
+      db.prepare(`INSERT OR IGNORE INTO memory_object_evidence(
+        id,memory_id,span_id,role,evidence_score,created_at,metadata_json,transcript_id,turn_id,extraction_role
+      ) VALUES (?,?,?,'source',?,?, '{}',?,?,?)`).run(evidenceId, id, span.spanId, candidate.finalConfidence, timestamp, span.transcriptId, span.turnId, index === 0 ? "primary" : "supporting");
+    }
+    db.prepare("UPDATE memory_objects SET extraction_status=? WHERE id=? AND user_corrected=0").run(candidate.status, id);
+    return db.prepare("SELECT * FROM memory_objects WHERE id=?").get(id);
+  })();
+}
+function markDuplicate(db, candidate, existingObjectId, runId, promptVersion) {
+  return storeMemoryObjectWithEvidence(db, runId, promptVersion, { ...candidate, status: "needs_review" }, existingObjectId);
+}
+function attachEvidenceToMemory(db, memoryId, candidate) {
+  return db.transaction(() => {
+    const timestamp = now();
+    let added = 0;
+    for (const span of candidate.evidenceSpans) {
+      if (db.prepare("SELECT 1 FROM memory_object_evidence WHERE memory_id=? AND span_id=? LIMIT 1").get(memoryId, span.spanId)) continue;
+      const evidenceId = stableProvenanceId("mev_", `${memoryId}:${span.spanId}:supporting`);
+      db.prepare(`INSERT OR IGNORE INTO memory_object_evidence(
+        id,memory_id,span_id,role,evidence_score,created_at,metadata_json,transcript_id,turn_id,extraction_role
+      ) VALUES (?,?,?,'source',?,?, '{}',?,?, 'supporting')`).run(evidenceId, memoryId, span.spanId, candidate.finalConfidence, timestamp, span.transcriptId, span.turnId);
+      added += 1;
+    }
+    return added;
+  })();
+}
+
+// src/memory/extraction/pipeline.ts
+function bodyIsStronglySupported(candidate) {
+  const quote2 = candidate.evidenceSpans.map((span) => span.text).join(" ");
+  return assessBodyQuoteSupport(candidate.body, quote2).status === "strong";
+}
+function conflictsWithActiveMemory(db, candidate) {
+  const candidateText = `${candidate.title}. ${candidate.body}`;
+  const candidateEvidenceIds = candidate.evidenceSpans.map((span) => span.spanId);
+  const actives = db.prepare(`SELECT id, title, generated_text FROM memory_objects
+    WHERE duplicate_of_id IS NULL AND (extraction_status='active' OR (extraction_status IS NULL AND status='active'))`).all();
+  for (const active of actives) {
+    const classification = classifyConflictCandidate({
+      leftTargetId: "candidate",
+      leftTargetType: "memory_object",
+      leftText: candidateText,
+      leftEvidenceIds: candidateEvidenceIds,
+      rightTargetId: active.id,
+      rightTargetType: "memory_object",
+      rightText: `${active.title ?? ""}. ${active.generated_text}`,
+      rightEvidenceIds: [active.id]
+    });
+    if (classification.kind !== "weak_or_ambiguous" && classification.confidence >= 0.6) return true;
+  }
+  return false;
+}
+async function extractMemoryObjectsForTranscript(db, options) {
+  const promptVersion = options.extractor.promptVersion ?? MEMORY_EXTRACTION_PROMPT_VERSION;
+  const runId = createExtractionRun(db, {
+    transcriptId: options.transcriptId,
+    extractorKind: options.extractor.kind ?? "test",
+    extractorModel: options.extractor.model,
+    promptVersion,
+    config: { maxWindowChars: options.maxWindowChars ?? 4e3, overlapSpans: options.overlapSpans ?? 0, force: options.force ?? false }
+  });
+  const result = {
+    extractionRunId: runId,
+    transcriptId: options.transcriptId,
+    windowsProcessed: 0,
+    candidatesExtracted: 0,
+    objectsInserted: 0,
+    duplicatesSkipped: 0,
+    weakObjectsInserted: 0,
+    rejectedCandidates: 0,
+    errors: []
+  };
+  try {
+    const spans = loadSpansForTranscript(db, options.transcriptId);
+    const windows = buildExtractionWindows(spans, options.maxWindowChars, options.overlapSpans);
+    for (const window of windows) {
+      let candidates;
+      try {
+        candidates = await options.extractor.extract(window);
+        result.windowsProcessed++;
+      } catch (error) {
+        result.errors.push(`Window ${window.windowId}: ${error instanceof Error ? error.message : String(error)}`);
+        continue;
+      }
+      result.candidatesExtracted += candidates.length;
+      for (const extracted of candidates) {
+        const validation = validateMemoryCandidate(extracted, window);
+        if (!validation.ok) {
+          result.rejectedCandidates++;
+          result.errors.push(validation.problem);
+          continue;
+        }
+        const candidate = validation.candidate;
+        const duplicate = findDuplicateMemoryObject(db, candidate);
+        if (duplicate) {
+          const canonical = duplicate.object;
+          const blocked = canonical.extraction_status === "rejected" || canonical.extraction_status === "superseded";
+          if (!blocked && duplicate.kind === "exact") {
+            attachEvidenceToMemory(db, canonical.id, candidate);
+            result.duplicatesSkipped++;
+            continue;
+          }
+          if (!blocked) {
+            markDuplicate(db, candidate, canonical.id, runId, promptVersion);
+            result.objectsInserted++;
+            result.duplicatesSkipped++;
+            result.weakObjectsInserted++;
+            continue;
+          }
+          result.duplicatesSkipped++;
+          continue;
+        }
+        try {
+          const toStore = candidate.status === "active" && bodyIsStronglySupported(candidate) && !conflictsWithActiveMemory(db, candidate) ? candidate : candidate.status === "active" ? { ...candidate, status: "needs_review" } : candidate;
+          storeMemoryObjectWithEvidence(db, runId, promptVersion, toStore);
+          result.objectsInserted++;
+          if (toStore.status !== "active") result.weakObjectsInserted++;
+        } catch (error) {
+          result.rejectedCandidates++;
+          result.errors.push(`Store candidate "${candidate.title}": ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+    }
+    if (windows.length > 0 && result.windowsProcessed === 0) failExtractionRun(db, runId, result.errors.join("\n") || "No extraction windows completed");
+    else completeExtractionRun(db, runId);
+    return result;
+  } catch (error) {
+    failExtractionRun(db, runId, error instanceof Error ? error.message : String(error));
+    throw error;
+  }
+}
+
+// src/retrieval/embeddingStore.ts
+function validateVector(vector, dimensions) {
+  if (!vector.length || vector.length !== dimensions || vector.some((value) => !Number.isFinite(value))) {
+    throw new ValidationError(`Invalid embedding vector; expected ${dimensions} finite dimensions`);
+  }
+}
+function cosineSimilarity(a, b) {
+  if (!a.length || a.length !== b.length) throw new ValidationError("Vector dimensions must match");
+  let dot = 0, left = 0, right = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    left += a[i] ** 2;
+    right += b[i] ** 2;
+  }
+  if (!left || !right) return 0;
+  return Math.max(0, Math.min(1, (dot / Math.sqrt(left * right) + 1) / 2));
+}
+async function upsertEmbedding(db, input) {
+  if (input.provider.dimensions <= 0) return false;
+  const existing = db.prepare(`SELECT content_hash FROM search_embeddings WHERE target_type=? AND target_id=? AND embedding_provider=? AND embedding_model=?`).get(input.targetType, input.targetId, input.provider.name, input.provider.model);
+  if (existing?.content_hash === input.contentHash) return false;
+  const vector = (await input.provider.embedTexts([input.text]))[0];
+  return storeEmbeddingVector(db, { targetType: input.targetType, targetId: input.targetId, contentHash: input.contentHash, provider: input.provider, vector });
+}
+function storeEmbeddingVector(db, input) {
+  if (input.provider.dimensions <= 0) return false;
+  const existing = db.prepare(`SELECT content_hash FROM search_embeddings WHERE target_type=? AND target_id=? AND embedding_provider=? AND embedding_model=?`).get(input.targetType, input.targetId, input.provider.name, input.provider.model);
+  if (existing?.content_hash === input.contentHash) return false;
+  const vector = input.vector;
+  validateVector(vector, input.provider.dimensions);
+  const timestamp = (/* @__PURE__ */ new Date()).toISOString();
+  db.prepare(`INSERT INTO search_embeddings(id,target_type,target_id,embedding_provider,embedding_model,embedding_dim,content_hash,vector_json,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(target_type,target_id,embedding_provider,embedding_model) DO UPDATE SET embedding_dim=excluded.embedding_dim,content_hash=excluded.content_hash,vector_json=excluded.vector_json,updated_at=excluded.updated_at`).run(stableProvenanceId("semb_", `${input.targetType}:${input.targetId}:${input.provider.name}:${input.provider.model}`), input.targetType, input.targetId, input.provider.name, input.provider.model, input.provider.dimensions, input.contentHash, JSON.stringify(vector), timestamp, timestamp);
+  return true;
+}
+
+// src/retrieval/indexer.ts
+function pointerMetadata(db, targetType, targetId) {
+  const rows = db.prepare(`SELECT evidence_pointer_id,source_pointer_uri,transcript_id,evidence_role,evidence_strength,confidence,final_score
+    FROM evidence_pointers WHERE target_type=? AND target_id=? ORDER BY evidence_pointer_id`).all(targetType, targetId);
+  const support = rows.some((row) => row.evidence_role === "support"), opposition = rows.some((row) => row.evidence_role === "opposition");
+  const supportRole = support && opposition ? "mixed" : opposition ? "opposing" : support ? "supporting" : "unknown";
+  return {
+    rows,
+    supportRole,
+    evidenceScore: rows.length ? Math.max(...rows.map((row) => row.final_score ?? row.confidence)) : 0.5,
+    evidencePointerIds: rows.map((row) => row.evidence_pointer_id),
+    sourcePointerIds: rows.map((row) => row.source_pointer_uri)
+  };
+}
+function spanDocument(db, spanId) {
+  const row = db.prepare(`SELECT s.id,s.transcript_id,s.source_id,s.speaker_id,s.speaker_label,s.text,s.created_at,t.updated_at
+    FROM transcript_spans s JOIN transcripts t ON t.id=s.transcript_id WHERE s.id=?`).get(spanId);
+  if (!row) throw new NotFoundError(`Transcript span not found: ${spanId}`);
+  const pointers = db.prepare("SELECT pointer_uri FROM source_pointers WHERE span_id=?").all(spanId);
+  const evidence = db.prepare("SELECT evidence_pointer_id,evidence_role,confidence,final_score FROM evidence_pointers WHERE span_id=?").all(spanId);
+  const opposition = evidence.some((item) => item.evidence_role === "opposition"), support = evidence.some((item) => item.evidence_role === "support");
+  return { targetType: "transcript_span", targetId: spanId, transcriptId: row.transcript_id, sourceId: row.source_id, speakerId: row.speaker_id, speakerName: row.speaker_label, memoryType: null, memoryStatus: null, title: null, text: row.text, topicText: null, createdAt: row.created_at, updatedAt: row.updated_at, evidenceScore: evidence.length ? Math.max(...evidence.map((item) => item.final_score ?? item.confidence)) : 0.5, supportRole: support && opposition ? "mixed" : opposition ? "opposing" : support ? "supporting" : "unknown", evidencePointerIds: evidence.map((item) => item.evidence_pointer_id), sourcePointerIds: pointers.map((item) => item.pointer_uri) };
+}
+function memoryDocument(db, id) {
+  const raw = db.prepare("SELECT * FROM memory_objects WHERE id=?").get(id);
+  const canonical = createMemoryObjectsRepo(db).getCanonicalMemoryObject(id);
+  if (!raw || !canonical) throw new NotFoundError(`Memory object not found: ${id}`);
+  const pointer = pointerMetadata(db, "memory_object", id);
+  const legacyEvidence = db.prepare(`SELECT e.span_id,s.transcript_id,s.source_id,s.speaker_id,s.speaker_label
+    FROM memory_object_evidence e JOIN transcript_spans s ON s.id=e.span_id WHERE e.memory_id=?`).all(id);
+  const transcriptId = pointer.rows[0]?.transcript_id ?? legacyEvidence[0]?.transcript_id ?? null;
+  const linkedSpan = legacyEvidence[0] ?? db.prepare(`SELECT s.transcript_id,s.source_id,s.speaker_id,s.speaker_label
+    FROM evidence_pointers e JOIN transcript_spans s ON s.id=e.span_id WHERE e.target_type='memory_object' AND e.target_id=? LIMIT 1`).get(id);
+  const sourcePointers = db.prepare(`SELECT sp.pointer_uri FROM source_pointers sp WHERE sp.span_id IN (SELECT span_id FROM memory_object_evidence WHERE memory_id=?)`).all(id);
+  const evidencePointerIds = pointer.evidencePointerIds;
+  return { targetType: "memory_object", targetId: id, transcriptId, sourceId: linkedSpan?.source_id ?? null, speakerId: linkedSpan?.speaker_id ?? null, speakerName: linkedSpan?.speaker_label ?? null, memoryType: canonical.type, memoryStatus: canonical.status, title: canonical.title, text: canonical.body, topicText: canonical.type === "topic" ? canonical.title : null, createdAt: String(raw.created_at), updatedAt: String(raw.updated_at), evidenceScore: isStrongMemoryObject(canonical) ? canonical.confidence : Math.min(canonical.confidence, 0.45), supportRole: pointer.supportRole, evidencePointerIds: [...evidencePointerIds], sourcePointerIds: [.../* @__PURE__ */ new Set([...pointer.sourcePointerIds, ...sourcePointers.map((item) => item.pointer_uri)])] };
+}
+function evidenceDocument(db, id) {
+  const row = db.prepare("SELECT * FROM evidence_pointers WHERE evidence_pointer_id=?").get(id);
+  if (!row) throw new NotFoundError(`Evidence pointer not found: ${id}`);
+  const span = db.prepare("SELECT source_id,speaker_id,speaker_label FROM transcript_spans WHERE id=?").get(row.span_id);
+  return { targetType: "evidence_pointer", targetId: id, transcriptId: row.transcript_id, sourceId: span.source_id, speakerId: span.speaker_id, speakerName: span.speaker_label, memoryType: null, memoryStatus: null, title: null, text: row.quote_preview, topicText: null, createdAt: row.created_at, updatedAt: row.created_at, evidenceScore: row.final_score ?? row.confidence, supportRole: row.evidence_role === "support" ? "supporting" : row.evidence_role === "opposition" ? "opposing" : "unknown", evidencePointerIds: [id], sourcePointerIds: [row.source_pointer_uri] };
+}
+function getDocument(db, type, id) {
+  return type === "transcript_span" ? spanDocument(db, id) : type === "memory_object" ? memoryDocument(db, id) : evidenceDocument(db, id);
+}
+async function indexDocument(db, type, id, options = {}) {
+  try {
+    const doc = getDocument(db, type, id);
+    const text = `${doc.title ?? ""}
+${doc.text}`.trim(), embeddingHash = contentHash(text);
+    const hash = contentHash(JSON.stringify({ text, transcriptId: doc.transcriptId, sourceId: doc.sourceId, speakerId: doc.speakerId, speakerName: doc.speakerName, memoryType: doc.memoryType, memoryStatus: doc.memoryStatus, evidenceScore: doc.evidenceScore, supportRole: doc.supportRole, evidencePointerIds: doc.evidencePointerIds, sourcePointerIds: doc.sourcePointerIds }));
+    const timestamp = (/* @__PURE__ */ new Date()).toISOString();
+    const previous = db.prepare("SELECT indexed_hash FROM retrieval_index_status WHERE target_type=? AND target_id=?").get(type, id);
+    const skipped = previous?.indexed_hash === hash && !options.force;
+    if (!skipped) {
+      db.prepare(`INSERT INTO retrieval_documents(id,target_type,target_id,transcript_id,source_id,speaker_id,speaker_name,memory_type,memory_status,title,search_text,topic_text,created_at,updated_at,evidence_score,support_role,evidence_pointer_ids_json,source_pointer_ids_json,content_hash)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(target_type,target_id) DO UPDATE SET transcript_id=excluded.transcript_id,source_id=excluded.source_id,speaker_id=excluded.speaker_id,speaker_name=excluded.speaker_name,memory_type=excluded.memory_type,memory_status=excluded.memory_status,title=excluded.title,search_text=excluded.search_text,topic_text=excluded.topic_text,created_at=excluded.created_at,updated_at=excluded.updated_at,evidence_score=excluded.evidence_score,support_role=excluded.support_role,evidence_pointer_ids_json=excluded.evidence_pointer_ids_json,source_pointer_ids_json=excluded.source_pointer_ids_json,content_hash=excluded.content_hash`).run(`${type}:${id}`, type, id, doc.transcriptId, doc.sourceId, doc.speakerId, doc.speakerName, doc.memoryType, doc.memoryStatus, doc.title, doc.text, doc.topicText, doc.createdAt, doc.updatedAt, doc.evidenceScore, doc.supportRole, JSON.stringify(doc.evidencePointerIds), JSON.stringify(doc.sourcePointerIds), hash);
+      try {
+        db.prepare("DELETE FROM retrieval_documents_fts WHERE target_type=? AND target_id=?").run(type, id);
+        db.prepare("INSERT INTO retrieval_documents_fts(target_type,target_id,title,search_text,speaker_name,topic_text) VALUES (?,?,?,?,?,?)").run(type, id, doc.title, doc.text, doc.speakerName, doc.topicText);
+      } catch {
+      }
+    }
+    const embedded = options.embeddingProvider ? await upsertEmbedding(db, { targetType: type, targetId: id, text, contentHash: embeddingHash, provider: options.embeddingProvider }) : false;
+    db.prepare(`INSERT INTO retrieval_index_status(target_type,target_id,indexed_hash,keyword_indexed_at,embedding_indexed_at,embedding_provider,embedding_model,error)
+      VALUES (?,?,?,?,?,?,?,NULL)
+      ON CONFLICT(target_type,target_id) DO UPDATE SET indexed_hash=excluded.indexed_hash,keyword_indexed_at=excluded.keyword_indexed_at,embedding_indexed_at=COALESCE(excluded.embedding_indexed_at,retrieval_index_status.embedding_indexed_at),embedding_provider=COALESCE(excluded.embedding_provider,retrieval_index_status.embedding_provider),embedding_model=COALESCE(excluded.embedding_model,retrieval_index_status.embedding_model),error=NULL`).run(type, id, hash, timestamp, embedded ? timestamp : null, options.embeddingProvider?.name ?? null, options.embeddingProvider?.model ?? null);
+    return { embedded, skipped };
+  } catch (error) {
+    db.prepare(`INSERT INTO retrieval_index_status(target_type,target_id,indexed_hash,error) VALUES (?,?,'',?)
+      ON CONFLICT(target_type,target_id) DO UPDATE SET error=excluded.error`).run(type, id, error instanceof Error ? error.message : String(error));
+    throw error;
+  }
+}
+function removeRetrievalDocument(db, targetType, targetId) {
+  try {
+    db.prepare("DELETE FROM retrieval_documents_fts WHERE target_type=? AND target_id=?").run(targetType, targetId);
+  } catch {
+  }
+  db.prepare("DELETE FROM retrieval_documents WHERE target_type=? AND target_id=?").run(targetType, targetId);
+  db.prepare("DELETE FROM search_embeddings WHERE target_type=? AND target_id=?").run(targetType, targetId);
+  db.prepare("DELETE FROM retrieval_index_status WHERE target_type=? AND target_id=?").run(targetType, targetId);
+}
+async function rebuildRetrievalIndex(db, options = {}) {
+  const types = options.targetTypes ?? ["transcript_span", "memory_object", "evidence_pointer"];
+  let indexed = 0, skipped = 0, embedded = 0, errors = 0;
+  const table = { transcript_span: ["transcript_spans", "id"], memory_object: ["memory_objects", "id"], evidence_pointer: ["evidence_pointers", "evidence_pointer_id"] };
+  for (const type of types) {
+    for (const row of db.prepare(`SELECT ${table[type][1]} id FROM ${table[type][0]}`).all()) {
+      try {
+        const result = await indexDocument(db, type, row.id, { ...options, embeddingProvider: void 0 });
+        result.skipped ? skipped++ : indexed++;
+      } catch {
+        errors++;
+      }
+    }
+  }
+  const provider = options.embeddingProvider;
+  if (provider && provider.dimensions > 0) {
+    const placeholders = types.map(() => "?").join(",");
+    const documents = db.prepare(`SELECT target_type,target_id,title,search_text FROM retrieval_documents WHERE target_type IN (${placeholders})`).all(...types);
+    const pending = documents.map((doc) => {
+      const text = `${doc.title ?? ""}
+${doc.search_text}`.trim(), hash = contentHash(text);
+      const existing = db.prepare(`SELECT content_hash FROM search_embeddings WHERE target_type=? AND target_id=? AND embedding_provider=? AND embedding_model=?`).get(doc.target_type, doc.target_id, provider.name, provider.model);
+      return existing?.content_hash === hash ? null : { ...doc, text, hash };
+    }).filter((item) => item != null);
+    const batchSize = Math.max(1, options.batchSize ?? 64);
+    for (let start = 0; start < pending.length; start += batchSize) {
+      const batch = pending.slice(start, start + batchSize);
+      try {
+        const vectors = await provider.embedTexts(batch.map((item) => item.text));
+        if (vectors.length !== batch.length) throw new Error("Embedding provider returned the wrong batch size");
+        vectors.forEach((vector, index) => {
+          const item = batch[index];
+          validateVector(vector, provider.dimensions);
+          if (storeEmbeddingVector(db, { targetType: item.target_type, targetId: item.target_id, contentHash: item.hash, provider, vector })) embedded++;
+          db.prepare(`UPDATE retrieval_index_status SET embedding_indexed_at=?,embedding_provider=?,embedding_model=?,error=NULL WHERE target_type=? AND target_id=?`).run((/* @__PURE__ */ new Date()).toISOString(), provider.name, provider.model, item.target_type, item.target_id);
+        });
+      } catch (error) {
+        errors += batch.length;
+        for (const item of batch) db.prepare("UPDATE retrieval_index_status SET error=? WHERE target_type=? AND target_id=?").run(error instanceof Error ? error.message : String(error), item.target_type, item.target_id);
+      }
+    }
+  }
+  return { indexed, skipped, embedded, errors };
+}
+
+// src/retrieval/transcriptIndex.ts
+var mapEvidenceRole = (role) => role === "contradicts" ? "opposition" : role === "qualifies" ? "conditional" : role === "context" ? "neutral" : "support";
+async function indexTranscriptForRetrieval(db, transcriptId) {
+  const repo = createMemoryObjectsRepo(db);
+  const memoryIds = db.prepare("SELECT DISTINCT memory_id FROM memory_object_evidence WHERE transcript_id=?").all(transcriptId);
+  let evidencePointersBridged = 0;
+  for (const { memory_id } of memoryIds) {
+    const canonical = repo.getCanonicalMemoryObject(memory_id);
+    if (!canonical || !isUsableAsEvidence(canonical)) continue;
+    const rows = db.prepare("SELECT span_id, role, evidence_score, transcript_id FROM memory_object_evidence WHERE memory_id=? AND transcript_id=?").all(memory_id, transcriptId);
+    for (const row of rows) {
+      linkMemoryObjectToSpan(db, { memoryObjectId: memory_id, transcriptId: row.transcript_id, spanId: row.span_id, evidenceRole: mapEvidenceRole(row.role), confidence: row.evidence_score });
+      evidencePointersBridged++;
+    }
+  }
+  const index = await rebuildRetrievalIndex(db);
+  return { transcriptId, evidencePointersBridged, indexed: index.indexed, skipped: index.skipped };
+}
+
+// src/retrieval/filters.ts
+function inList(value, list, insensitive = false) {
+  if (!list?.length) return true;
+  if (value == null) return false;
+  return insensitive ? list.some((item) => item.toLowerCase() === value.toLowerCase()) : list.includes(value);
+}
+function validDate(value) {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+function documentMatchesFilters(row, filters = {}) {
+  if (!inList(row.transcript_id, filters.transcriptIds) || !inList(row.source_id, filters.sourceIds) || !inList(row.speaker_id, filters.speakerIds) || !inList(row.speaker_name, filters.speakerNames, true) || !inList(row.memory_type, filters.memoryTypes) || !inList(row.memory_status, filters.memoryStatuses)) return false;
+  if (filters.minEvidenceScore != null && row.evidence_score < filters.minEvidenceScore) return false;
+  if (filters.includeGenerated === false && row.target_type !== "transcript_span") return false;
+  if (row.target_type === "memory_object" && filters.includeUnsupportedMemory !== true) {
+    if (row.memory_status === "rejected" || row.memory_status === "superseded" || JSON.parse(row.evidence_pointer_ids_json).length === 0 && JSON.parse(row.source_pointer_ids_json).length === 0) return false;
+  }
+  const created = validDate(row.created_at ?? void 0), updated = validDate(row.updated_at ?? void 0);
+  const createdAfter = validDate(filters.createdAfter), createdBefore = validDate(filters.createdBefore);
+  const updatedAfter = validDate(filters.updatedAfter), updatedBefore = validDate(filters.updatedBefore);
+  if (createdAfter != null && (created == null || created < createdAfter)) return false;
+  if (createdBefore != null && (created == null || created > createdBefore)) return false;
+  if (updatedAfter != null && (updated == null || updated < updatedAfter)) return false;
+  if (updatedBefore != null && (updated == null || updated > updatedBefore)) return false;
+  return true;
+}
+function rowToCandidate(row) {
+  return {
+    targetType: row.target_type,
+    targetId: row.target_id,
+    transcriptId: row.transcript_id ?? void 0,
+    sourceId: row.source_id ?? void 0,
+    speakerId: row.speaker_id ?? void 0,
+    speakerName: row.speaker_name ?? void 0,
+    title: row.title ?? void 0,
+    textPreview: row.search_text.slice(0, 500),
+    createdAt: row.created_at ?? void 0,
+    updatedAt: row.updated_at ?? void 0,
+    evidenceScore: row.evidence_score,
+    finalScore: 0,
+    matchReasons: [],
+    evidencePointerIds: JSON.parse(row.evidence_pointer_ids_json),
+    sourcePointerIds: JSON.parse(row.source_pointer_ids_json),
+    supportRole: row.support_role
+  };
+}
+
+// src/retrieval/keywordSearch.ts
+var scopeTypes = {
+  transcript_spans: ["transcript_span"],
+  memory_objects: ["memory_object"],
+  evidence_pointers: ["evidence_pointer"],
+  all: ["transcript_span", "memory_object", "evidence_pointer"]
+};
+function keywordScore(row, query) {
+  const phrase = query.toLowerCase(), title = (row.title ?? "").toLowerCase(), text = row.search_text.toLowerCase();
+  const speaker = (row.speaker_name ?? "").toLowerCase(), topic = (row.topic_text ?? "").toLowerCase();
+  const tokens4 = phrase.match(/[\p{L}\p{N}]+/gu) ?? [];
+  let score2 = 0;
+  const reasons = [];
+  if (title.includes(phrase)) {
+    score2 += 0.65;
+    reasons.push("keyword:title", "keyword:exact_phrase");
+  }
+  if (text.includes(phrase)) {
+    score2 += 0.55;
+    reasons.push(row.target_type === "transcript_span" ? "keyword:span_text" : "keyword:body", "keyword:exact_phrase");
+  }
+  if (speaker.includes(phrase)) {
+    score2 += 0.35;
+    reasons.push("keyword:speaker");
+  }
+  if (topic.includes(phrase)) {
+    score2 += 0.35;
+    reasons.push("keyword:topic");
+  }
+  const matched = tokens4.filter((token) => title.includes(token) || text.includes(token) || speaker.includes(token) || topic.includes(token)).length;
+  if (tokens4.length) score2 += 0.35 * (matched / tokens4.length);
+  return { score: Math.min(1, score2), reasons: [...new Set(reasons)] };
+}
+function keywordSearch(db, query) {
+  const text = query.query.trim();
+  if (!text) return [];
+  const types = scopeTypes[query.scope ?? "all"];
+  const candidateLimit = Math.max(query.keywordLimit ?? query.limit ?? 50, 20) * 10;
+  let rows = [];
+  try {
+    const fts = (text.match(/[\p{L}\p{N}]+/gu) ?? []).map((token) => `"${token.replaceAll('"', '""')}"*`).join(" OR ");
+    if (fts) {
+      const ids = db.prepare("SELECT target_type,target_id FROM retrieval_documents_fts WHERE retrieval_documents_fts MATCH ? LIMIT ?").all(fts, candidateLimit);
+      if (ids.length) {
+        const clauses = ids.map(() => "(target_type=? AND target_id=?)").join(" OR ");
+        rows = db.prepare(`SELECT * FROM retrieval_documents WHERE ${clauses}`).all(...ids.flatMap((id) => [id.target_type, id.target_id]));
+      }
+    }
+  } catch {
+  }
+  if (!rows.length) rows = db.prepare("SELECT * FROM retrieval_documents WHERE lower(search_text) LIKE lower(?) OR lower(COALESCE(title,'')) LIKE lower(?) OR lower(COALESCE(speaker_name,'')) LIKE lower(?) LIMIT ?").all(`%${text}%`, `%${text}%`, `%${text}%`, candidateLimit);
+  return rows.filter((row) => types.includes(row.target_type) && documentMatchesFilters(row, query.filters)).map((row) => {
+    const scored = keywordScore(row, text), candidate = rowToCandidate(row);
+    return { ...candidate, keywordScore: scored.score, finalScore: scored.score, metadataScore: query.filters && Object.keys(query.filters).length ? 1 : 0.5, matchReasons: [...scored.reasons, row.evidence_score === 0.5 ? "evidence:unscored" : `evidence:${row.evidence_score < 0.45 ? "weak" : "scored"}`] };
+  }).filter((item) => (item.keywordScore ?? 0) > 0).sort((a, b) => (b.keywordScore ?? 0) - (a.keywordScore ?? 0)).slice(0, query.keywordLimit ?? query.limit ?? 50);
+}
+
+// src/retrieval/vectorSearch.ts
+var scopeTypes2 = {
+  transcript_spans: ["transcript_span"],
+  memory_objects: ["memory_object"],
+  evidence_pointers: ["evidence_pointer"],
+  all: ["transcript_span", "memory_object", "evidence_pointer"]
+};
+async function vectorSearch(db, query) {
+  const text = query.query.trim(), provider = query.embeddingProvider;
+  if (!text || !provider || provider.dimensions <= 0) return [];
+  const vector = (await provider.embedTexts([text]))[0];
+  validateVector(vector, provider.dimensions);
+  const types = scopeTypes2[query.scope ?? "all"];
+  const embeddings = db.prepare(`SELECT e.*,d.* FROM search_embeddings e JOIN retrieval_documents d
+    ON d.target_type=e.target_type AND d.target_id=e.target_id
+    WHERE e.embedding_provider=? AND e.embedding_model=? AND e.embedding_dim=?`).all(provider.name, provider.model, provider.dimensions);
+  return embeddings.filter((row) => types.includes(row.target_type) && documentMatchesFilters(row, query.filters)).map((row) => {
+    const stored = JSON.parse(row.vector_json);
+    validateVector(stored, provider.dimensions);
+    const score2 = cosineSimilarity(vector, stored), candidate = rowToCandidate(row);
+    return { ...candidate, vectorScore: score2, finalScore: score2, metadataScore: query.filters && Object.keys(query.filters).length ? 1 : 0.5, matchReasons: ["vector:semantic", row.evidence_score === 0.5 ? "evidence:unscored" : `evidence:${row.evidence_score < 0.45 ? "weak" : "scored"}`] };
+  }).sort((a, b) => (b.vectorScore ?? 0) - (a.vectorScore ?? 0)).slice(0, query.vectorLimit ?? query.limit ?? 50);
+}
+
+// src/retrieval/ranking.ts
+var clamp2 = (value) => Math.max(0, Math.min(1, value));
+function recencyScore(timestamp, now2) {
+  if (!timestamp) return 0.5;
+  const time2 = Date.parse(timestamp), current = now2 == null ? Date.now() : Date.parse(now2);
+  if (!Number.isFinite(time2) || !Number.isFinite(current)) return 0.5;
+  const ageDays = Math.max(0, (current - time2) / 864e5);
+  return clamp2(1 / (1 + ageDays / 365));
+}
+function rankCandidate(candidate, vectorAvailable, recencyBoost = false, now2) {
+  const vector = candidate.vectorScore ?? 0, keyword = candidate.keywordScore ?? 0;
+  const evidence = candidate.evidenceScore ?? 0.5, metadata = candidate.metadataScore ?? 0.5;
+  const recency = recencyBoost ? recencyScore(candidate.updatedAt ?? candidate.createdAt, now2) : 0.5;
+  const score2 = vectorAvailable ? 0.4 * vector + 0.3 * keyword + 0.15 * evidence + 0.1 * metadata + 0.05 * recency : 0.55 * keyword + 0.25 * evidence + 0.15 * metadata + 0.05 * recency;
+  return { ...candidate, recencyScore: recency, finalScore: clamp2(score2) };
+}
+function mergeCandidates(candidates) {
+  const merged = /* @__PURE__ */ new Map();
+  for (const item of candidates) {
+    const key = `${item.targetType}:${item.targetId}`;
+    const existing = merged.get(key);
+    if (!existing) {
+      merged.set(key, item);
+      continue;
+    }
+    merged.set(key, {
+      ...existing,
+      keywordScore: Math.max(existing.keywordScore ?? 0, item.keywordScore ?? 0),
+      vectorScore: Math.max(existing.vectorScore ?? 0, item.vectorScore ?? 0),
+      evidenceScore: Math.max(existing.evidenceScore ?? 0, item.evidenceScore ?? 0),
+      matchReasons: [.../* @__PURE__ */ new Set([...existing.matchReasons, ...item.matchReasons])],
+      evidencePointerIds: [.../* @__PURE__ */ new Set([...existing.evidencePointerIds, ...item.evidencePointerIds])],
+      sourcePointerIds: [.../* @__PURE__ */ new Set([...existing.sourcePointerIds, ...item.sourcePointerIds])]
+    });
+  }
+  return [...merged.values()];
+}
+function dedupeUnderlyingEvidence(candidates) {
+  const priority = { transcript_span: 3, evidence_pointer: 2, memory_object: 1 };
+  const kept = /* @__PURE__ */ new Map();
+  for (const candidate of candidates.sort((a, b) => b.finalScore - a.finalScore)) {
+    const key = candidate.sourcePointerIds[0] ?? `${candidate.targetType}:${candidate.targetId}`;
+    const existing = kept.get(key);
+    if (!existing || priority[candidate.targetType] > priority[existing.targetType]) {
+      kept.set(key, existing ? {
+        ...candidate,
+        evidencePointerIds: [.../* @__PURE__ */ new Set([...candidate.evidencePointerIds, ...existing.evidencePointerIds])],
+        sourcePointerIds: [.../* @__PURE__ */ new Set([...candidate.sourcePointerIds, ...existing.sourcePointerIds])],
+        matchReasons: [.../* @__PURE__ */ new Set([...candidate.matchReasons, ...existing.matchReasons])]
+      } : candidate);
+    }
+  }
+  return [...kept.values()];
+}
+
+// src/retrieval/hybridSearch.ts
+async function searchRetrieval(db, query) {
+  if (!query.query.trim()) return [];
+  const mode = query.mode ?? "hybrid";
+  const keyword = mode === "vector" ? [] : keywordSearch(db, query);
+  const vector = mode === "keyword" ? [] : await vectorSearch(db, query);
+  const ranked = mergeCandidates([...keyword, ...vector]).map((candidate) => rankCandidate(candidate, vector.length > 0, query.recencyBoost, query.now));
+  const filtered = query.requireEvidencePointers ? ranked.filter((candidate) => candidate.evidencePointerIds.length > 0) : ranked;
+  return dedupeUnderlyingEvidence(filtered).sort((a, b) => b.finalScore - a.finalScore).slice(0, query.finalLimit ?? query.limit ?? 20);
+}
+var searchMemoryObjects = (db, query) => searchRetrieval(db, { ...query, scope: "memory_objects" });
+var searchEvidencePointers = (db, query) => searchRetrieval(db, { ...query, scope: "evidence_pointers" });
 
 // src/evidence/rules.ts
 var SCORER_VERSION = "mvp-evidence-v1";
@@ -2640,8 +3816,8 @@ var USE_TYPE_WEIGHTS = {
   recommendation: { relevance: 0.2, directness: 0.15, specificity: 0.14, sourceStrength: 0.15, repetition: 0.1, recency: 0.14, correctionWeight: 0.08, confidence: 0.04 }
 };
 var stopWords = /* @__PURE__ */ new Set(["a", "an", "and", "are", "as", "at", "be", "because", "by", "for", "from", "has", "in", "is", "it", "of", "on", "or", "that", "the", "this", "to", "was", "were", "with"]);
-var clamp = (value) => Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
-var round2 = (value) => Math.round(clamp(value) * 1e4) / 1e4;
+var clamp3 = (value) => Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
+var round2 = (value) => Math.round(clamp3(value) * 1e4) / 1e4;
 function tokens2(text = "") {
   return [...new Set(text.toLowerCase().match(/[\p{L}\p{N}]+/gu)?.filter((token) => token.length > 1 && !stopWords.has(token)) ?? [])];
 }
@@ -2650,13 +3826,13 @@ function lexicalCoverage(claimText, quote2 = "") {
   return claim.length ? claim.filter((token) => evidence.has(token)).length / claim.length : 0;
 }
 function calculateRelevance(candidate, claimText, requiredTerms = []) {
-  const available = [candidate.retrievalScore, candidate.vectorScore, candidate.keywordScore].filter((score2) => score2 != null).map(clamp);
+  const available = [candidate.retrievalScore, candidate.vectorScore, candidate.keywordScore].filter((score2) => score2 != null).map(clamp3);
   const lexical = lexicalCoverage(claimText, candidate.quote);
   const requiredCoverage = requiredTerms.length ? requiredTerms.filter((term) => candidate.quote?.toLowerCase().includes(term.toLowerCase())).length / requiredTerms.length : lexical;
   if (!available.length) return round2(0.75 * lexical + 0.25 * requiredCoverage);
-  const retrieval = clamp(candidate.retrievalScore ?? lexical);
-  const vector = clamp(candidate.vectorScore ?? lexical);
-  const keyword = clamp(candidate.keywordScore ?? lexical);
+  const retrieval = clamp3(candidate.retrievalScore ?? lexical);
+  const vector = clamp3(candidate.vectorScore ?? lexical);
+  const keyword = clamp3(candidate.keywordScore ?? lexical);
   return round2(0.35 * retrieval + 0.2 * vector + 0.2 * keyword + 0.15 * lexical + 0.1 * requiredCoverage);
 }
 function calculateDirectness(candidate, useType3) {
@@ -2703,7 +3879,7 @@ function calculateCorrectionWeight(candidate) {
 }
 function calculateConfidence(candidate) {
   const values = [candidate.sourceConfidence, candidate.extractionConfidence].filter((value) => value != null);
-  return round2(values.length ? values.reduce((sum, value) => sum + clamp(value), 0) / values.length : 0.5);
+  return round2(values.length ? values.reduce((sum, value) => sum + clamp3(value), 0) / values.length : 0.5);
 }
 function candidateCaps(candidate, useType3, components, requiredTerms = [], claimText = "") {
   const reasons = [];
@@ -2744,8 +3920,8 @@ var normalizeQuote = (quote2 = "") => quote2.toLowerCase().replace(/[^\p{L}\p{N}
 function nearIdentical(left = "", right = "") {
   const a = new Set(normalizeQuote(left).split(" ").filter(Boolean)), b = new Set(normalizeQuote(right).split(" ").filter(Boolean));
   if (!a.size || !b.size) return false;
-  const intersection = [...a].filter((token) => b.has(token)).length;
-  return intersection / Math.max(a.size, b.size) >= 0.9;
+  const intersection2 = [...a].filter((token) => b.has(token)).length;
+  return intersection2 / Math.max(a.size, b.size) >= 0.9;
 }
 function areDuplicates(left, right) {
   if (left.evidencePointerId && left.evidencePointerId === right.evidencePointerId) return true;
@@ -3020,228 +4196,502 @@ function saveEvidenceScoreRun(db, assessment, options) {
   return id;
 }
 
-// src/retrieval/embeddingStore.ts
-function validateVector(vector, dimensions) {
-  if (!vector.length || vector.length !== dimensions || vector.some((value) => !Number.isFinite(value))) {
-    throw new ValidationError(`Invalid embedding vector; expected ${dimensions} finite dimensions`);
+// src/ask-ai/unconfirmedContext.ts
+var MEMORY_CAP = 6;
+var CONFLICT_CAP = 6;
+var TENTATIVE3 = /\b(maybe|perhaps|possibly|probably|might|tentative\w*|consider(?:ing)?|proposed|propose|discussed?|i think|not sure|unsure)\b/i;
+var STOPWORDS2 = /* @__PURE__ */ new Set(["the", "a", "an", "and", "or", "of", "to", "in", "on", "for", "is", "are", "be", "we", "i", "it", "this", "that", "what", "should", "do", "does", "how", "with", "about", "our"]);
+var tokens3 = (text) => new Set((text.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter((token) => token.length > 2 && !STOPWORDS2.has(token)));
+var sharesToken = (queryTokens, text) => {
+  for (const token of tokens3(text)) if (queryTokens.has(token)) return true;
+  return false;
+};
+var labelFor = (kind) => kind === "conflict" ? "Conflict / tension" : kind === "tentative" ? "Tentative idea" : kind === "possible_duplicate" ? "Possible duplicate" : kind === "degraded" ? "Missing evidence" : "Review-only";
+async function retrieveUnconfirmedContext(db, query, options = {}) {
+  const contract = query.answerContract;
+  const items = [];
+  if (contract.includeReviewOnlyItems) {
+    const memoryRepo = createMemoryObjectsRepo(db);
+    const memoryIds = query.intent === "conflict_risk" ? memoryRepo.listCanonicalMemoryObjects().filter((m) => m.status === "needs_review" || m.status === "weak").map((m) => m.id) : (await searchMemoryObjects(db, {
+      query: query.normalizedQuestion,
+      mode: "hybrid",
+      finalLimit: MEMORY_CAP * 3,
+      embeddingProvider: options.embeddingProvider,
+      filters: { memoryStatuses: ["needs_review", "weak"], includeUnsupportedMemory: true }
+    })).map((candidate) => candidate.targetId);
+    for (const memoryId of memoryIds) {
+      if (items.filter((item) => item.memoryId).length >= MEMORY_CAP) break;
+      const canonical = memoryRepo.getCanonicalMemoryObject(memoryId);
+      if (!canonical || canonical.status !== "needs_review" && canonical.status !== "weak") continue;
+      const hasSpan = canonical.evidenceSpanIds.length > 0;
+      const tentative = TENTATIVE3.test(`${canonical.title} ${canonical.body}`);
+      const kind = !hasSpan ? "degraded" : canonical.duplicateOfId ? "possible_duplicate" : tentative ? "tentative" : "review_only";
+      const livePointer = hasSpan ? db.prepare("SELECT evidence_pointer_id FROM evidence_pointers WHERE target_type IN ('memory_object','claim','summary') AND target_id=? ORDER BY evidence_pointer_id LIMIT 1").get(memoryId)?.evidence_pointer_id : void 0;
+      items.push({
+        id: `unc_mem_${memoryId}`,
+        kind,
+        memoryId,
+        text: canonical.title || canonical.body,
+        label: labelFor(kind),
+        warning: UNCONFIRMED_DISCLAIMER,
+        ...livePointer ? { evidencePointerId: livePointer, evidenceUri: `mv://evidence/${livePointer}` } : {},
+        ...hasSpan ? {} : { missingEvidence: true }
+      });
+    }
   }
-}
-function cosineSimilarity(a, b) {
-  if (!a.length || a.length !== b.length) throw new ValidationError("Vector dimensions must match");
-  let dot = 0, left = 0, right = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    left += a[i] ** 2;
-    right += b[i] ** 2;
+  if (contract.includeConflicts) {
+    const queryTokens = tokens3(query.normalizedQuestion);
+    const repo = createConflictRepository(db);
+    const conflicts = repo.listActiveConflicts();
+    for (const conflict of conflicts) {
+      if (items.filter((item) => item.conflictId).length >= CONFLICT_CAP) break;
+      const haystack = `${conflict.summary} ${conflict.explanation}`;
+      const relevant = query.intent === "conflict_risk" || queryTokens.size === 0 || sharesToken(queryTokens, haystack);
+      if (!relevant) continue;
+      const live = conflict.evidenceLinks.some((link) => link.evidencePointerId);
+      items.push({
+        id: `unc_conf_${conflict.id}`,
+        kind: "conflict",
+        conflictId: conflict.id,
+        text: `${conflict.summary}. ${conflict.explanation}`,
+        label: labelFor("conflict"),
+        warning: UNCONFIRMED_DISCLAIMER,
+        ...live ? {} : { missingEvidence: true }
+      });
+    }
   }
-  if (!left || !right) return 0;
-  return Math.max(0, Math.min(1, (dot / Math.sqrt(left * right) + 1) / 2));
+  return items;
 }
 
-// src/retrieval/filters.ts
-function inList(value, list, insensitive = false) {
-  if (!list?.length) return true;
-  if (value == null) return false;
-  return insensitive ? list.some((item) => item.toLowerCase() === value.toLowerCase()) : list.includes(value);
-}
-function validDate(value) {
-  if (!value) return null;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-function documentMatchesFilters(row, filters = {}) {
-  if (!inList(row.transcript_id, filters.transcriptIds) || !inList(row.source_id, filters.sourceIds) || !inList(row.speaker_id, filters.speakerIds) || !inList(row.speaker_name, filters.speakerNames, true) || !inList(row.memory_type, filters.memoryTypes) || !inList(row.memory_status, filters.memoryStatuses)) return false;
-  if (filters.minEvidenceScore != null && row.evidence_score < filters.minEvidenceScore) return false;
-  if (filters.includeGenerated === false && row.target_type !== "transcript_span") return false;
-  if (row.target_type === "memory_object" && filters.includeUnsupportedMemory !== true) {
-    if (row.memory_status === "rejected" || row.memory_status === "superseded" || JSON.parse(row.evidence_pointer_ids_json).length === 0 && JSON.parse(row.source_pointer_ids_json).length === 0) return false;
+// src/ask-ai/llmSynthesis.ts
+var LlmSynthesisError = class extends Error {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "LlmSynthesisError";
   }
-  const created = validDate(row.created_at ?? void 0), updated = validDate(row.updated_at ?? void 0);
-  const createdAfter = validDate(filters.createdAfter), createdBefore = validDate(filters.createdBefore);
-  const updatedAfter = validDate(filters.updatedAfter), updatedBefore = validDate(filters.updatedBefore);
-  if (createdAfter != null && (created == null || created < createdAfter)) return false;
-  if (createdBefore != null && (created == null || created > createdBefore)) return false;
-  if (updatedAfter != null && (updated == null || updated < updatedAfter)) return false;
-  if (updatedBefore != null && (updated == null || updated > updatedBefore)) return false;
-  return true;
+};
+var CLAIM_KINDS = ["fact", "pattern", "inference", "recommendation"];
+var normalizeForMatch2 = (value) => value.toLowerCase().replace(/\s+/g, " ").trim();
+function buildSynthesisPrompt(query, evidence) {
+  const items = evidence.map((item, index) => `${index + 1}. pointerId: ${item.evidencePointerId}
+   quote: ${item.quotePreview}`).join("\n");
+  const system = [
+    "You answer questions strictly from the transcript evidence provided.",
+    "Use ONLY the listed evidence; never use outside knowledge or invent facts.",
+    "Cite evidence by its exact pointerId. Each claim must include a supportingQuote copied verbatim from one of the quotes you cite.",
+    "If the evidence does not support an answer, return an empty claims array. Respond with JSON only."
+  ].join(" ");
+  const prompt = [
+    `Question: ${query.originalQuestion}`,
+    "",
+    "Evidence:",
+    items,
+    "",
+    'Return JSON of the form: {"claims":[{"kind":"fact|pattern|inference|recommendation","text":"...","evidencePointerIds":["<pointerId>"],"supportingQuote":"<verbatim substring of a cited quote>","explanation":"<optional>"}]}'
+  ].join("\n");
+  return { system, prompt };
 }
-function rowToCandidate(row) {
+function parseAndGroundClaims(rawText, evidence) {
+  let parsed;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch {
+    throw new LlmSynthesisError("LLM synthesis output was not valid JSON");
+  }
+  if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.claims)) {
+    throw new LlmSynthesisError("LLM synthesis output did not contain a claims array");
+  }
+  const snippetByPointer = new Map(evidence.map((item) => [item.evidencePointerId, normalizeForMatch2(item.quotePreview)]));
+  const grounded = [];
+  for (const raw of parsed.claims) {
+    if (!raw || typeof raw !== "object") continue;
+    const candidate = raw;
+    const kind = candidate.kind;
+    if (typeof kind !== "string" || !CLAIM_KINDS.includes(kind)) continue;
+    const text = candidate.text;
+    if (typeof text !== "string" || !text.trim()) continue;
+    const ids = candidate.evidencePointerIds;
+    if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string")) continue;
+    const pointerIds = [...new Set(ids)].filter((id) => snippetByPointer.has(id));
+    if (!pointerIds.length) continue;
+    const quote2 = candidate.supportingQuote;
+    if (typeof quote2 !== "string" || !quote2.trim()) continue;
+    const needle = normalizeForMatch2(quote2);
+    const anchored = needle.length > 0 && pointerIds.some((id) => snippetByPointer.get(id)?.includes(needle));
+    if (!anchored) continue;
+    const explanation = typeof candidate.explanation === "string" ? candidate.explanation : void 0;
+    grounded.push({ kind, text: text.trim(), evidencePointerIds: pointerIds, explanation });
+  }
+  return grounded;
+}
+function createLlmAskAILanguageModel(provider, options = {}) {
   return {
-    targetType: row.target_type,
-    targetId: row.target_id,
-    transcriptId: row.transcript_id ?? void 0,
-    sourceId: row.source_id ?? void 0,
-    speakerId: row.speaker_id ?? void 0,
-    speakerName: row.speaker_name ?? void 0,
-    title: row.title ?? void 0,
-    textPreview: row.search_text.slice(0, 500),
-    createdAt: row.created_at ?? void 0,
-    updatedAt: row.updated_at ?? void 0,
-    evidenceScore: row.evidence_score,
-    finalScore: 0,
-    matchReasons: [],
-    evidencePointerIds: JSON.parse(row.evidence_pointer_ids_json),
-    sourcePointerIds: JSON.parse(row.source_pointer_ids_json),
-    supportRole: row.support_role
+    async generateClaims({ query, evidence }) {
+      const { system, prompt } = buildSynthesisPrompt(query, evidence);
+      const requestOptions = {};
+      if (options.timeoutMs != null) requestOptions.timeoutMs = options.timeoutMs;
+      let text;
+      try {
+        text = (await provider.complete({ system, prompt, responseFormat: "json" }, requestOptions)).text;
+      } catch {
+        throw new LlmSynthesisError("LLM synthesis request failed");
+      }
+      return parseAndGroundClaims(text, evidence);
+    }
   };
 }
 
-// src/retrieval/keywordSearch.ts
-var scopeTypes = {
-  transcript_spans: ["transcript_span"],
-  memory_objects: ["memory_object"],
-  evidence_pointers: ["evidence_pointer"],
-  all: ["transcript_span", "memory_object", "evidence_pointer"]
-};
-function keywordScore(row, query) {
-  const phrase = query.toLowerCase(), title = (row.title ?? "").toLowerCase(), text = row.search_text.toLowerCase();
-  const speaker = (row.speaker_name ?? "").toLowerCase(), topic = (row.topic_text ?? "").toLowerCase();
-  const tokens3 = phrase.match(/[\p{L}\p{N}]+/gu) ?? [];
-  let score2 = 0;
-  const reasons = [];
-  if (title.includes(phrase)) {
-    score2 += 0.65;
-    reasons.push("keyword:title", "keyword:exact_phrase");
-  }
-  if (text.includes(phrase)) {
-    score2 += 0.55;
-    reasons.push(row.target_type === "transcript_span" ? "keyword:span_text" : "keyword:body", "keyword:exact_phrase");
-  }
-  if (speaker.includes(phrase)) {
-    score2 += 0.35;
-    reasons.push("keyword:speaker");
-  }
-  if (topic.includes(phrase)) {
-    score2 += 0.35;
-    reasons.push("keyword:topic");
-  }
-  const matched = tokens3.filter((token) => title.includes(token) || text.includes(token) || speaker.includes(token) || topic.includes(token)).length;
-  if (tokens3.length) score2 += 0.35 * (matched / tokens3.length);
-  return { score: Math.min(1, score2), reasons: [...new Set(reasons)] };
+// src/ask-ai/citations.ts
+var import_node_crypto6 = require("node:crypto");
+var stableId3 = (value) => `aic_${(0, import_node_crypto6.createHash)("sha256").update(value).digest("hex").slice(0, 24)}`;
+function buildCitations(evidence) {
+  const seen = /* @__PURE__ */ new Set();
+  return evidence.filter((item) => {
+    if (seen.has(item.evidencePointerId)) return false;
+    seen.add(item.evidencePointerId);
+    return true;
+  }).map((item, index) => ({
+    id: stableId3(item.evidencePointerId),
+    label: `[${index + 1}]`,
+    evidencePointerId: item.evidencePointerId,
+    sourcePointerId: item.sourcePointerId,
+    transcriptId: item.transcriptId,
+    spanId: item.spanId,
+    quotePreview: item.quotePreview,
+    clickbackUri: item.clickbackUri
+  }));
 }
-function keywordSearch(db, query) {
-  const text = query.query.trim();
-  if (!text) return [];
-  const types = scopeTypes[query.scope ?? "all"];
-  const candidateLimit = Math.max(query.keywordLimit ?? query.limit ?? 50, 20) * 10;
-  let rows = [];
-  try {
-    const fts = (text.match(/[\p{L}\p{N}]+/gu) ?? []).map((token) => `"${token.replaceAll('"', '""')}"*`).join(" OR ");
-    if (fts) {
-      const ids = db.prepare("SELECT target_type,target_id FROM retrieval_documents_fts WHERE retrieval_documents_fts MATCH ? LIMIT ?").all(fts, candidateLimit);
-      if (ids.length) {
-        const clauses = ids.map(() => "(target_type=? AND target_id=?)").join(" OR ");
-        rows = db.prepare(`SELECT * FROM retrieval_documents WHERE ${clauses}`).all(...ids.flatMap((id) => [id.target_type, id.target_id]));
-      }
-    }
-  } catch {
+var renderCitation = (citation) => `${citation.label}(${citation.clickbackUri})`;
+
+// src/ask-ai/answerRendering.ts
+var REFUSAL = "I don't have enough transcript-backed evidence to answer that.";
+function renderUnconfirmedItem(item) {
+  const suffix = item.evidenceUri ? ` [context](${item.evidenceUri})` : item.missingEvidence ? " _(evidence missing or deleted)_" : "";
+  return `**${item.label}:** ${item.text}${suffix}`;
+}
+function renderUnconfirmedSections(unconfirmed) {
+  const groups = [
+    ["Conflicts / tensions", ["conflict"]],
+    ["Unconfirmed / review-only findings", ["review_only", "degraded"]],
+    ["Tentative ideas", ["tentative", "possible_duplicate"]]
+  ];
+  const blocks = [];
+  for (const [heading, kinds] of groups) {
+    const group = unconfirmed.filter((item) => kinds.includes(item.kind));
+    if (group.length) blocks.push(`## ${heading}
+
+${group.map(renderUnconfirmedItem).join("\n\n")}`);
   }
-  if (!rows.length) rows = db.prepare("SELECT * FROM retrieval_documents WHERE lower(search_text) LIKE lower(?) OR lower(COALESCE(title,'')) LIKE lower(?) OR lower(COALESCE(speaker_name,'')) LIKE lower(?) LIMIT ?").all(`%${text}%`, `%${text}%`, `%${text}%`, candidateLimit);
-  return rows.filter((row) => types.includes(row.target_type) && documentMatchesFilters(row, query.filters)).map((row) => {
-    const scored = keywordScore(row, text), candidate = rowToCandidate(row);
-    return { ...candidate, keywordScore: scored.score, finalScore: scored.score, metadataScore: query.filters && Object.keys(query.filters).length ? 1 : 0.5, matchReasons: [...scored.reasons, row.evidence_score === 0.5 ? "evidence:unscored" : `evidence:${row.evidence_score < 0.45 ? "weak" : "scored"}`] };
-  }).filter((item) => (item.keywordScore ?? 0) > 0).sort((a, b) => (b.keywordScore ?? 0) - (a.keywordScore ?? 0)).slice(0, query.keywordLimit ?? query.limit ?? 50);
+  return blocks;
+}
+function renderFactual(input) {
+  const citations = new Map(input.citations.map((item) => [item.id, item]));
+  const lines = input.claims.map((claim) => {
+    const links2 = claim.citationIds.map((id) => citations.get(id)).filter((item) => item != null).map(renderCitation);
+    if (!links2.length) throw new ValidationError(`Ask AI claim has no selected citation: ${claim.id}`);
+    const label = claim.kind === "fact" ? "" : `**${claim.kind[0].toUpperCase()}${claim.kind.slice(1)}:** `;
+    return `${label}${claim.text} ${links2.join(" ")}`;
+  });
+  const intro = input.confidence === "weak" ? "The evidence I found is weak, so this should be treated cautiously." : input.confidence === "conflicting" ? "The evidence conflicts, so I can't give one clean answer. Both sides are shown below." : input.confidence === "mixed" ? "The transcript evidence supports a qualified answer." : "Based on the transcript evidence:";
+  return `${intro}
+
+${lines.join("\n\n")}`;
+}
+function renderAnalysisClaim(claim) {
+  const label = `**${claim.kind[0].toUpperCase()}${claim.kind.slice(1)}:** `;
+  return `${label}${claim.text}`;
+}
+function renderAnswer(input) {
+  const analysis = input.analysis ?? [];
+  const unconfirmed = input.unconfirmed ?? [];
+  const hasFactual = input.confidence !== "no_evidence" && input.claims.length > 0;
+  const factual = hasFactual ? renderFactual(input) : "";
+  const analysisBlock = analysis.length ? `## AI analysis \u2014 not from your transcripts
+
+${analysis.map(renderAnalysisClaim).join("\n\n")}` : "";
+  if (!unconfirmed.length) {
+    if (!analysis.length) return hasFactual ? factual : REFUSAL;
+    const lead = hasFactual ? factual : "I don't have transcript-backed evidence for this, so the following is AI analysis, not from your transcripts.";
+    return `${lead}
+
+${analysisBlock}`;
+  }
+  const blocks = [];
+  blocks.push(hasFactual ? factual : "I don't have confirmed transcript-backed evidence for this. The items below are unconfirmed or AI analysis \u2014 not established facts.");
+  blocks.push(`> [!warning] Unconfirmed context
+> ${UNCONFIRMED_DISCLAIMER}`);
+  blocks.push(...renderUnconfirmedSections(unconfirmed));
+  if (analysisBlock) blocks.push(analysisBlock);
+  return blocks.join("\n\n");
 }
 
-// src/retrieval/vectorSearch.ts
-var scopeTypes2 = {
-  transcript_spans: ["transcript_span"],
-  memory_objects: ["memory_object"],
-  evidence_pointers: ["evidence_pointer"],
-  all: ["transcript_span", "memory_object", "evidence_pointer"]
-};
-async function vectorSearch(db, query) {
-  const text = query.query.trim(), provider = query.embeddingProvider;
-  if (!text || !provider || provider.dimensions <= 0) return [];
-  const vector = (await provider.embedTexts([text]))[0];
-  validateVector(vector, provider.dimensions);
-  const types = scopeTypes2[query.scope ?? "all"];
-  const embeddings = db.prepare(`SELECT e.*,d.* FROM search_embeddings e JOIN retrieval_documents d
-    ON d.target_type=e.target_type AND d.target_id=e.target_id
-    WHERE e.embedding_provider=? AND e.embedding_model=? AND e.embedding_dim=?`).all(provider.name, provider.model, provider.dimensions);
-  return embeddings.filter((row) => types.includes(row.target_type) && documentMatchesFilters(row, query.filters)).map((row) => {
-    const stored = JSON.parse(row.vector_json);
-    validateVector(stored, provider.dimensions);
-    const score2 = cosineSimilarity(vector, stored), candidate = rowToCandidate(row);
-    return { ...candidate, vectorScore: score2, finalScore: score2, metadataScore: query.filters && Object.keys(query.filters).length ? 1 : 0.5, matchReasons: ["vector:semantic", row.evidence_score === 0.5 ? "evidence:unscored" : `evidence:${row.evidence_score < 0.45 ? "weak" : "scored"}`] };
-  }).sort((a, b) => (b.vectorScore ?? 0) - (a.vectorScore ?? 0)).slice(0, query.vectorLimit ?? query.limit ?? 50);
+// src/ask-ai/followups.ts
+function suggestFollowups(confidence, query) {
+  if (confidence === "no_evidence") return ["Do you want to search only within a specific transcript?", "Do you want to import more transcripts related to this topic?"];
+  if (confidence === "weak") return ["Do you want to see the exact transcript spans I found?", "Do you want to broaden the search?"];
+  if (confidence === "conflicting") return ["Do you want to compare the conflicting transcript moments?", "Do you want to review which source is newer?"];
+  return query.needsChronology ? ["Do you want the answer grouped by speaker?", "Do you want the supporting transcript clips?"] : ["Do you want a timeline of this?", "Do you want the answer grouped by speaker?", "Do you want the supporting transcript clips?"];
 }
 
-// src/retrieval/ranking.ts
-var clamp2 = (value) => Math.max(0, Math.min(1, value));
-function recencyScore(timestamp, now2) {
-  if (!timestamp) return 0.5;
-  const time = Date.parse(timestamp), current = now2 == null ? Date.now() : Date.parse(now2);
-  if (!Number.isFinite(time) || !Number.isFinite(current)) return 0.5;
-  const ageDays = Math.max(0, (current - time) / 864e5);
-  return clamp2(1 / (1 + ageDays / 365));
-}
-function rankCandidate(candidate, vectorAvailable, recencyBoost = false, now2) {
-  const vector = candidate.vectorScore ?? 0, keyword = candidate.keywordScore ?? 0;
-  const evidence = candidate.evidenceScore ?? 0.5, metadata = candidate.metadataScore ?? 0.5;
-  const recency = recencyBoost ? recencyScore(candidate.updatedAt ?? candidate.createdAt, now2) : 0.5;
-  const score2 = vectorAvailable ? 0.4 * vector + 0.3 * keyword + 0.15 * evidence + 0.1 * metadata + 0.05 * recency : 0.55 * keyword + 0.25 * evidence + 0.15 * metadata + 0.05 * recency;
-  return { ...candidate, recencyScore: recency, finalScore: clamp2(score2) };
-}
-function mergeCandidates(candidates) {
-  const merged = /* @__PURE__ */ new Map();
-  for (const item of candidates) {
-    const key = `${item.targetType}:${item.targetId}`;
-    const existing = merged.get(key);
-    if (!existing) {
-      merged.set(key, item);
-      continue;
-    }
-    merged.set(key, {
-      ...existing,
-      keywordScore: Math.max(existing.keywordScore ?? 0, item.keywordScore ?? 0),
-      vectorScore: Math.max(existing.vectorScore ?? 0, item.vectorScore ?? 0),
-      evidenceScore: Math.max(existing.evidenceScore ?? 0, item.evidenceScore ?? 0),
-      matchReasons: [.../* @__PURE__ */ new Set([...existing.matchReasons, ...item.matchReasons])],
-      evidencePointerIds: [.../* @__PURE__ */ new Set([...existing.evidencePointerIds, ...item.evidencePointerIds])],
-      sourcePointerIds: [.../* @__PURE__ */ new Set([...existing.sourcePointerIds, ...item.sourcePointerIds])]
+// src/ask-ai/repository.ts
+var VALID_UNCONFIRMED_KINDS = /* @__PURE__ */ new Set(["review_only", "tentative", "possible_duplicate", "conflict", "degraded"]);
+var bundleStatus = (confidence) => confidence === "no_evidence" ? "weak" : confidence;
+var answerStatus = (confidence) => confidence === "no_evidence" ? "refused_no_evidence" : confidence === "weak" ? "weak_evidence" : confidence === "conflicting" ? "conflicting_evidence" : "answered";
+var answerConfidence = (confidence) => confidence === "strong" ? "high" : confidence === "mixed" || confidence === "conflicting" ? "medium" : "low";
+var itemStance = (stance) => stance === "opposes" ? "contradicts" : stance === "qualifies" ? "qualifies" : stance === "supports" || stance === "updates" ? "supports" : "unknown";
+var pointerRole = (stance) => stance === "opposes" ? "opposition" : stance === "qualifies" ? "conditional" : stance === "supports" || stance === "updates" ? "support" : "unclear";
+var pointerStrength = (strength) => strength === "no_evidence" ? "weak" : strength;
+var reconstructClaimSupport = (stored, evidenceConfidence) => {
+  if (stored === "supported" || stored === "weakly_supported" || stored === "conflicting" || stored === "unsupported") return stored;
+  switch (evidenceConfidence) {
+    case "no_evidence":
+      return "unsupported";
+    case "conflicting":
+      return "conflicting";
+    case "weak":
+      return "weakly_supported";
+    default:
+      return "supported";
+  }
+};
+function persistAskAIResponse(db, response) {
+  db.transaction(() => {
+    const repos = createRepositories(db);
+    const bundle = repos.evidence.createEvidenceBundle({
+      purpose: "ask_ai",
+      query_text: response.queryUnderstanding.normalizedQuestion,
+      status: bundleStatus(response.evidenceConfidence),
+      overall_score: response.evidence.length ? Math.max(...response.evidence.map((item) => item.evidenceScore)) : null,
+      metadata: { ask_ai_run_id: response.id, score_run_id: response.scoreRunId ?? null }
     });
+    response.evidence.forEach((item, index) => {
+      const pointer = resolveEvidencePointer(db, item.evidencePointerId);
+      if (!pointer.ok || pointer.evidence.transcript_id !== item.transcriptId || pointer.evidence.span_id !== item.spanId) {
+        throw new ValidationError(`Ask AI evidence pointer is broken or mismatched: ${item.evidencePointerId}`);
+      }
+      const sourcePointerId = item.sourcePointerId ?? pointer.evidence.source_pointer_uri;
+      if (!resolveSourcePointer(db, sourcePointerId).ok) throw new ValidationError(`Ask AI source pointer is broken: ${sourcePointerId}`);
+      repos.evidence.addEvidenceItem(bundle.id, {
+        span_id: item.spanId,
+        retrieval_rank: index + 1,
+        final_score: item.evidenceScore,
+        stance: itemStance(item.stance),
+        reason: item.scoringExplanation,
+        metadata: { evidence_pointer_id: item.evidencePointerId, source_pointer_id: sourcePointerId }
+      });
+    });
+    const answer = repos.answers.createAnswer({
+      id: response.id,
+      question_text: response.question,
+      answer_text: response.answerMarkdown,
+      evidence_bundle_id: bundle.id,
+      confidence: answerConfidence(response.evidenceConfidence),
+      answer_status: answerStatus(response.evidenceConfidence),
+      // Only non-secret synthesis metadata is recorded: actual mode, provider id, model id, usedFallback, reason.
+      model_name: response.synthesis?.model ?? null,
+      metadata: { ask_ai: true, score_run_id: response.scoreRunId ?? null, synthesis: response.synthesis ?? null }
+    });
+    const selected = new Map(response.evidence.map((item) => [item.evidencePointerId, item]));
+    response.claims.forEach((claim, index) => {
+      const stored = createAnswerClaim(db, { answerId: answer.id, claimText: claim.text, claimOrder: index });
+      db.prepare("INSERT INTO ask_ai_claim_metadata(answer_claim_id,kind,explanation,support_status) VALUES (?,?,?,?)").run(stored.answer_claim_id, claim.kind, claim.explanation ?? null, claim.supportStatus);
+      claim.evidencePointerIds.forEach((pointerId) => {
+        const item = selected.get(pointerId);
+        if (!item) throw new ValidationError(`Ask AI claim references unselected evidence: ${pointerId}`);
+        linkAnswerClaimToEvidence(db, {
+          answerClaimId: stored.answer_claim_id,
+          transcriptId: item.transcriptId,
+          spanId: item.spanId,
+          evidenceRole: pointerRole(item.stance),
+          evidenceStrength: pointerStrength(item.evidenceConfidence),
+          confidence: item.evidenceScore,
+          scores: { relevanceScore: item.relevanceScore, finalScore: item.evidenceScore }
+        });
+      });
+    });
+    createCitationLinksForAnswer(db, { answerId: answer.id });
+    db.prepare(`INSERT INTO ask_ai_runs(
+      id,question,normalized_question,answer_markdown,evidence_confidence,query_understanding_json,answer_id,score_run_id,not_enough_evidence,created_at
+    ) VALUES (?,?,?,?,?,?,?,?,?,?)`).run(
+      response.id,
+      response.question,
+      response.queryUnderstanding.normalizedQuestion,
+      response.answerMarkdown,
+      response.evidenceConfidence,
+      JSON.stringify(response.queryUnderstanding),
+      answer.id,
+      response.scoreRunId ?? null,
+      response.notEnoughEvidence ? 1 : 0,
+      response.createdAt
+    );
+    response.evidence.forEach((item, index) => db.prepare(`INSERT INTO ask_ai_run_evidence(
+      ask_ai_run_id,evidence_pointer_id,source_pointer_id,transcript_id,span_id,rank,evidence_score,evidence_confidence,quote_preview,scoring_explanation
+    ) VALUES (?,?,?,?,?,?,?,?,?,?)`).run(
+      response.id,
+      item.evidencePointerId,
+      item.sourcePointerId ?? null,
+      item.transcriptId,
+      item.spanId,
+      index + 1,
+      item.evidenceScore,
+      item.evidenceConfidence,
+      item.quotePreview,
+      item.scoringExplanation
+    ));
+    response.suggestedFollowups.forEach((text, index) => db.prepare(
+      "INSERT INTO ask_ai_suggested_followups(id,ask_ai_run_id,text,rank) VALUES (?,?,?,?)"
+    ).run(createId("aif_"), response.id, text, index + 1));
+    response.conflicts.forEach((conflict) => db.prepare(
+      "INSERT INTO ask_ai_run_conflicts(ask_ai_run_id,conflict_assessment_id) VALUES (?,?)"
+    ).run(response.id, conflict.id));
+    (response.analysis ?? []).forEach((item, index) => {
+      if (item.supportStatus !== "ai_analysis" || item.evidencePointerIds.length || item.citationIds.length) {
+        throw new ValidationError(`AI analysis item must be uncited and unsupported: ${item.id}`);
+      }
+      db.prepare(`INSERT INTO ask_ai_analysis_claims(id,ask_ai_run_id,position,kind,text,explanation,warning,metadata_json,created_at)
+        VALUES (?,?,?,?,?,?,?, '{}', ?)`).run(item.id, response.id, index, item.kind, item.text, item.explanation ?? null, item.warning, response.createdAt);
+    });
+    (response.unconfirmed ?? []).forEach((item, index) => {
+      const tainted = item;
+      if (!VALID_UNCONFIRMED_KINDS.has(item.kind) || "supportStatus" in tainted || "citationIds" in tainted || "evidencePointerIds" in tainted) {
+        throw new ValidationError(`Unconfirmed item is not safe to persist (claim-shaped/invalid kind): ${item.id}`);
+      }
+      db.prepare(`INSERT INTO ask_ai_unconfirmed_items(id,ask_ai_run_id,position,kind,memory_id,conflict_id,text,label,warning,evidence_pointer_id,evidence_uri,missing_evidence,metadata_json,created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?, '{}', ?)`).run(
+        item.id,
+        response.id,
+        index,
+        item.kind,
+        item.memoryId ?? null,
+        item.conflictId ?? null,
+        item.text,
+        item.label,
+        item.warning,
+        item.evidencePointerId ?? null,
+        item.evidenceUri ?? null,
+        item.missingEvidence ? 1 : 0,
+        response.createdAt
+      );
+    });
+  })();
+}
+function getAskAIResponse(db, id) {
+  const run = db.prepare("SELECT * FROM ask_ai_runs WHERE id=?").get(id);
+  if (!run) throw new NotFoundError(`Ask AI run not found: ${id}`);
+  const evidenceRows = db.prepare("SELECT * FROM ask_ai_run_evidence WHERE ask_ai_run_id=? ORDER BY rank").all(id);
+  const claimRows = db.prepare(`SELECT c.*,m.kind,m.explanation,m.support_status AS claim_support_status FROM answer_claims c
+    JOIN ask_ai_claim_metadata m ON m.answer_claim_id=c.answer_claim_id
+    WHERE c.answer_id=? ORDER BY c.claim_order`).all(run.answer_id);
+  const linkRows = db.prepare(`SELECT l.*,e.source_pointer_uri,e.transcript_id,e.span_id,e.quote_preview
+    FROM citation_links l JOIN evidence_pointers e ON e.evidence_pointer_id=l.evidence_pointer_id
+    WHERE l.answer_id=? ORDER BY l.citation_order`).all(run.answer_id);
+  const followups = db.prepare("SELECT text FROM ask_ai_suggested_followups WHERE ask_ai_run_id=? ORDER BY rank").all(id);
+  const conflicts = db.prepare("SELECT conflict_assessment_id FROM ask_ai_run_conflicts WHERE ask_ai_run_id=? ORDER BY conflict_assessment_id").all(id).map((row) => createConflictRepository(db).get(row.conflict_assessment_id)).filter(Boolean);
+  const evidenceConfidence = run.evidence_confidence;
+  const evidence = evidenceRows.map((item) => ({
+    evidencePointerId: String(item.evidence_pointer_id),
+    sourcePointerId: item.source_pointer_id == null ? void 0 : String(item.source_pointer_id),
+    transcriptId: String(item.transcript_id),
+    spanId: String(item.span_id),
+    quotePreview: String(item.quote_preview),
+    evidenceScore: Number(item.evidence_score),
+    evidenceConfidence: item.evidence_confidence,
+    scoringExplanation: String(item.scoring_explanation),
+    clickbackUri: `mv://evidence/${String(item.evidence_pointer_id)}`,
+    stance: "unknown",
+    sourceKind: "raw_transcript_span"
+  }));
+  const selectedBySpan = new Map(evidence.map((item) => [`${item.transcriptId}::${item.spanId}`, item]));
+  const citations = linkRows.map((item) => {
+    const selected = selectedBySpan.get(`${String(item.transcript_id)}::${String(item.span_id)}`);
+    const evidencePointerId = selected?.evidencePointerId ?? String(item.evidence_pointer_id);
+    return {
+      id: String(item.citation_link_id),
+      label: String(item.citation_label),
+      evidencePointerId,
+      sourcePointerId: selected?.sourcePointerId ?? String(item.source_pointer_uri),
+      transcriptId: String(item.transcript_id),
+      spanId: String(item.span_id),
+      quotePreview: selected?.quotePreview ?? String(item.quote_preview),
+      clickbackUri: `mv://evidence/${evidencePointerId}`
+    };
+  });
+  const answerMeta = db.prepare("SELECT metadata_json FROM ai_answers WHERE id=?").get(run.answer_id);
+  let synthesis;
+  try {
+    const parsedMeta = answerMeta?.metadata_json ? JSON.parse(answerMeta.metadata_json) : null;
+    synthesis = parsedMeta?.synthesis ?? void 0;
+  } catch {
+    synthesis = void 0;
   }
-  return [...merged.values()];
+  const analysis = db.prepare("SELECT id,kind,text,explanation,warning FROM ask_ai_analysis_claims WHERE ask_ai_run_id=? ORDER BY position").all(id).map((item) => ({
+    id: String(item.id),
+    kind: item.kind,
+    text: String(item.text),
+    supportStatus: "ai_analysis",
+    evidencePointerIds: [],
+    citationIds: [],
+    warning: AI_ANALYSIS_WARNING,
+    explanation: item.explanation == null ? void 0 : String(item.explanation)
+  }));
+  const unconfirmed = db.prepare("SELECT id,kind,memory_id,conflict_id,text,label,warning,evidence_pointer_id,evidence_uri,missing_evidence FROM ask_ai_unconfirmed_items WHERE ask_ai_run_id=? ORDER BY position").all(id).map((row) => {
+    const pointerId = row.evidence_pointer_id == null ? void 0 : String(row.evidence_pointer_id);
+    const stillLive = pointerId != null && resolveEvidencePointer(db, pointerId).ok;
+    return {
+      id: String(row.id),
+      kind: row.kind,
+      text: String(row.text),
+      label: String(row.label),
+      warning: String(row.warning),
+      ...row.memory_id == null ? {} : { memoryId: String(row.memory_id) },
+      ...row.conflict_id == null ? {} : { conflictId: String(row.conflict_id) },
+      ...pointerId != null && stillLive ? { evidencePointerId: pointerId, evidenceUri: row.evidence_uri == null ? `mv://evidence/${pointerId}` : String(row.evidence_uri) } : {},
+      ...Boolean(row.missing_evidence) || pointerId != null && !stillLive ? { missingEvidence: true } : {}
+    };
+  });
+  return {
+    id,
+    question: String(run.question),
+    answerMarkdown: String(run.answer_markdown),
+    evidenceConfidence,
+    notEnoughEvidence: Boolean(run.not_enough_evidence),
+    createdAt: String(run.created_at),
+    queryUnderstanding: JSON.parse(String(run.query_understanding_json)),
+    scoreRunId: run.score_run_id == null ? void 0 : String(run.score_run_id),
+    evidence,
+    ...analysis.length ? { analysis, hasAnalysis: true } : {},
+    // Always present (array + boolean), so an old answer with no rows reconstructs `[]` / `false`.
+    unconfirmed,
+    hasUnconfirmed: unconfirmed.length > 0,
+    claims: claimRows.map((item) => {
+      const claimCitations = citations.filter((citation) => linkRows.some((link) => link.answer_claim_id === item.answer_claim_id && link.citation_link_id === citation.id));
+      return {
+        id: String(item.answer_claim_id),
+        kind: item.kind,
+        text: String(item.claim_text),
+        supportStatus: reconstructClaimSupport(item.claim_support_status, evidenceConfidence),
+        evidencePointerIds: claimCitations.map((citation) => citation.evidencePointerId),
+        citationIds: claimCitations.map((citation) => citation.id),
+        explanation: item.explanation == null ? void 0 : String(item.explanation)
+      };
+    }),
+    citations,
+    suggestedFollowups: followups.map((item) => item.text),
+    conflicts,
+    synthesis
+  };
 }
-function dedupeUnderlyingEvidence(candidates) {
-  const priority = { transcript_span: 3, evidence_pointer: 2, memory_object: 1 };
-  const kept = /* @__PURE__ */ new Map();
-  for (const candidate of candidates.sort((a, b) => b.finalScore - a.finalScore)) {
-    const key = candidate.sourcePointerIds[0] ?? `${candidate.targetType}:${candidate.targetId}`;
-    const existing = kept.get(key);
-    if (!existing || priority[candidate.targetType] > priority[existing.targetType]) {
-      kept.set(key, existing ? {
-        ...candidate,
-        evidencePointerIds: [.../* @__PURE__ */ new Set([...candidate.evidencePointerIds, ...existing.evidencePointerIds])],
-        sourcePointerIds: [.../* @__PURE__ */ new Set([...candidate.sourcePointerIds, ...existing.sourcePointerIds])],
-        matchReasons: [.../* @__PURE__ */ new Set([...candidate.matchReasons, ...existing.matchReasons])]
-      } : candidate);
-    }
-  }
-  return [...kept.values()];
-}
-
-// src/retrieval/hybridSearch.ts
-async function searchRetrieval(db, query) {
-  if (!query.query.trim()) return [];
-  const mode = query.mode ?? "hybrid";
-  const keyword = mode === "vector" ? [] : keywordSearch(db, query);
-  const vector = mode === "keyword" ? [] : await vectorSearch(db, query);
-  const ranked = mergeCandidates([...keyword, ...vector]).map((candidate) => rankCandidate(candidate, vector.length > 0, query.recencyBoost, query.now));
-  const filtered = query.requireEvidencePointers ? ranked.filter((candidate) => candidate.evidencePointerIds.length > 0) : ranked;
-  return dedupeUnderlyingEvidence(filtered).sort((a, b) => b.finalScore - a.finalScore).slice(0, query.finalLimit ?? query.limit ?? 20);
-}
-var searchEvidencePointers = (db, query) => searchRetrieval(db, { ...query, scope: "evidence_pointers" });
 
 // src/ask-ai/dependencies.ts
 var useType = (kind) => kind === "fact" ? "direct_fact" : kind === "pattern" ? "pattern" : kind;
-async function retrieve(db, query) {
+async function retrieve(db, query, embeddingProvider) {
   const results = await searchEvidencePointers(db, {
     query: query.normalizedQuestion,
     mode: "hybrid",
     finalLimit: 50,
     requireEvidencePointers: true,
+    embeddingProvider,
+    // when configured + healthy, Ask AI does semantic (vector) retrieval, not keyword-only
     filters: {
       transcriptIds: query.transcriptIds.length ? query.transcriptIds : void 0,
       createdAfter: query.timeRange?.start,
@@ -3258,19 +4708,32 @@ function createDatabaseAskAIDependencies(db, options = {}) {
   return {
     db,
     now: options.now,
-    retrieveCandidates: (query) => retrieve(db, query),
+    llm: options.llm,
+    analysis: options.analysis,
+    synthesisInfo: options.synthesisInfo,
+    requireLlm: options.requireLlm,
+    retrieveCandidates: (query) => retrieve(db, query, options.embeddingProvider),
     scoreEvidence: async (question, candidates, query) => scoreEvidenceBundle({
       claimText: question,
       candidates,
       useType: useType(query.requestedClaimKinds[0] ?? "fact"),
       now: options.now?.().toISOString()
     }),
-    findConflicts: async (evidence) => createConflictRepository(db, options).listActiveForEvidencePointers(evidence.map((item) => item.evidencePointerId))
+    findConflicts: async (evidence) => createConflictRepository(db, { now: options.now }).listActiveForEvidencePointers(evidence.map((item) => item.evidencePointerId)),
+    retrieveUnconfirmed: (query) => retrieveUnconfirmedContext(db, query, { embeddingProvider: options.embeddingProvider })
   };
 }
 
 // src/ask-ai/pipeline.ts
 var useType2 = (kind) => kind === "fact" ? "direct_fact" : kind === "pattern" ? "pattern" : kind;
+function resolveAnswerSynthesis(deps, actualMode) {
+  const configured = deps.synthesisInfo ?? { mode: deps.llm ? "external_llm" : "deterministic" };
+  const mode = actualMode === "llm" ? "external_llm" : actualMode;
+  const runtimeFallback = deps.llm != null && actualMode === "deterministic";
+  const usedFallback = Boolean(configured.usedFallback) || runtimeFallback;
+  const reason = runtimeFallback ? `Configured external LLM "${configured.provider ?? "external"}" did not produce grounded claims; used deterministic synthesis.` : configured.usedFallback ? "External LLM was selected but not fully configured; used deterministic synthesis." : void 0;
+  return { mode, provider: configured.provider, model: configured.model, usedFallback, reason };
+}
 async function askAI(request, deps) {
   const query = understandQuestion(request.question, request);
   const timestamp = deps.now?.() ?? /* @__PURE__ */ new Date();
@@ -3287,15 +4750,43 @@ async function askAI(request, deps) {
   const selectedEvidence = [...new Map([...selection.evidence, ...conflictEvidenceForAnswer(conflicts)].map((item) => [item.evidencePointerId, item])).values()];
   const citations = buildCitations(selectedEvidence);
   const selectedConfidence = confidenceWithConflicts(selection.confidence, conflicts);
-  const claims = await generateClaimsFromEvidence(query, selectedEvidence, citations, { confidence: selectedConfidence, llm: deps.llm });
+  let actualMode = "deterministic";
+  const claims = await generateClaimsFromEvidence(query, selectedEvidence, citations, {
+    confidence: selectedConfidence,
+    llm: deps.llm,
+    requireLlm: deps.requireLlm,
+    onSynthesis: (mode) => {
+      actualMode = mode;
+    }
+  });
   const confidence = claims.length ? selectedConfidence : "no_evidence";
   const usedPointers = new Set(claims.flatMap((claim) => claim.evidencePointerIds));
   const finalEvidence = selectedEvidence.filter((item) => usedPointers.has(item.evidencePointerId));
   const finalCitations = citations.filter((item) => usedPointers.has(item.evidencePointerId));
+  const contract = query.answerContract;
+  const allowAnalysis = (contract.allowGeneralReasoning || contract.allowRecommendations || contract.allowDrafting) && !contract.refuseIfNoEvidence;
+  let analysis = [];
+  let analysisUnavailable = false;
+  if (allowAnalysis && deps.analysis) {
+    try {
+      analysis = (await deps.analysis.analyze({ query, evidence: selectedEvidence })).map((item, index) => buildAnalysisClaim(index, item));
+    } catch {
+      analysisUnavailable = true;
+    }
+  }
+  let unconfirmed = [];
+  if ((contract.includeReviewOnlyItems || contract.includeConflicts) && deps.retrieveUnconfirmed) {
+    try {
+      const selectedConflictIds = new Set(conflicts.map((conflict) => conflict.id));
+      unconfirmed = (await deps.retrieveUnconfirmed(query)).filter((item) => !(item.conflictId && selectedConflictIds.has(item.conflictId)));
+    } catch {
+      unconfirmed = [];
+    }
+  }
   const response = {
     id: createId("ask_"),
     question: request.question,
-    answerMarkdown: addConflictContext(renderAnswer({ confidence, claims, citations: finalCitations }), conflicts),
+    answerMarkdown: addConflictContext(renderAnswer({ confidence, claims, citations: finalCitations, analysis, unconfirmed }), conflicts),
     evidenceConfidence: confidence,
     claims,
     citations: finalCitations,
@@ -3304,7 +4795,13 @@ async function askAI(request, deps) {
     notEnoughEvidence: confidence === "no_evidence",
     createdAt: timestamp.toISOString(),
     queryUnderstanding: query,
-    conflicts
+    conflicts,
+    synthesis: resolveAnswerSynthesis(deps, actualMode),
+    ...analysis.length ? { analysis, hasAnalysis: true } : {},
+    ...analysisUnavailable ? { analysisUnavailable: true } : {},
+    // Always present (array + boolean) so live and reconstructed answers share one contract.
+    unconfirmed,
+    hasUnconfirmed: unconfirmed.length > 0
   };
   if (deps.persistAnswer) await deps.persistAnswer(response);
   else if (deps.db) {
@@ -3322,10 +4819,10 @@ function computeRawSha256(rawText) {
 }
 
 // src/ingest/detectTranscriptFormat.ts
-var import_node_path3 = require("node:path");
+var import_node_path2 = require("node:path");
 var supported = /* @__PURE__ */ new Set(["txt", "md", "srt", "vtt"]);
 function detectTranscriptFormat(filename, _rawText) {
-  const extension = (0, import_node_path3.extname)(filename).slice(1).toLowerCase();
+  const extension = (0, import_node_path2.extname)(filename).slice(1).toLowerCase();
   if (!supported.has(extension)) {
     throw new ValidationError(`Unsupported transcript extension: ${extension || "(none)"}`);
   }
@@ -3520,9 +5017,9 @@ function createSpansFromTurns(rawText, turns) {
 }
 
 // src/ingest/importTranscript.ts
-var import_node_crypto5 = require("node:crypto");
-function stableId3(prefix, value, length = 24) {
-  return `${prefix}${(0, import_node_crypto5.createHash)("sha256").update(value).digest("hex").slice(0, length)}`;
+var import_node_crypto7 = require("node:crypto");
+function stableId4(prefix, value, length = 24) {
+  return `${prefix}${(0, import_node_crypto7.createHash)("sha256").update(value).digest("hex").slice(0, length)}`;
 }
 function sourceTypeForDatabase(sourceType) {
   if (sourceType === "paste" || sourceType === "test") return "pasted_text";
@@ -3535,7 +5032,7 @@ function insertTurns(db, transcriptId, rawText, turns) {
   for (const turn of turns) {
     if (turn.rawText !== rawText.slice(turn.startChar, turn.endChar)) throw new ValidationError("Turn text does not match its raw transcript offsets");
     statement.run({
-      id: stableId3("turn_", `${transcriptId}:${turn.turnIndex}:${turn.startChar}:${turn.endChar}`),
+      id: stableId4("turn_", `${transcriptId}:${turn.turnIndex}:${turn.startChar}:${turn.endChar}`),
       transcript_id: transcriptId,
       turn_index: turn.turnIndex,
       speaker_label: turn.speakerLabel,
@@ -3565,12 +5062,12 @@ function insertSpans(db, transcriptId, sourceId, rawText, spans) {
     if (span.text !== rawText.slice(span.startChar, span.endChar)) throw new ValidationError("Span text does not match its raw transcript offsets");
     let speakerId = null;
     if (span.speakerLabel) {
-      speakerId = speakerIds.get(span.speakerLabel) ?? stableId3("spk_", `${transcriptId}:${span.speakerLabel}`);
+      speakerId = speakerIds.get(span.speakerLabel) ?? stableId4("spk_", `${transcriptId}:${span.speakerLabel}`);
       speakerIds.set(span.speakerLabel, speakerId);
       speakerInsert.run(speakerId, transcriptId, span.speakerLabel);
     }
     statement.run({
-      id: stableId3("sp_", `${transcriptId}:${span.kind}:${span.startChar}:${span.endChar}`),
+      id: stableId4("sp_", `${transcriptId}:${span.kind}:${span.startChar}:${span.endChar}`),
       transcript_id: transcriptId,
       source_id: sourceId,
       speaker_id: speakerId,
@@ -3650,23 +5147,56 @@ function importTranscript(db, input) {
   return { status: "imported", transcriptId, rawSha256, turnsCreated: turns.length, spansCreated: spans.length };
 }
 
+// src/obsidian/graphBuilder.ts
+var import_node_crypto8 = require("node:crypto");
+
+// src/obsidian/liveEvidence.ts
+var MEMORY_HAS_GRAPH_EVIDENCE_SQL = `EXISTS (
+  SELECT 1 FROM evidence_pointers ep WHERE ep.target_type IN ('memory_object','claim','summary') AND ep.target_id = memory_objects.id
+)`;
+function answerHasGraphEvidence(db, answerId) {
+  return db.prepare(`SELECT 1 FROM evidence_pointers
+    WHERE (target_type = 'answer' AND target_id = ?)
+       OR (target_type = 'answer_claim' AND target_id IN (SELECT answer_claim_id FROM answer_claims WHERE answer_id = ?))
+    LIMIT 1`).get(answerId, answerId) != null;
+}
+function conflictHasGraphEvidence(db, conflictId) {
+  return db.prepare(`SELECT 1 FROM conflict_evidence_links l
+    JOIN evidence_pointers p ON p.evidence_pointer_id = l.evidence_pointer_id
+    WHERE l.conflict_assessment_id = ? LIMIT 1`).get(conflictId) != null;
+}
+
 // src/obsidian/paths.ts
 function safeName(value, fallback = "Untitled") {
   const clean = value.replace(/[<>:"/\\|?*\u0000-\u001F]/g, " ").replace(/\s+/g, " ").trim().replace(/[. ]+$/g, "");
   return (clean || fallback).slice(0, 100);
 }
-var stableNoteName = (label, id) => `${safeName(label)}--${safeName(id)}`;
-var transcriptPath = (title, id) => `Transcripts/${stableNoteName(title, id)}.md`;
+var labelFromText = (text, max = 60) => {
+  const clean = (text ?? "").replace(/\s+/g, " ").trim();
+  if (clean.length <= max) return clean;
+  const cut = clean.slice(0, max), lastSpace = cut.lastIndexOf(" ");
+  return (lastSpace > 20 ? cut.slice(0, lastSpace) : cut).trim();
+};
+var shortId = (id, bodyChars = 6) => {
+  const sep2 = id.indexOf("_");
+  return sep2 > 0 && sep2 < id.length - 1 ? `${id.slice(0, sep2 + 1)}${id.slice(sep2 + 1, sep2 + 1 + bodyChars)}` : id.slice(0, bodyChars + 4);
+};
+var noteBasename = (label) => safeName(labelFromText(label));
+var QUESTION_STEM = /^\s*(what|which|who|whom|whose|where|when|why|how)\b(\s+(is|are|was|were|do|does|did|should|would|will|can|could|has|have|had))?(\s+(the|a|an|this|that|these|those))?\s*/i;
+var questionLabel = (question) => labelFromText(question.replace(QUESTION_STEM, "").trim()) || labelFromText(question);
+var readableNotePath = (category, label, id) => `${category}/${shortId(id)}/${noteBasename(label)}.md`;
 var memoryFolder = (type) => type === "decision" ? "Decisions" : type === "preference" ? "Preferences" : type === "task" ? "Tasks" : type === "question" ? "Questions" : type === "claim" ? "Facts" : "Other";
-var memoryPath = (title, id, type) => `Memories/${memoryFolder(type)}/${stableNoteName(title, id)}.md`;
-var evidencePath = (id) => `Evidence/${safeName(id)}.md`;
-var answerPath = (id) => `Answers/${safeName(id)}.md`;
-var conflictPath = (id) => `Conflicts/${safeName(id)}.md`;
-var entityPath = (kind, label, id) => `${kind === "person" ? "People" : kind === "topic" ? "Topics" : "Decisions"}/${stableNoteName(label, id)}.md`;
+var transcriptPath = (title, id) => readableNotePath("Transcripts", title, id);
+var memoryPath = (title, id, type) => readableNotePath(`Memories/${memoryFolder(type)}`, title, id);
+var evidencePath = (label, id) => readableNotePath("Evidence", label, id);
+var answerPath = (label, id) => readableNotePath("Answers", label, id);
+var conflictPath = (label, id) => readableNotePath("Conflicts", label, id);
+var entityPath = (kind, label, id) => readableNotePath(kind === "person" ? "People" : kind === "topic" ? "Topics" : "Decisions", label, id);
+var stripMd = (path) => path.replace(/\.md$/i, "");
+var wikiLink = (path, label, anchor) => `[[${stripMd(path)}${anchor ? `#${anchor}` : ""}${label ? `|${label}` : ""}]]`;
 
 // src/obsidian/graphBuilder.ts
-var import_node_crypto6 = require("node:crypto");
-var edgeId = (source, target, type, evidence = "") => `ov_edge_${(0, import_node_crypto6.createHash)("sha256").update(`${source}:${target}:${type}:${evidence}`).digest("hex").slice(0, 24)}`;
+var edgeId = (source, target, type, evidence = "") => `ov_edge_${(0, import_node_crypto8.createHash)("sha256").update(`${source}:${target}:${type}:${evidence}`).digest("hex").slice(0, 24)}`;
 var mapEdgeType = (value) => value === "contradicts" ? "contradicts" : value === "updates" ? "updates" : value === "mentions" ? "mentions" : value === "supports" ? "supports" : value === "derived_from" ? "derived_from" : "about";
 var memoryNodeId = (id) => `memory:${id}`;
 var evidenceNodeId = (id) => `evidence:${id}`;
@@ -3681,12 +5211,19 @@ function buildObsidianGraph(db) {
   };
   const transcripts = db.prepare("SELECT id,title FROM transcripts ORDER BY id").all();
   transcripts.forEach((row) => addNode({ id: transcriptNodeId(row.id), type: "transcript", label: row.title, notePath: transcriptPath(row.title, row.id), transcriptId: row.id }));
-  const memories = db.prepare("SELECT id,type,title,generated_text,confidence,status FROM memory_objects ORDER BY id").all();
+  const memories = db.prepare(`SELECT id,type,title,generated_text,confidence,status FROM memory_objects
+    WHERE duplicate_of_id IS NULL AND status NOT IN ('superseded','rejected')
+      AND (extraction_status IS NULL OR extraction_status NOT IN ('superseded','rejected'))
+      AND ${MEMORY_HAS_GRAPH_EVIDENCE_SQL}
+    ORDER BY id`).all();
+  const canonicalMemoryIds = new Set(memories.map((row) => row.id));
   memories.forEach((row) => addNode({ id: memoryNodeId(row.id), type: row.type === "decision" ? "decision" : row.type === "person" ? "person" : row.type === "topic" ? "topic" : "memory", label: row.title ?? row.generated_text.slice(0, 80), notePath: row.type === "decision" ? entityPath("decision", row.title ?? row.generated_text.slice(0, 80), row.id) : memoryPath(row.title ?? row.generated_text.slice(0, 80), row.id, row.type), confidence: row.confidence, supportStatus: row.status }));
   const pointers = db.prepare("SELECT * FROM evidence_pointers ORDER BY evidence_pointer_id").all();
   for (const pointer of pointers) {
+    if (String(pointer.target_type) === "memory_object" && !canonicalMemoryIds.has(String(pointer.target_id))) continue;
     const id = String(pointer.evidence_pointer_id), resolved = resolveEvidencePointer(db, id);
-    addNode({ id: evidenceNodeId(id), type: "evidence", label: id, notePath: evidencePath(id), evidenceUri: String(pointer.pointer_uri), transcriptId: String(pointer.transcript_id), spanId: String(pointer.span_id), confidence: Number(pointer.confidence), supportStatus: String(pointer.evidence_strength) });
+    const evidenceLabel = resolved.ok ? labelFromText(resolved.spanText) || id : "Broken evidence";
+    addNode({ id: evidenceNodeId(id), type: "evidence", label: resolved.ok ? evidenceLabel : id, notePath: evidencePath(evidenceLabel, id), evidenceUri: String(pointer.pointer_uri), transcriptId: String(pointer.transcript_id), spanId: String(pointer.span_id), confidence: Number(pointer.confidence), supportStatus: String(pointer.evidence_strength) });
     if (!resolved.ok) {
       warnings.push(`Broken evidence pointer ${id}: ${resolved.reason}`);
       continue;
@@ -3697,7 +5234,10 @@ function buildObsidianGraph(db) {
     addEdge({ source: evidenceNodeId(id), target: spanNodeId(spanId), type: "derived_from", evidencePointerId: id, confidence: Number(pointer.confidence) });
     const targetType = String(pointer.target_type), targetId = String(pointer.target_id);
     const target = targetType === "memory_object" || targetType === "claim" || targetType === "summary" ? memoryNodeId(targetId) : targetType === "answer" ? `answer:${targetId}` : targetType === "answer_claim" ? `claim:${targetId}` : `graph:${targetId}`;
-    if (targetType === "answer") addNode({ id: target, type: "answer", label: targetId, notePath: answerPath(targetId) });
+    if (targetType === "answer") {
+      const ans = db.prepare("SELECT question_text FROM ai_answers WHERE id=?").get(targetId);
+      addNode({ id: target, type: "answer", label: ans?.question_text ?? targetId, notePath: answerPath(questionLabel(ans?.question_text ?? targetId), targetId) });
+    }
     if (targetType === "answer_claim") {
       const claim = db.prepare("SELECT claim_text,support_status FROM answer_claims WHERE answer_claim_id=?").get(targetId);
       if (claim) addNode({ id: target, type: "claim", label: claim.claim_text, supportStatus: claim.support_status });
@@ -3708,18 +5248,18 @@ function buildObsidianGraph(db) {
     }
     if (nodes.has(target)) addEdge({ source: target, target: evidenceNodeId(id), type: targetType === "answer_claim" || targetType === "answer" ? "cites" : "derived_from", evidencePointerId: id, confidence: Number(pointer.confidence) });
   }
-  const answers = db.prepare("SELECT id,question_text,answer_status FROM ai_answers ORDER BY id").all();
-  answers.forEach((row) => addNode({ id: `answer:${row.id}`, type: "answer", label: row.question_text, notePath: answerPath(row.id), supportStatus: row.answer_status }));
-  const claims = db.prepare("SELECT * FROM answer_claims ORDER BY answer_claim_id").all();
+  const answers = db.prepare("SELECT id,question_text,answer_status FROM ai_answers ORDER BY id").all().filter((row) => answerHasGraphEvidence(db, row.id));
+  answers.forEach((row) => addNode({ id: `answer:${row.id}`, type: "answer", label: row.question_text, notePath: answerPath(questionLabel(row.question_text), row.id), supportStatus: row.answer_status }));
+  const claims = db.prepare("SELECT * FROM answer_claims ORDER BY answer_claim_id").all().filter((row) => answerHasGraphEvidence(db, String(row.answer_id)));
   claims.forEach((row) => {
     const pointer = db.prepare("SELECT evidence_pointer_id FROM evidence_pointers WHERE target_type='answer_claim' AND target_id=? ORDER BY evidence_pointer_id LIMIT 1").get(row.answer_claim_id);
     addNode({ id: `claim:${row.answer_claim_id}`, type: "claim", label: String(row.claim_text), supportStatus: String(row.support_status) });
     addEdge({ source: `claim:${row.answer_claim_id}`, target: `answer:${row.answer_id}`, type: "answered_by", evidencePointerId: pointer?.evidence_pointer_id });
   });
-  const conflicts = db.prepare("SELECT * FROM conflict_assessments ORDER BY id").all();
+  const conflicts = db.prepare("SELECT * FROM conflict_assessments ORDER BY id").all().filter((row) => conflictHasGraphEvidence(db, String(row.id)));
   conflicts.forEach((row) => {
     const id = String(row.id), conflictNode = `conflict:${id}`;
-    addNode({ id: conflictNode, type: "conflict", label: String(row.summary), notePath: conflictPath(id), confidence: Number(row.confidence), supportStatus: String(row.status) });
+    addNode({ id: conflictNode, type: "conflict", label: String(row.summary), notePath: conflictPath(String(row.summary), id), confidence: Number(row.confidence), supportStatus: String(row.status) });
     for (const side of ["left", "right"]) {
       const type = String(row[`${side}_target_type`]), targetId = String(row[`${side}_target_id`]);
       const target = type === "memory_object" || type === "claim" || type === "summary" ? memoryNodeId(targetId) : type === "answer_claim" ? `claim:${targetId}` : type === "evidence_pointer" ? evidenceNodeId(targetId) : `graph:${targetId}`;
@@ -3753,20 +5293,12 @@ function buildObsidianGraph(db) {
   return { graph: { nodes: [...nodes.values()].sort((a, b) => a.id.localeCompare(b.id)), edges: [...edges.values()].sort((a, b) => a.id.localeCompare(b.id)) }, warnings };
 }
 
-// src/obsidian/services/ObsidianAppApi.ts
-function createObsidianAppApi(db, vault, health) {
-  const api = createSqliteFrontendApi(db, { health });
-  return {
-    ...api,
-    async uploadVaultFile(file) {
-      const rawText = await vault.read(file);
-      validateTranscriptUpload({ filename: file.name, rawText });
-      return api.uploadTranscript({ filename: file.name, rawText });
-    }
-  };
-}
-
 // src/frontend/sqliteApi.ts
+function memoryHasLiveEvidenceForReview(db, memoryId) {
+  return db.prepare(`SELECT
+    (SELECT COUNT(*) FROM memory_object_evidence WHERE memory_id=?) +
+    (SELECT COUNT(*) FROM evidence_pointers WHERE target_type IN ('memory_object','claim','summary') AND target_id=?) c`).get(memoryId, memoryId).c > 0;
+}
 var trust = (value) => {
   const state = String(value ?? "no_evidence");
   return ["strong", "mixed", "weak", "conflicting", "no_evidence", "broken", "needs_review", "rejected", "superseded"].includes(state) ? state : "weak";
@@ -3862,6 +5394,9 @@ function evidenceView(db, id) {
 }
 function reviewItems(db) {
   const items = [];
+  const userReviewedMemoryIds = new Set(
+    db.prepare("SELECT id FROM memory_objects WHERE user_corrected=1").all().map((row) => row.id)
+  );
   const pointers = db.prepare("SELECT evidence_pointer_id,evidence_strength,target_type,target_id,quote_preview,transcript_id,created_at FROM evidence_pointers ORDER BY created_at,evidence_pointer_id").all();
   for (const pointer of pointers) {
     const resolved = resolveEvidencePointer(db, pointer.evidence_pointer_id);
@@ -3881,7 +5416,7 @@ function reviewItems(db) {
         relatedTranscriptIds: [pointer.transcript_id],
         relatedEvidenceIds: [pointer.evidence_pointer_id]
       });
-    } else if (pointer.evidence_strength === "weak" || pointer.evidence_strength === "unknown") {
+    } else if ((pointer.evidence_strength === "weak" || pointer.evidence_strength === "unknown") && !(pointer.target_type === "memory_object" && userReviewedMemoryIds.has(pointer.target_id))) {
       items.push({
         id: `weak:${pointer.evidence_pointer_id}`,
         type: "weak_evidence",
@@ -3904,6 +5439,7 @@ function reviewItems(db) {
       const row = db.prepare("SELECT created_at FROM memory_objects WHERE id=?").get(memory.id);
       const transcriptIds = db.prepare(`SELECT DISTINCT s.transcript_id FROM transcript_spans s
         WHERE s.id IN (SELECT span_id FROM memory_object_evidence WHERE memory_id=?) ORDER BY s.transcript_id`).all(memory.id).map((item) => item.transcript_id);
+      const hasLiveEvidence = memoryHasLiveEvidenceForReview(db, memory.id);
       items.push({
         id: `memory:${memory.id}`,
         type: "memory_needs_review",
@@ -3917,7 +5453,11 @@ function reviewItems(db) {
         severity: "medium",
         status: "open",
         relatedTranscriptIds: transcriptIds,
-        relatedEvidenceIds: []
+        relatedEvidenceIds: [],
+        hasLiveEvidence,
+        canApprove: hasLiveEvidence,
+        canReject: true,
+        degradedReason: hasLiveEvidence ? void 0 : DEGRADED_MEMORY_REASON
       });
     }
   }
@@ -3941,7 +5481,7 @@ function reviewItems(db) {
       relatedEvidenceIds: conflict.evidenceLinks.map((link) => link.evidencePointerId)
     });
   }
-  for (const row of db.prepare("SELECT id,target_type,target_id,reason,created_at FROM user_corrections ORDER BY created_at,id").all()) {
+  for (const row of db.prepare("SELECT id,target_type,target_id,reason,created_at FROM user_corrections WHERE correction_type NOT IN ('confirm','reject') ORDER BY created_at,id").all()) {
     items.push({
       id: `correction:${String(row.id)}`,
       type: "user_correction",
@@ -3986,11 +5526,45 @@ function normalizeCorrectionTarget(db, input) {
   }
   throw new Error(`Correction target ${input.targetType}:${input.targetId} has no supported append-only owner`);
 }
+function generatedSyncStatus(db) {
+  try {
+    const run = db.prepare(`SELECT created_at,file_count,graph_node_count,graph_edge_count,status,error_message
+      FROM obsidian_view_runs ORDER BY created_at DESC,id DESC LIMIT 1`).get();
+    if (!run) return { synced: false };
+    return {
+      synced: true,
+      lastSyncedAt: String(run.created_at),
+      fileCount: Number(run.file_count),
+      graphNodeCount: Number(run.graph_node_count),
+      graphEdgeCount: Number(run.graph_edge_count),
+      status: run.status === "failed" ? "failed" : "completed",
+      error: run.error_message ? String(run.error_message) : void 0
+    };
+  } catch {
+    return { synced: false };
+  }
+}
 function createSqliteFrontendApi(db, options = {}) {
+  const askGated = (question, askOptions) => {
+    const synth = options.getSynthesis?.();
+    if (options.llmRequired && !synth?.llm) throw new SynthesisSetupRequiredError();
+    if (options.embeddingsRequired) {
+      const health = options.getEmbeddingHealth?.() ?? { state: "setup_required", reason: "Embedding health is unavailable." };
+      if (health.state === "setup_required") throw new EmbeddingSetupRequiredError();
+      if (health.state === "reindex_required") throw new EmbeddingReindexRequiredError();
+    }
+    const embeddingProvider = options.embeddingsRequired ? options.getEmbeddingProvider?.() : void 0;
+    return askAI(
+      { question, transcriptIds: askOptions?.transcriptIds, maxEvidenceItems: askOptions?.maxEvidence },
+      createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, analysis: synth?.analysis, synthesisInfo: synth?.info, requireLlm: options.llmRequired, embeddingProvider })
+    );
+  };
   return {
     async getDashboard() {
       const answers = db.prepare("SELECT id,question,evidence_confidence,created_at FROM ask_ai_runs ORDER BY created_at DESC,id LIMIT 8").all();
       const review = reviewItems(db);
+      const severityRank = { high: 3, medium: 2, low: 1 };
+      const attention = review.filter((item) => item.trustState === "weak" || item.trustState === "broken" || item.trustState === "conflicting").sort((a, b) => severityRank[b.severity] - severityRank[a.severity]).slice(0, 5);
       return {
         totalTranscriptCount: transcriptList(db).length,
         transcripts: transcriptList(db).slice(0, 10),
@@ -3999,7 +5573,12 @@ function createSqliteFrontendApi(db, options = {}) {
         weakCount: review.filter((item) => item.trustState === "weak" || item.trustState === "needs_review").length,
         conflictCount: review.filter((item) => item.trustState === "conflicting").length,
         brokenCount: review.filter((item) => item.trustState === "broken").length,
-        health: options.health
+        // Live read (getHealth) so the dashboard reflects current status; static `health` is the fallback.
+        health: options.getHealth?.() ?? options.health,
+        llmRequired: !!options.llmRequired,
+        llmReady: options.getLlmReady ? options.getLlmReady() : !options.llmRequired,
+        generatedSync: generatedSyncStatus(db),
+        attention
       };
     },
     async listTranscripts() {
@@ -4008,7 +5587,31 @@ function createSqliteFrontendApi(db, options = {}) {
     async uploadTranscript(input) {
       validateTranscriptUpload(input);
       const result = importTranscript(db, { filename: input.filename, rawText: input.rawText, sourceType: "upload" });
-      return { transcriptId: result.transcriptId, status: result.status, warning: result.warning };
+      let warning = result.warning;
+      const extractor = result.status === "imported" ? options.getMemoryExtractor?.() : void 0;
+      if (result.status === "imported" && !extractor && options.llmRequired) {
+        warning = warning ?? 'Transcript imported. AI memory extraction needs a configured LLM \u2014 set one up in Settings, then run "Run AI extraction".';
+      }
+      if (extractor && !db.prepare("SELECT 1 FROM extraction_runs WHERE transcript_id=? AND status='completed' LIMIT 1").get(result.transcriptId)) {
+        try {
+          const extraction = await extractMemoryObjectsForTranscript(db, { transcriptId: result.transcriptId, extractor });
+          const runStatus = db.prepare("SELECT status FROM extraction_runs WHERE id=?").get(extraction.extractionRunId);
+          if (runStatus?.status !== "completed") warning = warning ?? "Transcript imported, but automatic memory extraction did not complete.";
+        } catch {
+          warning = warning ?? "Transcript imported, but automatic memory extraction did not complete.";
+        }
+        try {
+          await indexTranscriptForRetrieval(db, result.transcriptId);
+        } catch {
+          warning = warning ?? "Transcript imported, but automatic memory indexing did not complete.";
+        }
+        try {
+          detectAndPersistConflictsForTranscript(db, result.transcriptId, { now: options.now });
+        } catch {
+          warning = warning ?? "Transcript imported, but conflict detection did not complete.";
+        }
+      }
+      return { transcriptId: result.transcriptId, status: result.status, warning };
     },
     async getTranscript(id) {
       const row = db.prepare("SELECT id,title,status,imported_at,raw_text,source_type FROM transcripts WHERE id=?").get(id);
@@ -4043,10 +5646,18 @@ function createSqliteFrontendApi(db, options = {}) {
       };
     },
     async ask(question, askOptions) {
-      return askAI({ question, transcriptIds: askOptions?.transcriptIds }, createDatabaseAskAIDependencies(db, options));
+      return askGated(question, askOptions);
     },
     async askAI(question, askOptions) {
-      return askAI({ question, transcriptIds: askOptions?.transcriptIds }, createDatabaseAskAIDependencies(db, options));
+      return askGated(question, askOptions);
+    },
+    async getEmbeddingStatus() {
+      const required = !!options.embeddingsRequired;
+      const health = options.getEmbeddingHealth?.();
+      return { required, state: required ? health?.state ?? "setup_required" : "ok", reason: health?.reason };
+    },
+    async getSetupSummary() {
+      return options.getSetupSummary?.() ?? null;
     },
     async getAnswer(id) {
       try {
@@ -4136,6 +5747,71 @@ function createSqliteFrontendApi(db, options = {}) {
         metadata: { submitted_from: "frontend_review_queue", append_only: true, requested_target_type: input.targetType, requested_target_id: input.targetId }
       });
       return { correctionId: correction.id, status: "received" };
+    },
+    async reviewMemoryObject(memoryId, decision) {
+      const corrections = createCorrectionsRepo(db);
+      if (decision === "approve") {
+        if (!memoryHasLiveEvidenceForReview(db, memoryId)) {
+          return { status: "cannot_approve", warning: DEGRADED_MEMORY_REASON };
+        }
+        corrections.applyMemoryObjectCorrection(memoryId, { correction_type: "confirm", new_value: { status: "active" } });
+        let warning;
+        try {
+          const transcriptIds = db.prepare("SELECT DISTINCT transcript_id FROM memory_object_evidence WHERE memory_id=? AND transcript_id IS NOT NULL").all(memoryId);
+          for (const { transcript_id } of transcriptIds) await indexTranscriptForRetrieval(db, transcript_id);
+        } catch {
+          warning = "Memory approved, but automatic retrieval indexing did not complete.";
+        }
+        try {
+          detectAndPersistConflictsForMemory(db, memoryId, { now: options.now });
+        } catch {
+          warning = warning ?? "Memory approved, but conflict detection did not complete.";
+        }
+        return { status: "approved", warning };
+      }
+      corrections.applyMemoryObjectCorrection(memoryId, { correction_type: "reject", new_value: { status: "rejected" } });
+      try {
+        db.prepare("DELETE FROM evidence_pointers WHERE target_type='memory_object' AND target_id=?").run(memoryId);
+        removeRetrievalDocument(db, "memory_object", memoryId);
+      } catch {
+        return { status: "rejected", warning: "Memory rejected, but evidence cleanup did not complete." };
+      }
+      return { status: "rejected" };
+    },
+    async getLlmStatus() {
+      const required = !!options.llmRequired;
+      return { required, ready: options.getLlmReady ? options.getLlmReady() : !required };
+    },
+    async runExtraction(transcriptId) {
+      if (!db.prepare("SELECT 1 FROM transcripts WHERE id=?").get(transcriptId)) return { status: "failed", warning: "Transcript not found." };
+      if (db.prepare("SELECT 1 FROM extraction_runs WHERE transcript_id=? AND status='completed' LIMIT 1").get(transcriptId)) return { status: "skipped" };
+      const extractor = options.getMemoryExtractor?.();
+      if (!extractor) return { status: "setup_required", warning: "AI memory extraction needs a configured LLM \u2014 set one up in Settings." };
+      try {
+        const extraction = await extractMemoryObjectsForTranscript(db, { transcriptId, extractor });
+        const runStatus = db.prepare("SELECT status FROM extraction_runs WHERE id=?").get(extraction.extractionRunId);
+        if (runStatus?.status !== "completed") return { status: "failed", warning: "AI memory extraction did not complete. Please try again." };
+      } catch {
+        return { status: "failed", warning: "AI memory extraction did not complete. Please try again." };
+      }
+      try {
+        await indexTranscriptForRetrieval(db, transcriptId);
+      } catch {
+      }
+      try {
+        detectAndPersistConflictsForTranscript(db, transcriptId, { now: options.now });
+      } catch {
+      }
+      return { status: "extracted" };
+    },
+    async deleteTranscript(id) {
+      return { status: "deleted", summary: createTranscriptsRepo(db).deleteTranscript(id) };
+    },
+    async syncGeneratedGraphNotes() {
+      if (!options.syncGeneratedViews) {
+        return { status: "unavailable", message: 'Generated graph notes can only be synced inside the Obsidian plugin. Use the "Sync generated graph notes" command.' };
+      }
+      return options.syncGeneratedViews();
     }
   };
 }
@@ -4143,6 +5819,7 @@ function createSqliteFrontendApi(db, options = {}) {
 // src/frontend/render.ts
 var section = (title, body, className = "") => `<section class="vault-section${className ? ` ${escapeHtml(className)}` : ""}"><h2>${escapeHtml(title)}</h2>${body}</section>`;
 var links = (items) => `<div class="route-actions">${items.map((item) => routeButton(item.href, item.label)).join("")}</div>`;
+var statusChip = (state, label) => `<span class="tmv-status tmv-status--${state}">${escapeHtml(label)}</span>`;
 var correctionForm = (targetType, targetId) => ["memory_object", "answer_claim", "citation", "graph_node", "graph_edge", "evidence", "speaker", "answer", "span", "transcript"].includes(targetType) ? `<form data-action="correction"><input type="hidden" name="targetType" value="${escapeHtml(targetType)}"><input type="hidden" name="targetId" value="${escapeHtml(targetId)}">
       <label>Append-only correction <textarea name="correctionText" required></textarea></label><label>Reason <input name="reason"></label>
       <button type="submit">Submit correction</button></form><div data-form-result></div>` : `<p class="trust-warning">This target type does not yet have a backend correction record type. Use its owning memory, answer, or graph edge.</p>`;
@@ -4200,18 +5877,37 @@ function transcriptView(transcript, selectedSpanId) {
 function memoryView(view) {
   const memory = view.memory;
   const warning = view.trustState === "strong" ? "" : `<aside class="trust-warning">${trustBadge(view.trustState)} This memory is not independent strong truth.</aside>`;
+  const reviewable = memory.status === "needs_review" || memory.status === "weak";
+  const hasLiveEvidence = memory.evidenceSpanIds.length > 0;
+  const reviewSection = reviewable ? section("Review decision", `<p>Approve to promote this memory to active, citable evidence, or Reject to remove it from Ask AI and search. Both are append-only and never edit raw transcript text.</p>${memoryReviewControls(memory.id, { canApprove: hasLiveEvidence, degradedReason: hasLiveEvidence ? void 0 : DEGRADED_MEMORY_REASON })}`) : "";
   return `${warning}<article class="memory-object">
     <p>${trustBadge(view.trustState)} ${escapeHtml(memory.type)} \xB7 confidence ${score(memory.confidence)} (${escapeHtml(memory.confidenceLabel)})</p>
     <h2>${escapeHtml(memory.title || memory.type)}</h2><p>${escapeHtml(memory.body)}</p>
     <dl><dt>Canonical status</dt><dd>${escapeHtml(memory.status)}</dd><dt>Evidence spans</dt><dd>${memory.evidenceSpanIds.length}</dd><dt>User corrected</dt><dd>${memory.userCorrected ? "yes" : "no"}</dd><dt>Duplicate of</dt><dd>${escapeHtml(memory.duplicateOfId ?? "none")}</dd></dl>
   </article>${section("Evidence", view.evidence.map(evidenceCard).join("") || emptyState("No linked evidence pointers", "This memory cannot be treated as strong."))}
   ${view.conflicts.length ? section("Conflicts", view.conflicts.map((item) => `<article>${trustBadge("conflicting")} <strong>${escapeHtml(item.summary)}</strong><p>${escapeHtml(item.explanation)}</p></article>`).join("")) : ""}
+  ${reviewSection}
   ${section("Submit a correction", correctionForm("memory_object", memory.id))}`;
 }
+var memoryReviewControls = (memoryId, options = {}) => {
+  const warning = options.degradedReason ? `<aside class="trust-warning tmv-callout tmv-callout--warning">${trustBadge("no_evidence", "Evidence removed")} ${escapeHtml(options.degradedReason)} <em>Approve is unavailable because there is no live evidence to promote \u2014 you can still Reject / Dismiss.</em></aside>` : "";
+  const approve = options.canApprove === false ? "" : `<button type="submit" name="decision" value="approve" class="tmv-btn tmv-btn-primary">Approve</button>`;
+  return `${warning}<form data-action="review" class="review-actions"><input type="hidden" name="memoryId" value="${escapeHtml(memoryId)}">
+      ${approve}<button type="submit" name="decision" value="reject" class="tmv-btn tmv-btn-secondary">${options.canApprove === false ? "Reject / Dismiss" : "Reject"}</button></form><div data-form-result></div>`;
+};
+var reviewActions = (item) => {
+  if (item.targetType === "memory_object" && (item.type === "memory_needs_review" || item.type === "weak_evidence")) {
+    return memoryReviewControls(item.targetId, { canApprove: item.canApprove, degradedReason: item.degradedReason });
+  }
+  if (item.type === "weak_evidence") {
+    return `<p class="trust-warning">This weak-evidence item is attached to a ${escapeHtml(item.targetType)}, not a memory object, so it has no direct Approve/Reject. Open the linked evidence and use the append-only correction below.</p>`;
+  }
+  return "";
+};
 function reviewCard(item) {
-  return `<article class="review-card">${trustBadge(item.trustState)}<h3><a href="${escapeHtml(item.href)}">${escapeHtml(item.title)}</a></h3>
+  return `<article class="review-card tmv-card">${trustBadge(item.trustState)}<h3 class="tmv-section-header"><a href="${escapeHtml(item.href)}">${escapeHtml(item.title)}</a></h3>
     <p>${escapeHtml(item.detail)}</p><small>${escapeHtml(item.severity)} severity \xB7 ${escapeHtml(item.status)} \xB7 ${escapeHtml(item.type)} \xB7 ${escapeHtml(item.targetType)}:${escapeHtml(item.targetId)}</small>
-    <a href="${escapeHtml(routeHref.review(item.id))}">Review and correct</a></article>`;
+    <a href="${escapeHtml(routeHref.review(item.id))}">Review and correct</a>${reviewActions(item)}</article>`;
 }
 function searchCard(item) {
   return `<article class="search-result">${item.trustState ? trustBadge(item.trustState) : ""}<h3><a href="${escapeHtml(item.href)}">${escapeHtml(item.title)}</a></h3>
@@ -4224,43 +5920,176 @@ function graphNodeLink(nodeId) {
 }
 function healthView(health) {
   const status = health.status === "ready" ? trustBadge("strong", "database connected") : health.status === "unsupported" ? trustBadge("no_evidence", "desktop only") : health.status === "error" ? trustBadge("broken", "startup failed") : trustBadge("needs_review", "initializing");
-  return section("Database health", `<article class="database-health">${status}<dl>
+  return section("Database health", `<article class="database-health tmv-card">${status}<dl>
     <dt>SQLite storage</dt><dd>${health.realSqliteStorage ? "real local SQLite" : "not connected"}</dd>
     <dt>Migration status</dt><dd>${escapeHtml(health.migrationStatus)}</dd>
     <dt>Packaged migrations</dt><dd>${health.packagedMigrationCount}</dd>
     <dt>Applied migrations</dt><dd>${health.appliedMigrationCount}</dd>
-    <dt>Database location</dt><dd>${escapeHtml(health.databasePath ?? "unavailable")}</dd>
+    <dt>Database location</dt><dd><code class="tmv-code">${escapeHtml(health.databasePath ?? "unavailable")}</code></dd>
     <dt>Last initialization error</dt><dd>${escapeHtml(health.lastInitializationError ?? "none")}</dd>
     <dt>Native binding target</dt><dd>${escapeHtml(health.nativeBindingTarget ?? "unresolved")}</dd>
     <dt>Packaged native targets</dt><dd>${escapeHtml(health.packagedNativeTargets.join(", ") || "none")}</dd>
-  </dl></article>`, "database-health-section");
+  </dl>
+  <p class="tmv-callout tmv-callout--info">LLM and embedding providers, models, and API keys are configured in the Obsidian plugin <strong>Settings</strong> tab. Keys are never shown here or in generated notes.</p></article>`, "database-health-section");
+}
+var SUPPORTED_UPLOAD_FORMATS = ".txt, .md, .srt, .vtt";
+function uploadNextSteps() {
+  return `<details class="tmv-advanced upload-next-steps"><summary>After importing \u2014 recommended next steps</summary>
+    <ol class="upload-next-list">
+      <li>Import stores the immutable raw transcript in local SQLite (the source of truth).</li>
+      <li>Run <strong>AI extraction</strong> if the transcript was imported before an LLM was configured (command: "Run AI extraction", or open the transcript).</li>
+      <li>Rebuild the <strong>embedding index</strong> after changing embedding settings (command: "Rebuild Embedding Index").</li>
+      <li>Sync <strong>generated graph notes</strong> for Obsidian's native graph (the "Native Obsidian graph" card below, or command: "Sync generated graph notes").</li>
+      <li>Chat in <strong>Claude Desktop</strong> (via MCP) \u2014 the recommended Ask AI experience.</li>
+    </ol></details>`;
+}
+function uploadCard() {
+  return `<p class="upload-desc">Import an immutable transcript source into the evidence vault.</p>
+    <form data-action="upload" class="upload-form" data-dropzone>
+      <div class="upload-row">
+        <label class="upload-choose tmv-btn tmv-btn-primary">Choose transcript<input class="upload-file-input" name="file" type="file" accept=".txt,.md,.srt,.vtt" required></label>
+        <span class="upload-file-status" data-file-status>No file selected</span>
+      </div>
+      <p class="upload-formats">Supports ${SUPPORTED_UPLOAD_FORMATS}</p>
+      <input name="filename" type="hidden"><textarea name="rawText" hidden></textarea>
+      <div class="upload-actions"><button type="submit" class="tmv-btn tmv-btn-secondary upload-submit">Upload transcript</button><span class="upload-drop-hint">or drag a file here</span></div>
+    </form>
+    <p data-loading-message hidden>Importing immutable transcript source\u2026</p><div data-form-result></div>
+    ${uploadNextSteps()}`;
+}
+function mcpConfigSnippet(dbPath) {
+  return `{
+  "mcpServers": {
+    "transcript-memory-vault": {
+      "command": "node",
+      "args": ["<path-to-plugin-checkout>/dist/mcp/server.cjs"],
+      "env": {
+        "TMV_DB_PATH": "${dbPath ?? "<path-to>/transcript-memory.sqlite"}"
+      }
+    }
+  }
+}`;
+}
+function setupCard(setup, fallbackDbPath) {
+  const dbPath = setup?.databasePath ?? fallbackDbPath;
+  const snippet = mcpConfigSnippet(dbPath);
+  const embeddingLabel = !setup ? "" : setup.embeddingHealth === "ok" ? "Embeddings OK" : setup.embeddingHealth === "reindex_required" ? "Reindex needed" : "Embeddings not set up";
+  const statusRow = setup ? `<div class="setup-status">
+        ${statusChip(setup.llmConfigured ? "ok" : "warn", setup.llmConfigured ? "LLM ready" : "LLM not configured")}
+        ${statusChip(setup.embeddingHealth === "ok" ? "ok" : "warn", embeddingLabel)}
+        ${statusChip(setup.reindexNeeded ? "warn" : "ok", setup.reindexNeeded ? "Reindex needed" : "Reindex not needed")}
+      </div>` : `<p class="setup-meta">Detailed setup status appears inside the Obsidian plugin.</p>`;
+  const metaBits = setup ? [
+    setup.llmProvider ? `${setup.llmProvider}${setup.llmModel ? ` / ${setup.llmModel}` : ""}` : "",
+    setup.embeddingProvider ? `${setup.embeddingProvider}${setup.embeddingModel ? ` / ${setup.embeddingModel}` : ""}${setup.embeddingDimensions ? ` / ${setup.embeddingDimensions}d` : ""}` : ""
+  ].filter(Boolean) : [];
+  const metaLine = metaBits.length ? `<p class="setup-meta">${metaBits.map(escapeHtml).join(" \xB7 ")}</p>` : "";
+  const setupDetails = `<details class="tmv-advanced setup-details"><summary>Setup details</summary>
+      ${dbPath ? `<p class="setup-detail-label">Database \u2014 <code>TMV_DB_PATH</code></p><p class="mcp-db-path"><code class="tmv-code">${escapeHtml(dbPath)}</code></p>` : `<p class="setup-meta"><code>TMV_DB_PATH</code> will appear once the database has initialized.</p>`}
+      ${setup?.settingsPath ? `<p class="setup-detail-label">Settings file \u2014 data.json</p><p><code class="tmv-code">${escapeHtml(setup.settingsPath)}</code></p>` : ""}
+      <p class="setup-detail-label">Claude Desktop MCP config <span class="setup-meta">(no API keys \u2014 the key stays in data.json)</span></p>
+      <pre class="tmv-code mcp-config-snippet">${escapeHtml(snippet)}</pre>
+      <div class="setup-detail-actions">${dbPath ? `<button type="button" class="tmv-btn tmv-btn-secondary" data-copy="${escapeHtml(snippet)}">Copy MCP config</button>` : ""}</div>
+      <p class="setup-meta">See <code>docs/MCP.md</code> for the full setup. API keys are configured in the Obsidian Settings tab and never shown here.</p>
+    </details>`;
+  return `<p class="setup-intro">Use Claude Desktop for normal chat. This plugin stores, indexes, reviews, and visualizes the evidence vault.</p>
+    ${statusRow}
+    ${metaLine}
+    <div class="setup-actions">
+      ${dbPath ? `<button type="button" class="tmv-btn tmv-btn-secondary" data-copy="${escapeHtml(dbPath)}">Copy DB path</button>` : ""}
+    </div>
+    ${setupDetails}`;
 }
 async function renderPage(context) {
   const { api, route } = context;
   switch (route.id) {
     case "dashboard": {
       const view = await api.getDashboard();
-      const readyStatus = view.health?.status === "ready" ? `<aside class="immutable-notice status-banner"><strong>Transcript Memory Vault is ready.</strong> ${view.health.firstRun ? "Upload a transcript to begin. " : ""}Imported raw transcript snapshots are immutable and stored in local SQLite at ${escapeHtml(view.health.databasePath)}.</aside>` : "";
+      const readyStatus = view.health?.status === "ready" ? `<aside class="status-banner tmv-callout tmv-callout--success">${statusChip("ok", "Vault ready")} <strong>Transcript Memory Vault is ready.</strong> ${view.health.firstRun ? "Upload a transcript to begin. " : ""}Imported raw transcript snapshots are immutable; SQLite is the source of truth.</aside>` : "";
       const startupProblem = view.health && view.health.status !== "ready" ? `<aside class="trust-warning">${view.health.status === "unsupported" ? trustBadge("no_evidence", "desktop only") : trustBadge("broken", "startup unavailable")} ${escapeHtml(view.health.lastInitializationError ?? "Database initialization has not completed.")}</aside>` : "";
-      const body = `${readyStatus}${startupProblem}<div class="metric-grid"><span>${view.totalTranscriptCount} total transcripts</span>${routeButton(routeHref.reviewQueue(), `${view.reviewCount} review items`, "route-action metric-action")}<span>${view.weakCount} weak/review</span><span>${view.conflictCount} conflicts</span><span>${view.brokenCount} broken pointers</span></div>
+      const llmBanner = view.llmRequired && view.llmReady === false ? `<aside class="trust-warning llm-setup-required">${trustBadge("no_evidence", "LLM required")} AI is not configured. Ask AI needs an external LLM (grounded extraction + answer synthesis) AND an external embedding provider (retrieval) \u2014 open plugin Settings and configure both. Transcripts still import; run the "Run AI extraction" command afterward. (Embedding status is shown in the setup card below.)</aside>` : "";
+      const sync = view.generatedSync;
+      const syncStatusLine = !sync ? "Generated graph notes status is unavailable in this context." : !sync.synced ? "Never synced \u2014 Obsidian's native graph has no generated notes yet. Sync after importing transcripts, running AI extraction, or asking AI." : `Last synced ${escapeHtml(sync.lastSyncedAt ?? "unknown")} \xB7 ${sync.fileCount ?? 0} files \xB7 ${sync.graphNodeCount ?? 0} nodes \xB7 ${sync.graphEdgeCount ?? 0} edges.`;
+      const syncWarn = sync?.status === "failed" ? `<aside class="trust-warning">${trustBadge("broken", "last sync had errors")} ${escapeHtml(sync.error ?? "Some generated files could not be written.")}</aside>` : "";
+      const dbPath = view.health?.databasePath ?? void 0;
+      const setup = await api.getSetupSummary?.() ?? null;
+      const uploadSection = section("Upload a transcript", uploadCard(), "upload-section tmv-card--primary");
+      const setupSection = section("Use Claude Desktop with this vault", setupCard(setup, dbPath), "mcp-card tmv-card");
+      const attention = view.attention ?? [];
+      const reviewMetrics = `<div class="review-metrics">
+          ${statusChip(view.reviewCount ? "warn" : "ok", `${view.reviewCount} to review`)}
+          ${view.conflictCount ? statusChip("warn", `${view.conflictCount} conflicts`) : ""}
+          ${view.brokenCount ? statusChip("error", `${view.brokenCount} broken pointers`) : ""}
+          ${statusChip("ok", `${view.totalTranscriptCount} transcripts`)}
+        </div>`;
+      const attentionList = attention.length ? `<ul class="attention-list">${attention.map((item) => `<li class="attention-item">${trustBadge(item.trustState)} <a href="${escapeHtml(item.href)}">${escapeHtml(item.title)}</a> <small>${escapeHtml(item.detail)}</small></li>`).join("")}</ul>` : `<p class="setup-meta">Nothing needs attention right now.</p>`;
+      const reviewSection = section("Review and attention", `${reviewMetrics}${attentionList}${links([{ href: routeHref.reviewQueue(), label: "Open review queue" }])}`, "review-summary-section attention-section");
+      const graphSection = section("Native Obsidian graph", `<p>These generated Markdown notes power Obsidian's <strong>native (ribbon) graph</strong>. The plugin's own Graph page reads SQLite live; the native graph only sees Markdown files and wiki links, so it needs these notes. SQLite stays the source of truth \u2014 editing a generated note never changes memory.</p>
+        <p class="generated-sync-status">${syncStatusLine}</p>${syncWarn}
+        <form data-action="sync-graph"><button type="submit" class="tmv-btn tmv-btn-secondary">Sync Obsidian graph notes</button></form>
+        <p data-loading-message hidden>Generating Markdown graph notes\u2026</p><div data-form-result></div>
+        ${links([{ href: routeHref.graph(), label: "Open graph & evidence viewer" }])}`, "generated-notes-section");
+      const transcriptsSection = section("Transcripts", `${view.transcripts.map((item) => `<article><a href="${escapeHtml(routeHref.transcript(item.id))}">${escapeHtml(item.title)}</a> \xB7 ${item.spanCount} spans</article>`).join("") || emptyState("No transcripts", "Upload a transcript to begin.", { href: routeHref.upload(), label: "Upload transcript" })}
+        ${links([{ href: routeHref.transcripts(), label: "All transcripts" }, { href: routeHref.upload(), label: "Upload transcript" }])}`, "transcripts-section");
+      const recentAnswers = section("Recent answers", view.recentAnswers.map((item) => `<article>${trustBadge(item.confidence)} <a href="${escapeHtml(routeHref.answer(item.id))}">${escapeHtml(item.question)}</a></article>`).join("") || emptyState("No answers yet", "Ask in Claude Desktop for chat. Answers run there \u2014 or via Internal Ask AI under Advanced tools \u2014 appear here."), "recent-answers-section");
+      const advancedSection = section("Advanced / Internal tools", `<details class="tmv-advanced advanced-tools"><summary>Show advanced / internal tools</summary>
+        <p>Debugging and inspection tools. For normal chat, use Claude Desktop.</p>
+        ${links([{ href: routeHref.search(), label: "Search vault" }, { href: routeHref.ask(), label: "Internal Ask AI" }])}
         ${view.health ? healthView(view.health) : ""}
-        ${section("Quick actions", links([{ href: routeHref.upload(), label: "Upload transcript" }, { href: routeHref.ask(), label: "Ask AI" }, { href: routeHref.search(), label: "Search vault" }, { href: routeHref.graph(), label: "Open graph" }, { href: routeHref.reviewQueue(), label: "Review queue" }]), "quick-actions")}
-        ${section("Transcripts", view.transcripts.map((item) => `<article><a href="${escapeHtml(routeHref.transcript(item.id))}">${escapeHtml(item.title)}</a> \xB7 ${item.spanCount} spans</article>`).join("") || emptyState("No transcripts", "Upload a transcript to begin.", { href: routeHref.upload(), label: "Upload transcript" }), "transcripts-section")}
-        ${section("Recent Ask AI answers", view.recentAnswers.map((item) => `<article>${trustBadge(item.confidence)} <a href="${escapeHtml(routeHref.answer(item.id))}">${escapeHtml(item.question)}</a></article>`).join("") || emptyState("No answers", "Ask a question after adding evidence.", { href: routeHref.ask(), label: "Ask AI" }), "recent-answers-section")}`;
+      </details>`, "advanced-tools-section");
+      const body = `${readyStatus}${startupProblem}${llmBanner}
+        ${uploadSection}
+        ${setupSection}
+        ${reviewSection}
+        ${graphSection}
+        ${transcriptsSection}
+        ${recentAnswers}
+        ${advancedSection}`;
       return { title: "Dashboard", html: appShell("Dashboard", body) };
     }
     case "upload":
       return { title: "Upload transcript", html: appShell("Upload transcript", `<aside class="immutable-notice">Uploads become immutable raw transcript sources. Re-uploading identical content reuses the existing transcript.</aside>
-        <form data-action="upload"><label>Transcript file (.txt, .md, .srt, .vtt) <input name="file" type="file" accept=".txt,.md,.srt,.vtt" required></label>
-        <p data-file-status>No file selected.</p><input name="filename" type="hidden"><textarea name="rawText" hidden></textarea>
-        <button type="submit">Import transcript</button></form><p data-loading-message hidden>Importing immutable transcript source...</p><div data-form-result></div>`) };
+        ${section("Upload a transcript", uploadCard(), "upload-section tmv-card--primary")}`) };
+    case "transcripts": {
+      const transcripts = await api.listTranscripts();
+      const list = transcripts.map((item) => `<article class="transcript-list-item">
+        <h3><a href="${escapeHtml(routeHref.transcript(item.id))}">${escapeHtml(item.title)}</a></h3>
+        <p>${trustBadge(item.processingStatus === "ready" ? "strong" : item.processingStatus === "failed" ? "broken" : "needs_review", item.processingStatus)} ${item.spanCount} spans \xB7 ${item.speakerCount} speaker(s) \xB7 ${escapeHtml(item.sourceType)} \xB7 imported ${escapeHtml(item.importedAt)}</p>
+      </article>`).join("");
+      const body = `<aside class="immutable-notice">Imported raw transcript sources are immutable. This is a read-only list; open one to view its spans or delete it.</aside>
+        ${transcripts.length ? section(`${transcripts.length} transcript(s)`, list) : emptyState("No transcripts yet", "Upload a transcript to begin building the evidence vault.", { href: routeHref.upload(), label: "Upload transcript" })}
+        ${links([{ href: routeHref.upload(), label: "Upload transcript" }])}`;
+      return { title: "Transcripts", html: appShell("Transcripts", body) };
+    }
     case "transcript": {
       const view = await api.getTranscript(route.params.id);
-      return { title: view?.title ?? "Transcript not found", html: appShell(view?.title ?? "Transcript not found", view ? transcriptView(view, route.query.get("span") ?? void 0) : emptyState("Transcript not found", "The requested immutable source is unavailable.")) };
+      if (!view) return { title: "Transcript not found", html: appShell("Transcript not found", emptyState("Transcript not found", "The requested immutable source is unavailable.")) };
+      const dangerZone = `${section("Danger zone", `<details class="danger-zone"><summary>Delete this transcript</summary>
+        <aside class="trust-warning">${trustBadge("broken", "irreversible")} This will permanently delete this transcript and remove or invalidate generated evidence, memories, answers, conflicts, and graph notes that depend on it. Transcript text cannot be edited. If the transcript is wrong, delete it and re-import the corrected file. This action cannot be undone.</aside>
+        <form data-action="delete-transcript"><input type="hidden" name="transcriptId" value="${escapeHtml(view.id)}">
+        <label><input type="checkbox" name="confirm" required> I understand this permanently deletes the transcript and its dependent data, and cannot be undone.</label>
+        <button type="submit">Delete transcript</button></form>
+        <p data-loading-message hidden>Deleting transcript and dependent data\u2026</p><div data-form-result></div></details>`, "danger-zone-section")}`;
+      return { title: view.title, html: appShell(view.title, `${transcriptView(view, route.query.get("span") ?? void 0)}${dangerZone}`) };
     }
     case "ask": {
+      const llm = await api.getLlmStatus();
+      const internalDebugCallout = `<aside class="trust-warning ask-internal-callout">Internal Ask AI \u2014 for debugging. Use Claude Desktop for normal chat.</aside>`;
+      const claudeDesktopBanner = `${internalDebugCallout}<aside class="immutable-notice claude-desktop-banner">Claude Desktop (via MCP) is the recommended chat UI; this page runs the same evidence-grounded, LLM-required pipeline.</aside>`;
+      if (llm.required && !llm.ready) {
+        return { title: "Ask AI", html: appShell("Ask AI", `${claudeDesktopBanner}<section class="trust-warning ask-setup-required">${trustBadge("no_evidence", "LLM required")}<h2>Set up an LLM to use Ask AI</h2>
+          <p>Ask AI answers only from your transcripts, with citations \u2014 but it needs a configured external LLM to generate the answer. Add a provider, model, and API key in the plugin Settings.</p>
+          ${links([{ href: routeHref.dashboard(), label: "Open dashboard" }])}</section>`) };
+      }
+      const embedding = await api.getEmbeddingStatus?.() ?? { required: false, state: "ok" };
+      if (embedding.required && embedding.state !== "ok") {
+        const setup = embedding.state === "setup_required";
+        return { title: "Ask AI", html: appShell("Ask AI", `${claudeDesktopBanner}<section class="trust-warning ask-setup-required">${trustBadge("no_evidence", setup ? "Embeddings required" : "Reindex required")}<h2>${setup ? "Set up an API embedding provider to use Ask AI" : "Rebuild the embedding index to use Ask AI"}</h2>
+          <p>${setup ? "Ask AI uses semantic retrieval over your transcripts and needs a configured API embedding provider (provider, model, dimensions, API key) in Settings. token-hash-v1 is a dev/test seam, not a production retrieval path." : 'The embedding index was built with a different or stale provider (e.g. after changing embedding settings). Run the "Rebuild embedding index" command before Ask AI can answer.'}${embedding.reason ? ` ${escapeHtml(embedding.reason)}` : ""}</p>
+          ${links([{ href: routeHref.dashboard(), label: "Open dashboard" }])}</section>`) };
+      }
       const transcripts = (await api.listTranscripts()).slice(0, 100);
-      return { title: "Ask AI", html: appShell("Ask AI", `<aside class="immutable-notice">Ask AI retrieves and scores evidence before answering. Weak or conflicting evidence remains visibly labeled.</aside>
+      return { title: "Ask AI", html: appShell("Ask AI", `${claudeDesktopBanner}<aside class="immutable-notice">Ask AI retrieves and scores evidence before answering. Weak or conflicting evidence remains visibly labeled.</aside>
         <form data-action="ask"><label>Question <textarea name="question" required></textarea></label>
         <label>Optional transcript filter <select name="transcriptIds" multiple>${transcripts.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.title)}</option>`).join("")}</select></label>
         <button type="submit">Retrieve, score, and answer</button></form>
@@ -4272,7 +6101,8 @@ async function renderPage(context) {
     }
     case "evidence": {
       const evidence = await api.getEvidence(route.params.id);
-      const body = `${evidence.brokenReason ? `<aside class="trust-warning">${trustBadge("broken")} This pointer cannot be trusted until repaired.</aside>` : ""}
+      const statusCallout = evidence.brokenReason ? `<aside class="trust-warning tmv-callout tmv-callout--warning">${trustBadge("broken")} This pointer cannot be trusted until repaired: ${escapeHtml(evidence.brokenReason)}</aside>` : `<aside class="immutable-notice tmv-callout tmv-callout--success">${trustBadge(evidence.strength)} Transcript-backed evidence \u2014 it resolves to an immutable source span (open it below). Score ${score(evidence.finalScore ?? evidence.confidence)}.</aside>`;
+      const body = `${statusCallout}
         ${evidenceCard(evidence)}${section("Resolved transcript span", evidence.brokenReason ? emptyState("Resolution failed", evidence.brokenReason) : `<blockquote>${escapeHtml(evidence.spanText)}</blockquote><a href="${escapeHtml(routeHref.transcript(evidence.transcriptId, evidence.spanId))}">Open highlighted source span</a>`)}
         ${section("Submit a correction", correctionForm("evidence", evidence.id))}`;
       return { title: `Evidence ${evidence.id}`, html: appShell(`Evidence ${evidence.id}`, body) };
@@ -4293,8 +6123,11 @@ async function renderPage(context) {
       const selectedNode = graph.nodes.find((node) => node.id === route.query.get("selectedNode"));
       const selectedEdge = graph.edges.find((edge) => edge.id === route.query.get("selectedEdge"));
       const details = selectedNode ? section("Selected node", `<article><h3>${escapeHtml(selectedNode.label)}</h3><p>${escapeHtml(selectedNode.type)} \xB7 ${escapeHtml(selectedNode.supportStatus ?? "no status")} \xB7 confidence ${score(selectedNode.confidence)}</p><p>${graph.edges.filter((edge) => (edge.source === selectedNode.id || edge.target === selectedNode.id) && edge.evidencePointerId).length} evidence-linked edge(s)</p>${graphNodeLink(selectedNode.id) ? `<a href="${escapeHtml(graphNodeLink(selectedNode.id))}">Open related item</a>` : ""}</article>`) : selectedEdge ? section("Selected edge", `<article>${selectedEdge.type === "contradicts" || selectedEdge.type === "updates" ? trustBadge("conflicting", selectedEdge.type) : ""}<p>${escapeHtml(selectedEdge.source)} \u2192 ${escapeHtml(selectedEdge.target)}</p><p>${escapeHtml(selectedEdge.type)} \xB7 confidence ${score(selectedEdge.confidence)} \xB7 ${selectedEdge.evidencePointerId ? "1 evidence link" : "0 evidence links"}</p>${selectedEdge.evidencePointerId ? `<a href="${escapeHtml(routeHref.evidence(selectedEdge.evidencePointerId))}">Open linked evidence</a>` : ""}</article>`) : "";
-      return { title: "Graph", html: appShell("Graph", `<form data-action="filter" data-view="graph"><label>Filter graph <input name="q" value="${escapeHtml(query)}"></label><label>Node type <input name="type" value="${escapeHtml(type)}"></label><label>Limit (max 100) <input name="limit" type="number" min="1" max="100" value="${limit}"></label><button type="submit">Apply</button></form>
-        <p>Showing ${visibleNodes.length} of ${graph.nodes.length} nodes and ${visibleEdges.length} edges.</p>${warnings.length ? `<aside class="trust-warning">${warnings.map(escapeHtml).join("<br>")}</aside>` : ""}${details}${section("Nodes", `<ul>${nodes}</ul>`)}${section("Edges", `<ul>${edges}</ul>`)}`) };
+      const legend = `<aside class="tmv-callout tmv-callout--info graph-legend"><strong>What this shows.</strong> Nodes are memory objects, transcripts, and evidence pointers. Edges are relationships \u2014 <em>supports</em>, <em>contradicts</em>, <em>updates</em>. An edge tagged "inferred / no evidence link" has no backing evidence pointer, so it is not part of the clean provenance chain. This page reads SQLite live (the source of truth); Obsidian's native Markdown graph is a separate, disposable view.</aside>`;
+      const warningsCallout = warnings.length ? `<aside class="trust-warning tmv-callout tmv-callout--warning">${warnings.map(escapeHtml).join("<br>")}</aside>` : "";
+      const filterForm = `<form data-action="filter" data-view="graph"><label>Filter graph <input name="q" value="${escapeHtml(query)}"></label><label>Node type <input name="type" value="${escapeHtml(type)}"></label><label>Limit (max 100) <input name="limit" type="number" min="1" max="100" value="${limit}"></label><button type="submit" class="tmv-btn tmv-btn-secondary">Apply</button></form>`;
+      const listings = graph.nodes.length ? `<p>Showing ${visibleNodes.length} of ${graph.nodes.length} nodes and ${visibleEdges.length} edges.</p>${details}${section("Nodes", `<ul>${nodes}</ul>`)}${section("Edges", `<ul>${edges}</ul>`)}` : emptyState("Graph is empty", "No memory, transcript, or evidence nodes yet. Import a transcript and run AI extraction to populate the provenance graph.");
+      return { title: "Graph", html: appShell("Graph", `${legend}${filterForm}${warningsCallout}${listings}`) };
     }
     case "search": {
       const query = route.query.get("q") ?? "";
@@ -4308,13 +6141,21 @@ async function renderPage(context) {
     case "review": {
       const items = await api.listReviewItems(), type = route.query.get("type") ?? "all", status = route.query.get("status") ?? "open";
       const filtered = items.filter((item) => (type === "all" || item.type === type) && (status === "all" || item.status === status));
-      return { title: "Review queue", html: appShell("Review queue", `<form data-action="filter" data-view="review"><label>Item type <input name="type" value="${escapeHtml(type)}"></label><label>Status <select name="status"><option>${escapeHtml(status)}</option><option>open</option><option>resolved</option><option>dismissed</option><option>all</option></select></label><button type="submit">Filter items</button></form>${filtered.map(reviewCard).join("") || emptyState("Review queue is clear", "No weak, broken, conflicting, or review-only items were found.")}`) };
+      const intro = `<aside class="immutable-notice tmv-callout tmv-callout--info">Approving promotes a memory to active, citable evidence; Reject / Dismiss removes it from Ask AI and search. Both are append-only and never edit raw transcript text. Items with no live evidence cannot be approved \u2014 only dismissed.</aside>`;
+      const filterForm = `<form data-action="filter" data-view="review"><label>Item type <input name="type" value="${escapeHtml(type)}"></label><label>Status <select name="status"><option>${escapeHtml(status)}</option><option>open</option><option>resolved</option><option>dismissed</option><option>all</option></select></label><button type="submit" class="tmv-btn tmv-btn-secondary">Filter items</button></form>`;
+      const conflicts = filtered.filter((item) => item.type === "conflict");
+      const degraded = filtered.filter((item) => item.type !== "conflict" && item.canApprove === false);
+      const active = filtered.filter((item) => item.type !== "conflict" && item.canApprove !== false);
+      const group = (title, list, className) => list.length ? section(title, list.map(reviewCard).join(""), className) : "";
+      const groups = `${group("Needs review", active, "review-active-group")}${group("Conflicts / tensions", conflicts, "review-conflicts-group")}${group("Degraded \u2014 evidence missing", degraded, "review-degraded-group")}`;
+      const body = `${intro}${filterForm}${filtered.length ? groups : emptyState("Review queue is clear", "No weak, broken, conflicting, or review-only items were found.")}`;
+      return { title: "Review queue", html: appShell("Review queue", body) };
     }
     case "review_detail": {
       const item = await api.getReviewItem(route.params.id);
       const form = item ? correctionForm(item.targetType, item.targetId) : "";
-      const related = item ? `${item.relatedTranscriptIds.length ? section("Linked transcripts", item.relatedTranscriptIds.map((id) => `<a href="${escapeHtml(routeHref.transcript(id))}">${escapeHtml(id)}</a>`).join(" ")) : ""}${item.relatedEvidenceIds.length ? section("Linked evidence", item.relatedEvidenceIds.map((id) => `<a href="${escapeHtml(routeHref.evidence(id))}">${escapeHtml(id)}</a>`).join(" ")) : ""}` : "";
-      return { title: item?.title ?? "Review item not found", html: appShell(item?.title ?? "Review item not found", item ? `${reviewCard(item)}${related}<aside class="immutable-notice">Resolution is read-only here. Corrections are appended as separate records; raw source text is never edited.</aside>${form}` : emptyState("Review item not found", "This item may already have been resolved.")) };
+      const related2 = item ? `${item.relatedTranscriptIds.length ? section("Linked transcripts", item.relatedTranscriptIds.map((id) => `<a href="${escapeHtml(routeHref.transcript(id))}">${escapeHtml(id)}</a>`).join(" ")) : ""}${item.relatedEvidenceIds.length ? section("Linked evidence", item.relatedEvidenceIds.map((id) => `<a href="${escapeHtml(routeHref.evidence(id))}">${escapeHtml(id)}</a>`).join(" ")) : ""}` : "";
+      return { title: item?.title ?? "Review item not found", html: appShell(item?.title ?? "Review item not found", item ? `${reviewCard(item)}${related2}<aside class="immutable-notice">Resolution is read-only here. Corrections are appended as separate records; raw source text is never edited.</aside>${form}` : emptyState("Review item not found", "This item may already have been resolved.")) };
     }
     default:
       return { title: "Not found", html: appShell("Not found", emptyState("Page not found", "The requested frontend route does not exist.", { href: "/", label: "Dashboard" })) };
@@ -4331,8 +6172,16 @@ async function renderRoute(api, url) {
     return appShell("Unable to load view", `<section class="trust-warning"><h2>Transcript Memory Vault could not load this view</h2><p>${escapeHtml(detail)}</p><p>The plugin did not continue as if unavailable data were trustworthy. Open the dashboard or plugin settings for database health details.</p></section>`);
   }
 }
-async function mountObsidianUi(root, api, navigation, initialTarget) {
+var mountControllers = /* @__PURE__ */ new WeakMap();
+var MUTATING_ACTIONS = /* @__PURE__ */ new Set(["upload", "ask", "correction", "review", "sync-graph", "delete-transcript"]);
+async function mountObsidianUi(root, api, navigation, initialTarget, onMutation, notify) {
+  mountControllers.get(root)?.abort();
+  const controller = new AbortController();
+  mountControllers.set(root, controller);
+  const { signal } = controller;
+  let currentTarget = initialTarget;
   const render = async (target) => {
+    currentTarget = target;
     root.innerHTML = await renderRoute(api, target);
     const span = new URL(target).searchParams.get("span");
     if (span) document.getElementById(`span-${span}`)?.scrollIntoView({ block: "center" });
@@ -4344,30 +6193,58 @@ async function mountObsidianUi(root, api, navigation, initialTarget) {
       copy.textContent = "Quote copied";
       return;
     }
+    const copyValue = event.target.closest("[data-copy]");
+    if (copyValue) {
+      void navigator.clipboard?.writeText(copyValue.dataset.copy ?? "");
+      copyValue.textContent = "Copied";
+      return;
+    }
     const routeControl = event.target.closest("[data-route], a[href]");
     const target = routeControl?.dataset.route ?? routeControl?.getAttribute("href");
     if (!isInternalNavigationTarget(target)) return;
     event.preventDefault();
+    event.stopPropagation();
     void navigateInternal(navigation, target);
-  });
+  }, { signal });
   root.addEventListener("change", (event) => {
     const input = event.target;
-    if (input.name !== "file" || !input.files?.[0]) return;
-    const file = input.files[0];
-    const form = input.form;
-    const status = form?.querySelector("[data-file-status]") ?? form?.parentElement?.querySelector("[data-file-status]");
-    if (status) status.textContent = `${file.name} \xB7 ${file.size} bytes`;
-    void file.text().then((text) => {
-      const filename = form?.elements.namedItem("filename");
-      const rawText = form?.elements.namedItem("rawText");
-      if (filename) filename.value = file.name;
-      if (rawText) rawText.value = text;
-    });
-  });
+    if (input.name !== "file" || !input.files?.[0] || !input.form) return;
+    populateUploadForm(input.form, input.files[0]);
+  }, { signal });
+  root.addEventListener("dragover", (event) => {
+    const zone = event.target.closest("[data-dropzone]");
+    if (!zone) return;
+    event.preventDefault();
+    zone.classList.add("is-dragover");
+  }, { signal });
+  root.addEventListener("dragleave", (event) => {
+    const zone = event.target.closest("[data-dropzone]");
+    if (zone && !zone.contains(event.relatedTarget)) zone.classList.remove("is-dragover");
+  }, { signal });
+  root.addEventListener("drop", (event) => {
+    const zone = event.target.closest("[data-dropzone]");
+    if (!zone) return;
+    event.preventDefault();
+    zone.classList.remove("is-dragover");
+    const file = event.dataTransfer?.files?.[0];
+    if (!file) return;
+    const form = zone.closest("form") ?? (zone instanceof HTMLFormElement ? zone : null);
+    if (!form) return;
+    const input = form.querySelector('input[type="file"]');
+    if (input) {
+      try {
+        const transfer = new DataTransfer();
+        transfer.items.add(file);
+        input.files = transfer.files;
+      } catch {
+      }
+    }
+    populateUploadForm(form, file);
+  }, { signal });
   root.addEventListener("submit", (event) => {
     event.preventDefault();
     const form = event.target;
-    const data = new FormData(form);
+    const data = new FormData(form, event.submitter);
     const result = form.parentElement?.querySelector("[data-form-result]");
     const loading = form.parentElement?.querySelector("[data-loading-message]");
     const action = form.dataset.action;
@@ -4378,7 +6255,7 @@ async function mountObsidianUi(root, api, navigation, initialTarget) {
           const imported = await api.uploadTranscript({ filename: String(data.get("filename") ?? ""), rawText: String(data.get("rawText") ?? "") });
           if (result) {
             result.innerHTML = `${imported.status === "duplicate" ? "<strong>Duplicate transcript:</strong> existing immutable source reused." : "<strong>Transcript imported successfully.</strong>"}
-              <a href="${escapeHtml(routeHref.transcript(imported.transcriptId))}">Open transcript</a> <a href="${routeHref.dashboard()}">Dashboard</a>`;
+              <a href="${escapeHtml(routeHref.transcript(imported.transcriptId))}">Open transcript</a> <a href="${routeHref.dashboard()}">Dashboard</a>${imported.warning ? `<p class="trust-warning">${escapeHtml(imported.warning)}</p>` : ""}`;
           }
         } else if (action === "ask") {
           const answer = await api.ask(String(data.get("question") ?? ""), { transcriptIds: data.getAll("transcriptIds").map(String) });
@@ -4391,9 +6268,27 @@ async function mountObsidianUi(root, api, navigation, initialTarget) {
             reason: String(data.get("reason") ?? "") || void 0
           });
           if (result) result.innerHTML = `Correction appended: <code>${escapeHtml(correction.correctionId)}</code>`;
+        } else if (action === "review") {
+          await performReviewAction(api, String(data.get("memoryId") ?? ""), data.get("decision") === "reject" ? "reject" : "approve", render, currentTarget);
+        } else if (action === "sync-graph") {
+          const summary = await api.syncGeneratedGraphNotes?.();
+          if (result) result.innerHTML = renderSyncSummary(summary);
+        } else if (action === "delete-transcript") {
+          const { summary } = await api.deleteTranscript(String(data.get("transcriptId") ?? ""));
+          const message = `Transcript deleted: ${summary.spansDeleted} span(s), ${summary.evidencePointersDeleted} evidence pointer(s), ${summary.evidenceItemsDeleted} evidence item(s) removed; ${summary.memoriesDowngraded} memory(ies) downgraded, ${summary.conflictsAffected} conflict(s) and ${summary.answersAffected} answer(s) affected. Run "Sync generated graph notes" to remove stale graph notes.`;
+          if (result) result.textContent = message;
+          notify?.(message);
+          await navigation.openDashboard();
         } else if (action === "filter") {
           const view = form.dataset.view ?? "dashboard";
           await render(`mv://${view}?${new URLSearchParams(data)}`);
+        }
+        if (action && MUTATING_ACTIONS.has(action)) {
+          try {
+            await onMutation?.();
+          } catch (refreshError) {
+            console.error("Transcript Memory Vault cross-view refresh failed", refreshError);
+          }
         }
       } catch (error) {
         if (result) result.textContent = error instanceof Error ? error.message : String(error);
@@ -4401,24 +6296,1011 @@ async function mountObsidianUi(root, api, navigation, initialTarget) {
         if (loading) loading.hidden = true;
       }
     })();
-  });
+  }, { signal });
   await render(initialTarget);
 }
 function isInternalNavigationTarget(target) {
   return target?.startsWith("mv://") ?? false;
 }
+function populateUploadForm(form, file) {
+  const status = form.querySelector("[data-file-status]") ?? form.parentElement?.querySelector("[data-file-status]");
+  if (status) status.textContent = `${file.name} \xB7 ${file.size} bytes`;
+  void file.text().then((text) => {
+    const filename = form.elements.namedItem("filename");
+    const rawText = form.elements.namedItem("rawText");
+    if (filename) filename.value = file.name;
+    if (rawText) rawText.value = text;
+  });
+}
+function renderSyncSummary(summary) {
+  if (!summary || summary.status === "unavailable") {
+    return `<p class="trust-warning">${escapeHtml(summary?.message ?? 'Generated graph notes can only be synced inside the Obsidian plugin. Use the "Sync generated graph notes" command.')}</p>`;
+  }
+  if (summary.status === "failed") return `<p class="trust-warning">Sync failed: ${escapeHtml(summary.message)}</p>`;
+  const warn = summary.warnings.length ? `<p class="trust-warning">${summary.warnings.length} warning(s) \u2014 weak/broken evidence is preserved and labeled in the generated notes.</p>` : "";
+  const err = summary.errors.length ? `<p class="trust-warning">${summary.errors.length} file(s) could not be written.</p>` : "";
+  return `<p><strong>Graph notes synced.</strong> ${summary.filesWritten} written, ${summary.filesSkipped} unchanged \xB7 ${summary.graphNodeCount} nodes \xB7 ${summary.graphEdgeCount} edges. Open Obsidian's native graph to see them.</p>${warn}${err}`;
+}
+function refreshTargetAfterAction(currentTarget) {
+  return matchRoute(currentTarget).id === "review_detail" ? routeHref.reviewQueue() : currentTarget;
+}
+async function performReviewAction(api, memoryId, decision, refresh, currentTarget) {
+  await api.reviewMemoryObject(memoryId, decision);
+  await refresh(refreshTargetAfterAction(currentTarget));
+}
+
+// src/obsidian/pluginTypes.ts
+var OBSIDIAN_VIEW_TYPES = {
+  dashboard: "transcript-memory-dashboard",
+  upload: "transcript-memory-upload",
+  transcripts: "transcript-memory-transcripts",
+  transcript: "transcript-memory-transcript",
+  ask: "transcript-memory-ask",
+  answer: "transcript-memory-answer",
+  evidence: "transcript-memory-evidence",
+  memory: "transcript-memory-memory-object",
+  graph: "transcript-memory-graph",
+  search: "transcript-memory-search",
+  review: "transcript-memory-review"
+};
+var OBSIDIAN_COMMANDS = [
+  { id: "open-dashboard", name: "Open Transcript Memory Dashboard", viewType: OBSIDIAN_VIEW_TYPES.dashboard },
+  { id: "upload-transcript", name: "Upload Transcript", viewType: OBSIDIAN_VIEW_TYPES.upload },
+  { id: "ask-ai", name: "Ask AI About Transcripts", viewType: OBSIDIAN_VIEW_TYPES.ask },
+  { id: "search-vault", name: "Search Transcript Memory Vault", viewType: OBSIDIAN_VIEW_TYPES.search },
+  { id: "open-graph", name: "Open Memory Graph", viewType: OBSIDIAN_VIEW_TYPES.graph },
+  { id: "open-review", name: "Open Review Queue", viewType: OBSIDIAN_VIEW_TYPES.review }
+];
+var OBSIDIAN_RIBBON = { icon: "database", title: "Open Transcript Memory Dashboard" };
+var OBSIDIAN_REINDEX_COMMAND = { id: "rebuild-embedding-index", name: "Rebuild Embedding Index" };
+var OBSIDIAN_SYNC_GRAPH_COMMAND = { id: "sync-generated-graph-notes", name: "Sync generated graph notes" };
+var OBSIDIAN_DEDUPE_COMMAND = { id: "merge-duplicate-memories", name: "Merge duplicate memories" };
+var GENERATED_VAULT_FOLDER = "Transcript Memory Vault";
+var viewTitle = (type) => ({
+  [OBSIDIAN_VIEW_TYPES.dashboard]: "Transcript Memory Dashboard",
+  [OBSIDIAN_VIEW_TYPES.upload]: "Upload Transcript",
+  [OBSIDIAN_VIEW_TYPES.transcripts]: "Transcripts",
+  [OBSIDIAN_VIEW_TYPES.transcript]: "Transcript Source",
+  [OBSIDIAN_VIEW_TYPES.ask]: "Ask AI",
+  [OBSIDIAN_VIEW_TYPES.answer]: "AI Answer",
+  [OBSIDIAN_VIEW_TYPES.evidence]: "Evidence",
+  [OBSIDIAN_VIEW_TYPES.memory]: "Memory Object",
+  [OBSIDIAN_VIEW_TYPES.graph]: "Memory Graph",
+  [OBSIDIAN_VIEW_TYPES.search]: "Search Transcript Memory",
+  [OBSIDIAN_VIEW_TYPES.review]: "Review Queue"
+})[type];
+var defaultTarget = (type) => ({
+  [OBSIDIAN_VIEW_TYPES.dashboard]: "mv://dashboard",
+  [OBSIDIAN_VIEW_TYPES.upload]: "mv://upload",
+  [OBSIDIAN_VIEW_TYPES.transcripts]: "mv://transcripts",
+  [OBSIDIAN_VIEW_TYPES.transcript]: "mv://transcripts/missing",
+  [OBSIDIAN_VIEW_TYPES.ask]: "mv://ask",
+  [OBSIDIAN_VIEW_TYPES.answer]: "mv://answers/missing",
+  [OBSIDIAN_VIEW_TYPES.evidence]: "mv://evidence/missing",
+  [OBSIDIAN_VIEW_TYPES.memory]: "mv://memory/missing",
+  [OBSIDIAN_VIEW_TYPES.graph]: "mv://graph",
+  [OBSIDIAN_VIEW_TYPES.search]: "mv://search",
+  [OBSIDIAN_VIEW_TYPES.review]: "mv://review"
+})[type];
+
+// src/obsidian/ObsidianNavigation.ts
+function createObsidianNavigation(app) {
+  const open = async (type, target) => {
+    const leaf = app.workspace.getLeaf("tab");
+    await leaf.setViewState({ type, active: true, state: { target } });
+    app.workspace.revealLeaf(leaf);
+  };
+  return {
+    openDashboard: () => open(OBSIDIAN_VIEW_TYPES.dashboard, "mv://dashboard"),
+    openUpload: () => open(OBSIDIAN_VIEW_TYPES.upload, "mv://upload"),
+    openTranscripts: () => open(OBSIDIAN_VIEW_TYPES.transcripts, "mv://transcripts"),
+    openTranscript: (id, options) => open(OBSIDIAN_VIEW_TYPES.transcript, `mv://transcripts/${encodeURIComponent(id)}${options?.spanId ? `?span=${encodeURIComponent(options.spanId)}` : ""}`),
+    openAskAI: (options) => open(OBSIDIAN_VIEW_TYPES.ask, `mv://ask${options?.transcriptIds?.length ? `?transcriptIds=${options.transcriptIds.map(encodeURIComponent).join(",")}` : ""}`),
+    openAnswer: (id) => open(OBSIDIAN_VIEW_TYPES.answer, `mv://answers/${encodeURIComponent(id)}`),
+    openEvidence: (id) => open(OBSIDIAN_VIEW_TYPES.evidence, `mv://evidence/${encodeURIComponent(id)}`),
+    openMemoryObject: (id) => open(OBSIDIAN_VIEW_TYPES.memory, `mv://memory/${encodeURIComponent(id)}`),
+    openGraph: (options) => {
+      const params = new URLSearchParams();
+      if (options?.selectedNodeId) params.set("selectedNode", options.selectedNodeId);
+      if (options?.selectedEdgeId) params.set("selectedEdge", options.selectedEdgeId);
+      if (options?.query) params.set("q", options.query);
+      return open(OBSIDIAN_VIEW_TYPES.graph, `mv://graph${params.size ? `?${params}` : ""}`);
+    },
+    openSearch: (query) => open(OBSIDIAN_VIEW_TYPES.search, `mv://search${query ? `?q=${encodeURIComponent(query)}` : ""}`),
+    openReviewQueue: (options) => open(OBSIDIAN_VIEW_TYPES.review, options?.reviewItemId ? `mv://review/${encodeURIComponent(options.reviewItemId)}` : "mv://review")
+  };
+}
+
+// src/obsidian/generateVault.ts
+var import_node_path4 = require("node:path");
+
+// src/obsidian/markdown.ts
+var generatedWarning = `> [!warning] Generated view
+> This note is generated from the SQLite database. The database is the source of truth. Editing this Markdown file will not update memory truth.`;
+var frontmatter = (input) => `---
+${Object.entries(input).filter(([, value]) => value != null).map(([key, value]) => `${key}: ${typeof value === "string" ? JSON.stringify(value) : value}`).join("\n")}
+---`;
+var quote = (text, max = 500) => (text.length > max ? `${text.slice(0, Math.max(0, max - 3))}...` : text).split("\n").map((line) => `> ${line}`).join("\n");
+var makeGeneratedFile = (logicalType, relativePath, content, entityType, entityId) => ({
+  logicalType,
+  relativePath,
+  content: content.endsWith("\n") ? content : `${content}
+`,
+  contentHash: contentHash(content.endsWith("\n") ? content : `${content}
+`),
+  entityType,
+  entityId
+});
+
+// src/obsidian/citations.ts
+function renderEvidenceCitation(db, evidencePointerId, maxQuoteLength = 300) {
+  const resolved = resolveEvidencePointer(db, evidencePointerId);
+  if (!resolved.ok) return { markdown: `> [!danger] Broken evidence pointer
+> \`${evidencePointerId}\`: ${resolved.reason}`, broken: true };
+  const title = db.prepare("SELECT title FROM transcripts WHERE id=?").get(resolved.evidence.transcript_id).title;
+  const score2 = resolved.evidence.final_score ?? resolved.evidence.confidence;
+  return {
+    broken: false,
+    markdown: `${wikiLink(transcriptPath(title, resolved.evidence.transcript_id), `${title}, ${resolved.evidence.span_id}`, resolved.evidence.span_id)}  
+${wikiLink(evidencePath(resolved.spanText, evidencePointerId), "Evidence note")}  
+\`${resolved.evidence.pointer_uri}\`  
+\`${resolved.evidence.source_pointer_uri}\`  
+**Role:** ${resolved.evidence.evidence_role} \xB7 **Strength:** ${resolved.evidence.evidence_strength} \xB7 **Score:** ${score2.toFixed(3)}
+
+${quote(resolved.spanText, maxQuoteLength)}`
+  };
+}
+
+// src/obsidian/answerNotes.ts
+function generateAnswerNotes(db, maxQuoteLength = 300) {
+  const answers = db.prepare("SELECT * FROM ai_answers ORDER BY id").all().filter((answer) => answerHasGraphEvidence(db, String(answer.id)));
+  return answers.map((answer) => {
+    const claims = db.prepare("SELECT * FROM answer_claims WHERE answer_id=? ORDER BY claim_order").all(answer.id);
+    const claimSections = claims.map((claim) => {
+      const pointers = db.prepare("SELECT evidence_pointer_id FROM evidence_pointers WHERE target_type='answer_claim' AND target_id=? ORDER BY evidence_pointer_id").all(claim.answer_claim_id);
+      return `### Claim ${Number(claim.claim_order) + 1}: ${claim.support_status}
+
+${claim.claim_text}
+
+${pointers.map((pointer) => renderEvidenceCitation(db, pointer.evidence_pointer_id, maxQuoteLength).markdown).join("\n\n") || "> [!danger] Unsupported claim\n> No evidence pointers."}`;
+    }).join("\n\n");
+    const warning = answer.answer_status === "weak_evidence" || answer.answer_status === "refused_no_evidence" ? "> [!caution] Weak or missing evidence\n> This answer is limited by its evidence." : answer.answer_status === "conflicting_evidence" ? "> [!warning] Conflicting evidence\n> The answer must preserve both sides." : "";
+    return makeGeneratedFile("answer_note", answerPath(questionLabel(String(answer.question_text)), String(answer.id)), `${frontmatter({ mv_entity_type: "answer", mv_entity_id: String(answer.id), mv_generated: true, mv_source_of_truth: "sqlite", mv_support_status: String(answer.answer_status), mv_confidence: String(answer.confidence) })}
+# Ask AI Answer
+
+#tmv/answer
+
+${generatedWarning}
+
+${warning}
+
+## Question
+
+${answer.question_text}
+
+## Generated Answer
+
+> [!note] Generated text
+> ${String(answer.answer_text).replace(/\n/g, "\n> ")}
+
+## Claim-Level Citations
+
+${claimSections || "_No claims were generated._"}`, "answer", String(answer.id));
+  });
+}
+
+// src/obsidian/conflictNotes.ts
+function generateConflictNotes(db, maxQuoteLength = 300) {
+  return db.prepare("SELECT id FROM conflict_assessments ORDER BY id").all().filter(({ id }) => conflictHasGraphEvidence(db, id)).map(({ id }) => {
+    const conflict = createConflictRepository(db).getConflictAssessment(id);
+    const side = (targetType, targetId, name) => {
+      const memory = targetType === "memory_object" || targetType === "claim" || targetType === "summary" ? db.prepare("SELECT title,generated_text,type FROM memory_objects WHERE id=?").get(targetId) : void 0;
+      const links2 = conflict.evidenceLinks.filter((item) => item.side === name.toLowerCase()).map((item) => renderEvidenceCitation(db, item.evidencePointerId, maxQuoteLength).markdown).join("\n\n");
+      return `### ${name} Side
+
+**Target:** ${memory ? wikiLink(memoryPath(memory.title ?? memory.generated_text.slice(0, 80), targetId, memory.type), memory.title ?? targetId) : `\`${targetType}:${targetId}\``}
+
+${links2 || "> [!danger] Missing side evidence"}`;
+    };
+    return makeGeneratedFile("conflict_note", conflictPath(conflict.summary, id), `${frontmatter({ mv_entity_type: "conflict", mv_entity_id: id, mv_generated: true, mv_source_of_truth: "sqlite", mv_support_status: conflict.status, mv_confidence: conflict.confidence })}
+# ${conflict.summary}
+
+#tmv/conflict
+
+${generatedWarning}
+
+> [!warning] Conflict / tension
+> Both sides are shown. This generated view does not resolve transcript truth.
+
+**Type:** ${conflict.kind}  
+**Status:** ${conflict.status}  
+**Confidence:** ${conflict.confidence.toFixed(3)}  
+**Resolution:** ${conflict.resolutionNote ?? "Unresolved"}
+
+${side(conflict.leftTargetType, conflict.leftTargetId, "Left")}
+
+${side(conflict.rightTargetType, conflict.rightTargetId, "Right")}
+
+## Generated Explanation
+
+${conflict.explanation}`, "conflict", id);
+  });
+}
+
+// src/obsidian/entityNotes.ts
+function generateEntityNotes(db) {
+  const graphRows = db.prepare("SELECT * FROM graph_nodes WHERE node_type IN ('entity','topic') ORDER BY node_type,id").all();
+  const decisions = db.prepare(`SELECT id,title,generated_text,status FROM memory_objects
+    WHERE COALESCE(extraction_type,type)='decision' AND duplicate_of_id IS NULL AND status NOT IN ('superseded','rejected')
+      AND (extraction_status IS NULL OR extraction_status NOT IN ('superseded','rejected'))
+      AND ${MEMORY_HAS_GRAPH_EVIDENCE_SQL}
+    ORDER BY id`).all();
+  const graphNotes = graphRows.map((row) => {
+    const kind = row.node_type === "entity" ? "person" : "topic";
+    const evidence = db.prepare("SELECT evidence_pointer_id FROM evidence_pointers WHERE target_type='graph_node' AND target_id=? ORDER BY evidence_pointer_id").all(row.id).map((item) => renderEvidenceCitation(db, item.evidence_pointer_id).markdown).join("\n\n") || "_No direct source evidence pointers._";
+    const related2 = db.prepare(`SELECT other.label,other.node_type,other.ref_id,e.edge_type FROM graph_edges e
+      JOIN graph_nodes other ON other.id=CASE WHEN e.from_node_id=? THEN e.to_node_id ELSE e.from_node_id END
+      WHERE e.from_node_id=? OR e.to_node_id=? ORDER BY other.label`).all(row.id, row.id, row.id).map((item) => `- ${item.edge_type}: ${item.node_type === "entity" || item.node_type === "topic" ? wikiLink(entityPath(item.node_type === "entity" ? "person" : "topic", item.label, item.ref_id), item.label) : item.label}`).join("\n") || "_No related graph objects._";
+    return makeGeneratedFile(kind === "person" ? "person_note" : "topic_note", entityPath(kind, String(row.label), String(row.ref_id)), `${frontmatter({ mv_entity_type: kind, mv_entity_id: String(row.ref_id), mv_generated: true, mv_source_of_truth: "sqlite" })}
+# ${row.label}
+
+#tmv/${kind}
+
+${generatedWarning}
+
+This is a generated ${kind} view. Related source-backed relationships appear in graph views.
+
+**Graph node:** \`${row.id}\`
+
+## Source Evidence
+
+${evidence}
+
+## Related
+
+${related2}`, kind, String(row.ref_id));
+  });
+  const decisionNotes = decisions.map((row) => {
+    const evidence = db.prepare("SELECT evidence_pointer_id FROM evidence_pointers WHERE target_type IN ('memory_object','claim','summary') AND target_id=? ORDER BY evidence_pointer_id").all(row.id).map((item) => renderEvidenceCitation(db, item.evidence_pointer_id).markdown).join("\n\n") || "> [!danger] Unsupported decision\n> No evidence pointers.";
+    return makeGeneratedFile("decision_note", entityPath("decision", String(row.title ?? row.generated_text), String(row.id)), `${frontmatter({ mv_entity_type: "decision", mv_entity_id: String(row.id), mv_generated: true, mv_source_of_truth: "sqlite", mv_support_status: String(row.status) })}
+# ${row.title ?? "Decision"}
+
+#tmv/memory
+
+${generatedWarning}
+
+> [!note] Generated decision text
+> ${String(row.generated_text).replace(/\n/g, "\n> ")}
+
+## Source Evidence
+
+${evidence}`, "decision", String(row.id));
+  });
+  return [...graphNotes, ...decisionNotes];
+}
+
+// src/obsidian/evidenceNotes.ts
+function generateEvidenceNotes(db, maxQuoteLength = 300) {
+  const rows = db.prepare("SELECT evidence_pointer_id FROM evidence_pointers ORDER BY evidence_pointer_id").all();
+  const warnings = [];
+  const files = rows.map(({ evidence_pointer_id }) => {
+    const resolved = resolveEvidencePointer(db, evidence_pointer_id);
+    if (!resolved.ok) {
+      warnings.push(`Broken evidence pointer ${evidence_pointer_id}: ${resolved.reason}`);
+      return makeGeneratedFile("evidence_note", evidencePath("Broken evidence", evidence_pointer_id), `${frontmatter({ mv_entity_type: "evidence", mv_entity_id: evidence_pointer_id, mv_generated: true, mv_source_of_truth: "sqlite" })}
+# Evidence ${evidence_pointer_id}
+
+#tmv/evidence
+
+${generatedWarning}
+
+> [!danger] Broken evidence pointer
+> ${resolved.reason}`, "evidence", evidence_pointer_id);
+    }
+    const title = db.prepare("SELECT title FROM transcripts WHERE id=?").get(resolved.evidence.transcript_id).title;
+    let targetLink = `\`${resolved.evidence.target_type}:${resolved.evidence.target_id}\``;
+    if (["memory_object", "claim", "summary"].includes(resolved.evidence.target_type)) {
+      const memory = db.prepare(`SELECT title, generated_text, COALESCE(extraction_type,type) AS type FROM memory_objects
+        WHERE id=? AND duplicate_of_id IS NULL AND status NOT IN ('superseded','rejected')
+          AND (extraction_status IS NULL OR extraction_status NOT IN ('superseded','rejected'))`).get(resolved.evidence.target_id);
+      if (memory) {
+        const memoryTitle = memory.title ?? memory.generated_text.slice(0, 80);
+        targetLink = wikiLink(memoryPath(memoryTitle, resolved.evidence.target_id, memory.type), memoryTitle);
+      }
+    }
+    const content = `${frontmatter({ mv_entity_type: "evidence", mv_entity_id: evidence_pointer_id, mv_generated: true, mv_source_of_truth: "sqlite", mv_support_status: resolved.evidence.evidence_strength, mv_confidence: resolved.evidence.confidence })}
+# Evidence ${evidence_pointer_id}
+
+#tmv/evidence
+
+${generatedWarning}
+
+**Target:** ${targetLink}
+**Role:** ${resolved.evidence.evidence_role}
+**Strength:** ${resolved.evidence.evidence_strength}
+**Evidence URI:** \`${resolved.evidence.pointer_uri}\`
+**Source URI:** \`${resolved.evidence.source_pointer_uri}\`
+**Transcript span:** ${wikiLink(transcriptPath(title, resolved.evidence.transcript_id), `${title}, ${resolved.evidence.span_id}`, resolved.evidence.span_id)}
+
+## Immutable Source Quote
+
+${quote(resolved.spanText, maxQuoteLength)}`;
+    return makeGeneratedFile("evidence_note", evidencePath(resolved.spanText, evidence_pointer_id), content, "evidence", evidence_pointer_id);
+  });
+  return { files, warnings };
+}
+
+// src/obsidian/graphFilters.ts
+function filterGraphByNodeTypes(graph, types) {
+  const allowed = new Set(types), nodes = graph.nodes.filter((node) => allowed.has(node.type)), ids = new Set(nodes.map((node) => node.id));
+  return { nodes, edges: graph.edges.filter((edge) => ids.has(edge.source) && ids.has(edge.target)) };
+}
+var related = (graph, focus) => {
+  const ids = new Set(graph.nodes.filter((node) => focus.includes(node.type)).map((node) => node.id));
+  graph.edges.forEach((edge) => {
+    if (ids.has(edge.source) || ids.has(edge.target)) {
+      ids.add(edge.source);
+      ids.add(edge.target);
+    }
+  });
+  return { nodes: graph.nodes.filter((node) => ids.has(node.id)), edges: graph.edges.filter((edge) => ids.has(edge.source) && ids.has(edge.target)) };
+};
+var buildTopicGraph = (graph) => related(graph, ["topic"]);
+var buildPeopleGraph = (graph) => related(graph, ["person"]);
+var buildDecisionGraph = (graph) => related(graph, ["decision"]);
+var buildSourceEvidenceGraph = (graph) => {
+  const filtered = filterGraphByNodeTypes(graph, ["transcript", "span", "evidence", "memory", "decision", "answer", "claim"]);
+  return {
+    nodes: filtered.nodes,
+    edges: filtered.edges.map((edge) => {
+      const sourceType = filtered.nodes.find((node) => node.id === edge.source)?.type;
+      const targetType = filtered.nodes.find((node) => node.id === edge.target)?.type;
+      const reverse = sourceType === "span" && targetType === "transcript" || sourceType === "evidence" && targetType === "span" || (sourceType === "memory" || sourceType === "decision" || sourceType === "claim" || sourceType === "answer") && targetType === "evidence";
+      return reverse ? { ...edge, source: edge.target, target: edge.source, metadata: { ...edge.metadata, sourceLineageView: true } } : edge;
+    })
+  };
+};
+
+// src/obsidian/graphRenderers.ts
+function graphJson(graph, includedNodeTypes = [], includedEdgeTypes = []) {
+  return `${JSON.stringify({ version: 1, generatedFrom: "sqlite", nodes: graph.nodes, edges: graph.edges, filters: { includedNodeTypes, includedEdgeTypes } }, null, 2)}
+`;
+}
+function graphMarkdown(title, graph, jsonPath, brokenPointerCount) {
+  const important = graph.nodes.filter((node) => node.notePath).slice(0, 20).map((node) => `- ${node.label}`).join("\n") || "_No nodes yet._";
+  return `---
+tags: [tmv/system]
+---
+# ${title}
+
+#tmv/system
+
+${generatedWarning}
+
+This is a generated SQLite-backed summary. For the actual graph, use Obsidian's native graph with a tag
+filter (see \`_system/graph-guide.md\`); this note intentionally does not link to content notes.
+
+- Nodes: ${graph.nodes.length}
+- Edges: ${graph.edges.length}
+- Broken evidence pointers: ${brokenPointerCount}
+- JSON data: ${jsonPath} (plain path, not a link)
+
+## Nodes (names only)
+
+${important}`;
+}
+var makeGraphJsonFile = (path, graph) => makeGeneratedFile("graph_json", path, graphJson(graph));
+var makeGraphMarkdownFile = (title, path, jsonPath, graph, broken) => makeGeneratedFile("graph_markdown", path, graphMarkdown(title, graph, jsonPath, broken));
+
+// src/obsidian/home.ts
+function generateHomeNote(db) {
+  const count = (table, where = "") => db.prepare(`SELECT COUNT(*) count FROM ${table} ${where}`).get().count;
+  return makeGeneratedFile("home", "00 Home.md", `---
+tags: [tmv/system]
+---
+# Memory Vault
+
+#tmv/system
+
+${generatedWarning}
+
+## Overview
+
+- Transcripts: ${count("transcripts")}
+- Memory objects: ${count("memory_objects")}
+- Evidence pointers: ${count("evidence_pointers")}
+- People: ${count("graph_nodes", "WHERE node_type='entity'")}
+- Topics: ${count("graph_nodes", "WHERE node_type='topic'")}
+- Decisions: ${count("memory_objects", "WHERE COALESCE(extraction_type,type)='decision'")}
+- Answers: ${count("ai_answers")}
+- Conflicts: ${count("conflict_assessments")}
+
+## Browse (folders)
+
+Open these folders in the file explorer; they are plain paths, not links, so this note stays out of the graph:
+
+- Transcripts/
+- Memories/
+- People/  \xB7  Topics/  \xB7  Decisions/
+- Evidence/
+- Answers/
+- Conflicts/
+- _system/graph-guide.md (recommended Obsidian graph filters)`);
+}
+
+// src/obsidian/manifest.ts
+function buildManifest(files, graph, warnings) {
+  const stableFiles = files.map(({ content: _content, ...file }) => file).sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+  const hash = contentHash(stableFiles.map((file) => `${file.relativePath}:${file.contentHash}`).join("\n"));
+  const manifest = {
+    version: 1,
+    generatedFrom: "sqlite",
+    contentHash: hash,
+    files: stableFiles,
+    entityPaths: Object.fromEntries(stableFiles.filter((file) => file.entityType && file.entityId).map((file) => [`${file.entityType}:${file.entityId}`, file.relativePath])),
+    graphStats: { nodes: graph.nodes.length, edges: graph.edges.length },
+    warnings: [...warnings].sort(),
+    brokenPointerCount: warnings.filter((warning) => warning.startsWith("Broken evidence pointer")).length
+  };
+  return { manifest, file: makeGeneratedFile("system_manifest", "_system/view-manifest.json", `${JSON.stringify(manifest, null, 2)}
+`) };
+}
+
+// src/obsidian/memoryNotes.ts
+function generateMemoryNotes(db, maxQuoteLength = 300) {
+  const rows = db.prepare(`SELECT * FROM memory_objects
+    WHERE duplicate_of_id IS NULL AND status NOT IN ('superseded','rejected')
+      AND (extraction_status IS NULL OR extraction_status NOT IN ('superseded','rejected'))
+      AND ${MEMORY_HAS_GRAPH_EVIDENCE_SQL}
+    ORDER BY id`).all();
+  return rows.map((row) => {
+    const pointers = db.prepare("SELECT evidence_pointer_id FROM evidence_pointers WHERE target_type IN ('memory_object','claim','summary') AND target_id=? ORDER BY evidence_pointer_id").all(row.id);
+    const legacy = db.prepare("SELECT span_id FROM memory_object_evidence WHERE memory_id=? ORDER BY span_id").all(row.id);
+    const canonical = getCanonicalMemoryObject(row, [...legacy.map((x) => x.span_id)]);
+    const conflicts = createConflictRepository(db).listConflictsForTarget("memory_object", row.id);
+    const citations = pointers.map((pointer, index) => `${index + 1}. ${renderEvidenceCitation(db, pointer.evidence_pointer_id, maxQuoteLength).markdown}`).join("\n\n");
+    const strongest = pointers.length ? db.prepare(`SELECT evidence_strength FROM evidence_pointers WHERE target_type IN ('memory_object','claim','summary') AND target_id=?
+      ORDER BY CASE evidence_strength WHEN 'strong' THEN 1 WHEN 'mixed' THEN 2 WHEN 'conflicting' THEN 3 WHEN 'weak' THEN 4 ELSE 5 END LIMIT 1`).get(row.id).evidence_strength : "unsupported";
+    const warning = strongest === "weak" || strongest === "unknown" || !isStrongMemoryObject(canonical) ? "> [!caution] Weak or review-only evidence\n> This memory must not be treated as strong truth." : strongest === "conflicting" || conflicts.some((item) => item.status === "active") ? "> [!warning] Conflicting evidence\n> Both sides must be reviewed." : "";
+    const title = canonical.title || canonical.body.slice(0, 80) || row.id;
+    const conflictLinks = conflicts.map((item) => `- ${wikiLink(conflictPath(item.summary, item.id), item.summary)}`).join("\n") || "_None._";
+    const content = `${frontmatter({ mv_entity_type: "memory", mv_entity_id: row.id, mv_generated: true, mv_source_of_truth: "sqlite", mv_support_status: strongest, mv_confidence: canonical.confidence })}
+# ${title}
+
+#tmv/memory
+
+${generatedWarning}
+
+${warning}
+
+**Type:** ${canonical.type}  
+**Status:** ${canonical.status}  
+**Confidence:** ${canonical.confidence.toFixed(3)}  
+**Evidence quality:** ${strongest}
+
+## Generated Memory
+
+> [!note] Generated text
+> ${canonical.body.replace(/\n/g, "\n> ")}
+
+## Source Evidence
+
+${citations || "> [!danger] Unsupported memory\n> No evidence pointer resolves this generated object."}
+
+## Conflicts / Tensions
+
+${conflictLinks}`;
+    return makeGeneratedFile("memory_note", memoryPath(title, row.id, String(canonical.type)), content, "memory", row.id);
+  });
+}
+
+// src/obsidian/transcriptNotes.ts
+var time = (ms) => ms == null ? "Unknown" : `${String(Math.floor(ms / 6e4)).padStart(2, "0")}:${String(Math.floor(ms % 6e4 / 1e3)).padStart(2, "0")}`;
+function generateTranscriptNotes(db, maxQuoteLength = 1e4) {
+  const transcripts = db.prepare("SELECT * FROM transcripts ORDER BY id").all();
+  return transcripts.map((item) => {
+    const spans = db.prepare("SELECT * FROM transcript_spans WHERE transcript_id=? ORDER BY ordinal,id").all(item.id);
+    const sections = spans.map((span) => {
+      const sourceUri = makeSourcePointerUri({ transcriptId: String(item.id), spanId: String(span.id) });
+      const source = resolveSourcePointer(db, sourceUri);
+      return `### Span ${span.id}
+
+<span id="${span.id}"></span>
+
+**Speaker:** ${span.speaker_label ?? "Unknown"}  
+**Time:** ${time(span.start_time_ms)}-${time(span.end_time_ms)}  
+**Source URI:** ${source.ok ? `\`${sourceUri}\`` : "_No validated source pointer for this span._"}
+
+> [!quote] Immutable raw source text
+${quote(String(span.text ?? span.text_preview), maxQuoteLength)}
+`;
+    }).join("\n");
+    const evidenceLinks = db.prepare("SELECT evidence_pointer_id FROM evidence_pointers WHERE transcript_id=? ORDER BY evidence_pointer_id").all(item.id).map(({ evidence_pointer_id }) => {
+      const resolved = resolveEvidencePointer(db, evidence_pointer_id);
+      return `- ${wikiLink(evidencePath(resolved.ok ? resolved.spanText : "Broken evidence", evidence_pointer_id), `Evidence ${evidence_pointer_id}`)}`;
+    }).join("\n") || "_No source-backed evidence drawn from this transcript yet._";
+    const content = `${frontmatter({ mv_entity_type: "transcript", mv_entity_id: String(item.id), mv_generated: true, mv_source_of_truth: "sqlite", mv_raw_hash: String(item.raw_sha256 ?? item.content_hash) })}
+# ${item.title}
+
+#tmv/transcript
+
+${generatedWarning}
+
+> [!important] Immutable source
+> Transcript text and spans are rendered from immutable SQLite source records.
+
+**Transcript ID:** \`${item.id}\`
+**Source ID:** \`${item.source_id}\`
+**Raw hash:** \`${item.raw_sha256 ?? item.content_hash}\`
+**Imported:** ${item.imported_at}
+
+## Source-Backed Evidence
+
+${evidenceLinks}
+
+## Transcript Spans
+
+${sections || "_No spans found._"}`;
+    return makeGeneratedFile("transcript_note", transcriptPath(String(item.title), String(item.id)), content, "transcript", String(item.id));
+  });
+}
+
+// src/obsidian/vaultWriter.ts
+var import_promises = require("node:fs/promises");
+var import_node_path3 = require("node:path");
+var safeTarget = (root, relativePath) => {
+  if ((0, import_node_path3.isAbsolute)(relativePath) || relativePath.split(/[\\/]/).includes("..")) throw new Error(`Unsafe generated path: ${relativePath}`);
+  const target = (0, import_node_path3.resolve)(root, relativePath);
+  if (target !== root && !target.startsWith(`${root}${import_node_path3.sep}`)) throw new Error(`Generated path escapes output root: ${relativePath}`);
+  return target;
+};
+async function writeGeneratedVault(outputRoot, files, cleanBeforeWrite = false) {
+  const root = (0, import_node_path3.resolve)(outputRoot), errors = [];
+  await (0, import_promises.mkdir)(root, { recursive: true });
+  for (const directory of ["Transcripts", "Memories/Facts", "Memories/Preferences", "Memories/Decisions", "Memories/Tasks", "Memories/Questions", "Memories/Other", "People", "Topics", "Decisions", "Evidence", "Answers", "Conflicts", "Graphs", "_system"]) {
+    await (0, import_promises.mkdir)(safeTarget(root, directory), { recursive: true });
+  }
+  if (cleanBeforeWrite) {
+    try {
+      const old = JSON.parse(await (0, import_promises.readFile)(safeTarget(root, "_system/view-manifest.json"), "utf8"));
+      for (const file of old.files ?? []) await (0, import_promises.rm)(safeTarget(root, file.relativePath), { force: true });
+    } catch {
+    }
+  }
+  let filesWritten = 0, filesSkipped = 0;
+  for (const file of files) {
+    try {
+      const target = safeTarget(root, file.relativePath);
+      await (0, import_promises.mkdir)((0, import_node_path3.dirname)(target), { recursive: true });
+      try {
+        if (await (0, import_promises.readFile)(target, "utf8") === file.content) {
+          filesSkipped++;
+          continue;
+        }
+      } catch {
+      }
+      await (0, import_promises.writeFile)(target, file.content, "utf8");
+      filesWritten++;
+    } catch (error) {
+      errors.push(`${file.relativePath}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return { filesWritten, filesSkipped, errors };
+}
+
+// src/obsidian/generateVault.ts
+var defaults = {
+  includeTranscriptNotes: true,
+  includeMemoryNotes: true,
+  includeEntityNotes: true,
+  includeAnswerNotes: true,
+  includeConflictNotes: true,
+  includeEvidenceNotes: true,
+  includeGraphJson: true,
+  includeGraphMarkdown: true,
+  maxQuoteLength: 300
+};
+async function generateObsidianVault(db, config) {
+  const options = { ...defaults, ...config }, outputRoot = (0, import_node_path4.resolve)(config.outputRoot), files = [generateHomeNote(db)], warnings = [];
+  if (options.includeTranscriptNotes) files.push(...generateTranscriptNotes(db));
+  if (options.includeMemoryNotes) files.push(...generateMemoryNotes(db, options.maxQuoteLength));
+  if (options.includeEntityNotes) files.push(...generateEntityNotes(db));
+  if (options.includeAnswerNotes) files.push(...generateAnswerNotes(db, options.maxQuoteLength));
+  if (options.includeConflictNotes) files.push(...generateConflictNotes(db, options.maxQuoteLength));
+  if (options.includeEvidenceNotes) {
+    const evidence = generateEvidenceNotes(db, options.maxQuoteLength);
+    files.push(...evidence.files);
+    warnings.push(...evidence.warnings);
+  }
+  const built = buildObsidianGraph(db);
+  warnings.push(...built.warnings);
+  const graphs = [
+    ["Topic Graph", "topic-graph.json", buildTopicGraph(built.graph)],
+    ["People Graph", "people-graph.json", buildPeopleGraph(built.graph)],
+    ["Decision Graph", "decision-graph.json", buildDecisionGraph(built.graph)],
+    ["Source Evidence Graph", "source-evidence-graph.json", buildSourceEvidenceGraph(built.graph)]
+  ];
+  if (options.includeGraphJson) {
+    files.push(makeGraphJsonFile("Graphs/graph-data.json", built.graph));
+    graphs.forEach(([, path, graph]) => files.push(makeGraphJsonFile(`Graphs/${path}`, graph)));
+  }
+  const broken = warnings.filter((warning) => warning.startsWith("Broken evidence pointer")).length;
+  if (options.includeGraphMarkdown) graphs.forEach(([title, path, graph]) => files.push(makeGraphMarkdownFile(title, `Graphs/${title}.md`, `Graphs/${path}`, graph, broken)));
+  files.push(makeGeneratedFile("system_manifest", "_system/generation-log.md", `---
+tags: [tmv/system]
+---
+# Generation Log
+
+#tmv/system
+
+This deterministic generated view contains ${files.length + 3} files, ${built.graph.nodes.length} graph nodes, and ${built.graph.edges.length} graph edges.
+
+SQLite remains the source of truth. Generated Markdown is disposable and is never read back into SQLite.`));
+  files.push(makeGeneratedFile("system_manifest", "_system/graph-guide.md", `---
+tags: [tmv/system]
+---
+# Transcript Memory Vault \u2014 Graph Guide
+
+#tmv/system
+
+> [!warning] Generated view
+> SQLite is the source of truth. These Markdown notes are a disposable view layer for Obsidian's native graph and are never read back into SQLite.
+
+## How to read the graph
+
+- **Global graph** \u2014 overview of the whole memory network.
+- **Local graph** (open on a Memory, Evidence, or Answer note) \u2014 the provenance chain: Transcript -> Evidence -> Memory -> Answer / Conflict.
+
+## Tags (for graph filters)
+
+Every generated note carries one tag so you can filter the graph:
+
+- #tmv/transcript \u2014 raw transcript notes
+- #tmv/evidence \u2014 evidence pointers (scored, provenance-backed)
+- #tmv/memory \u2014 canonical memory objects
+- #tmv/answer \u2014 Ask AI answers
+- #tmv/conflict \u2014 conflicts / tensions
+- #tmv/person, #tmv/topic \u2014 entities
+- #tmv/system \u2014 index/navigation notes (this guide, 00 Home, graph summaries); usually filter these OUT
+
+## Recommended graph filters (Obsidian filter box)
+
+- Hide system hubs: \`-tag:#tmv/system\`
+- Source graph: \`tag:#tmv/transcript OR tag:#tmv/evidence\`
+- Memory graph: \`tag:#tmv/evidence OR tag:#tmv/memory\`
+- Answer graph: \`tag:#tmv/answer OR tag:#tmv/evidence\`
+- Conflict graph: \`tag:#tmv/conflict OR tag:#tmv/memory\`
+- People / topics: \`tag:#tmv/person OR tag:#tmv/topic OR tag:#tmv/memory\`
+
+If your Obsidian version does not support \`OR\` in the graph filter, filter one tag at a time (e.g. \`tag:#tmv/memory\`).`));
+  const duplicates = files.map((file) => file.relativePath).filter((path, index, all) => all.indexOf(path) !== index);
+  if (duplicates.length) throw new Error(`Generated path collision: ${[...new Set(duplicates)].join(", ")}`);
+  const { manifest, file: manifestFile } = buildManifest(files, built.graph, warnings);
+  files.push(manifestFile);
+  files.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+  const written = await writeGeneratedVault(outputRoot, files, options.cleanBeforeWrite);
+  const createdAt = (options.now?.() ?? /* @__PURE__ */ new Date()).toISOString(), runId = createId("ovr_");
+  db.transaction(() => {
+    db.prepare(`INSERT INTO obsidian_view_runs(id,created_at,output_root,file_count,graph_node_count,graph_edge_count,content_hash,status,error_message)
+      VALUES (?,?,?,?,?,?,?,?,?)`).run(runId, createdAt, outputRoot, files.length, built.graph.nodes.length, built.graph.edges.length, manifest.contentHash, written.errors.length ? "failed" : "completed", written.errors.join("\n") || null);
+    const insert = db.prepare(`INSERT INTO obsidian_generated_files(id,view_run_id,logical_type,entity_type,entity_id,relative_path,content_hash,created_at)
+      VALUES (?,?,?,?,?,?,?,?)`);
+    files.forEach((generated) => insert.run(createId("ovf_"), runId, generated.logicalType, generated.entityType ?? null, generated.entityId ?? null, generated.relativePath, generated.contentHash, createdAt));
+  })();
+  return { outputRoot, filesWritten: written.filesWritten, filesSkipped: written.filesSkipped, graphNodeCount: built.graph.nodes.length, graphEdgeCount: built.graph.edges.length, warnings, errors: written.errors, manifestPath: (0, import_node_path4.resolve)(outputRoot, "_system/view-manifest.json"), contentHash: manifest.contentHash, files };
+}
+
+// src/obsidian/nativeBindings.ts
+var import_node_fs2 = require("node:fs");
+var import_node_path5 = require("node:path");
+var nativeBindingTarget = (runtime) => `${runtime.platform}-${runtime.arch}-abi${runtime.modules ?? "unknown"}`;
+function currentNativeRuntime() {
+  return {
+    platform: process.platform,
+    arch: process.arch,
+    modules: process.versions.modules,
+    electron: process.versions.electron
+  };
+}
+function listPackagedNativeTargets(pluginDirectory) {
+  const nativeDirectory = (0, import_node_path5.join)(pluginDirectory, "native");
+  try {
+    return (0, import_node_fs2.readdirSync)(nativeDirectory, { withFileTypes: true }).filter((entry) => entry.isDirectory() && (0, import_node_fs2.existsSync)((0, import_node_path5.join)(nativeDirectory, entry.name, "better_sqlite3.node"))).map((entry) => entry.name).sort();
+  } catch {
+    return [];
+  }
+}
+function resolveNativeBinding(pluginDirectory, runtime = currentNativeRuntime()) {
+  const target = nativeBindingTarget(runtime);
+  const packagedTargets = listPackagedNativeTargets(pluginDirectory);
+  const bindingPath = (0, import_node_path5.join)(pluginDirectory, "native", target, "better_sqlite3.node");
+  if ((0, import_node_fs2.existsSync)(bindingPath)) return { ok: true, target, bindingPath, packagedTargets, error: null };
+  const electron = runtime.electron ? ` Electron ${runtime.electron}` : "";
+  return {
+    ok: false,
+    target,
+    bindingPath: null,
+    packagedTargets,
+    error: `SQLite native binding unavailable for ${target}.${electron} Packaged targets: ${packagedTargets.join(", ") || "none"}.`
+  };
+}
+function nativeBindingLoadError(resolution, error) {
+  const detail = error instanceof Error ? error.message : String(error);
+  return new Error(`SQLite native binding ${resolution.target} is unavailable or incompatible: ${detail}`);
+}
+
+// src/obsidian/SettingsTab.ts
+var import_obsidian = require("obsidian");
+
+// src/obsidian/settings.ts
+var LLM_PROVIDER_OPTIONS = ["none", "openai"];
+var EMBEDDING_PROVIDER_OPTIONS = ["deterministic-test", "noop", "openai"];
+var EXTERNAL_LLM_PROVIDERS = ["openai"];
+var isExternalLlmProvider = (providerId) => EXTERNAL_LLM_PROVIDERS.includes(providerId);
+var EXTERNAL_EMBEDDING_PROVIDERS = ["openai"];
+var isExternalEmbeddingProvider = (providerId) => EXTERNAL_EMBEDDING_PROVIDERS.includes(providerId);
+function isLlmConfigured(settings) {
+  return settings.mode === "external" && isExternalLlmProvider(settings.llm.provider) && settings.llm.model.trim().length > 0 && (settings.apiKeys[settings.llm.provider]?.trim().length ?? 0) > 0;
+}
+function isEmbeddingConfigured(settings) {
+  if (settings.mode !== "external") return false;
+  if (!isExternalEmbeddingProvider(settings.embedding.provider)) return false;
+  if ((settings.apiKeys[settings.embedding.provider]?.trim().length ?? 0) === 0) return false;
+  const dims = settings.embedding.dimensions;
+  return typeof dims === "number" && Number.isInteger(dims) && dims > 0;
+}
+function setupRequirement(settings) {
+  const llmConfigured = isLlmConfigured(settings);
+  const embeddingConfigured = isEmbeddingConfigured(settings);
+  const complete = llmConfigured && embeddingConfigured;
+  const message = complete ? "Setup complete. Ask AI is enabled in Obsidian and via Claude Desktop (MCP)." : `Ask AI requires BOTH an LLM provider (grounded memory extraction + answer synthesis) and an external embedding provider (Ask AI retrieval, MCP ask_vault, and MCP evidence search). ${llmConfigured ? "LLM is configured." : "LLM is NOT configured."} ${embeddingConfigured ? "Embeddings are configured." : "Embeddings are NOT configured."} An LLM-only setup is incomplete \u2014 Ask AI and MCP stay disabled until both are configured below.`;
+  return { llmConfigured, embeddingConfigured, complete, message };
+}
+var DEFAULT_SETTINGS = {
+  schemaVersion: 1,
+  mode: "local",
+  llm: { provider: "none", model: "" },
+  embedding: { provider: "deterministic-test", model: "token-hash-v1" },
+  apiKeys: {}
+};
+var isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+var asString = (value, fallback) => typeof value === "string" ? value : fallback;
+var normalizeMode = (value) => value === "external" ? "external" : "local";
+var positiveInt = (value) => {
+  const n = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
+  return Number.isInteger(n) && n > 0 ? n : void 0;
+};
+var positiveNumber = (value) => {
+  const n = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
+  return Number.isFinite(n) && n > 0 ? n : void 0;
+};
+var normalizeBaseUrl = (value) => typeof value === "string" && value.trim().length > 0 ? value.trim() : void 0;
+var normalizeLlmSelection = (value, fallback) => {
+  const record = isRecord(value) ? value : {};
+  const result = {
+    provider: asString(record.provider, fallback.provider),
+    model: asString(record.model, fallback.model)
+  };
+  const baseUrl = normalizeBaseUrl(record.baseUrl);
+  if (baseUrl !== void 0) result.baseUrl = baseUrl;
+  const timeoutMs = positiveNumber(record.timeoutMs);
+  if (timeoutMs !== void 0) result.timeoutMs = timeoutMs;
+  return result;
+};
+var normalizeEmbeddingSelection = (value, fallback) => {
+  const record = isRecord(value) ? value : {};
+  const result = {
+    provider: asString(record.provider, fallback.provider),
+    model: asString(record.model, fallback.model)
+  };
+  const dimensions = positiveInt(record.dimensions);
+  if (dimensions !== void 0) result.dimensions = dimensions;
+  const baseUrl = normalizeBaseUrl(record.baseUrl);
+  if (baseUrl !== void 0) result.baseUrl = baseUrl;
+  const timeoutMs = positiveNumber(record.timeoutMs);
+  if (timeoutMs !== void 0) result.timeoutMs = timeoutMs;
+  return result;
+};
+var normalizeApiKeys = (value) => {
+  if (!isRecord(value)) return {};
+  const result = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (typeof raw === "string" && raw.trim().length > 0) result[key] = raw;
+  }
+  return result;
+};
+function normalizeSettings(raw) {
+  const record = isRecord(raw) ? raw : {};
+  return {
+    schemaVersion: 1,
+    mode: normalizeMode(record.mode),
+    llm: normalizeLlmSelection(record.llm, DEFAULT_SETTINGS.llm),
+    embedding: normalizeEmbeddingSelection(record.embedding, DEFAULT_SETTINGS.embedding),
+    apiKeys: normalizeApiKeys(record.apiKeys)
+  };
+}
+function setApiKey(settings, providerId, key) {
+  const apiKeys = { ...settings.apiKeys };
+  const trimmed = key.trim();
+  if (trimmed) apiKeys[providerId] = trimmed;
+  else delete apiKeys[providerId];
+  return { ...settings, apiKeys };
+}
+function redactApiKey(key) {
+  return key && key.trim().length > 0 ? "configured" : "not set";
+}
+function settingsHealthSummary(settings) {
+  return {
+    providerMode: settings.mode,
+    llmProvider: settings.llm.provider,
+    llmModel: settings.llm.model,
+    embeddingProvider: settings.embedding.provider,
+    embeddingModel: settings.embedding.model,
+    apiKeyConfigured: Object.values(settings.apiKeys).some((value) => value.trim().length > 0),
+    llmReady: isLlmConfigured(settings)
+  };
+}
+
+// src/obsidian/SettingsTab.ts
+var TranscriptMemorySettingsTab = class extends import_obsidian.PluginSettingTab {
+  constructor(app, plugin, getHealth, navigation, getSettings, onSave) {
+    super(app, plugin);
+    this.getHealth = getHealth;
+    this.navigation = navigation;
+    this.getSettings = getSettings;
+    this.onSave = onSave;
+  }
+  getHealth;
+  navigation;
+  getSettings;
+  onSave;
+  display() {
+    const health = this.getHealth();
+    const settings = this.getSettings();
+    this.containerEl.empty();
+    this.containerEl.createEl("h2", { text: "Transcript Memory Vault" });
+    this.containerEl.createEl("h3", { text: "AI providers" });
+    const warning = this.containerEl.createEl("p", {
+      text: `API keys are stored in this plugin's local data file (data.json) as plain text. If your vault is synced, the key may sync with it. Run the "Rebuild Embedding Index" command to (re)build the index with the configured provider \u2014 that command is the only action that may make a network call.`
+    });
+    warning.addClass("setting-item-description");
+    const required = this.containerEl.createEl("p", { text: setupRequirement(settings).message });
+    required.addClass("setting-item-description");
+    new import_obsidian.Setting(this.containerEl).setName("LLM provider").setDesc('Required for Ask AI. Grounded memory extraction and Ask AI answer synthesis use this external provider. Select "none" to disable AI features.').addDropdown((dropdown) => {
+      for (const option of LLM_PROVIDER_OPTIONS) dropdown.addOption(option, option);
+      dropdown.setValue(settings.llm.provider).onChange(async (value) => {
+        const mode = value !== "none" ? "external" : "local";
+        await this.onSave({ ...this.getSettings(), mode, llm: { ...this.getSettings().llm, provider: value } });
+        this.display();
+      });
+    });
+    new import_obsidian.Setting(this.containerEl).setName("LLM model").setDesc("Model identifier. Required for an external provider.").addText(
+      (text) => text.setPlaceholder("e.g. gpt-4o-mini").setValue(settings.llm.model).onChange(async (value) => {
+        await this.onSave({ ...this.getSettings(), llm: { ...this.getSettings().llm, model: value } });
+      })
+    );
+    new import_obsidian.Setting(this.containerEl).setName("LLM base URL").setDesc("Optional. Override the OpenAI-compatible endpoint for the external LLM provider.").addText(
+      (text) => text.setPlaceholder("https://api.openai.com/v1").setValue(settings.llm.baseUrl ?? "").onChange(async (value) => {
+        const baseUrl = value.trim().length > 0 ? value.trim() : void 0;
+        await this.onSave({ ...this.getSettings(), llm: { ...this.getSettings().llm, baseUrl } });
+      })
+    );
+    new import_obsidian.Setting(this.containerEl).setName("LLM request timeout (ms)").setDesc("Optional. Applied to the external LLM provider; the local provider ignores it.").addText(
+      (text) => text.setPlaceholder("e.g. 30000").setValue(settings.llm.timeoutMs != null ? String(settings.llm.timeoutMs) : "").onChange(async (value) => {
+        const parsed = Number(value.trim());
+        const timeoutMs = Number.isFinite(parsed) && parsed > 0 ? parsed : void 0;
+        await this.onSave({ ...this.getSettings(), llm: { ...this.getSettings().llm, timeoutMs } });
+      })
+    );
+    new import_obsidian.Setting(this.containerEl).setName("Embedding provider").setDesc("Required for Ask AI retrieval, MCP ask_vault, and MCP evidence search. Choose an external (OpenAI-compatible) provider and set its dimensions + API key below. The deterministic test provider is a dev/test seam only and does NOT enable Ask AI.").addDropdown((dropdown) => {
+      for (const option of EMBEDDING_PROVIDER_OPTIONS) dropdown.addOption(option, option);
+      dropdown.setValue(settings.embedding.provider).onChange(async (value) => {
+        await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, provider: value } });
+        this.display();
+      });
+    });
+    new import_obsidian.Setting(this.containerEl).setName("Embedding model").setDesc("Model identifier (e.g. text-embedding-3-small). Required for an external embedding provider.").addText(
+      (text) => text.setPlaceholder("e.g. text-embedding-3-small").setValue(settings.embedding.model).onChange(async (value) => {
+        await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, model: value } });
+      })
+    );
+    const embeddingProviderId = settings.embedding.provider;
+    const embeddingIsExternal = isExternalEmbeddingProvider(embeddingProviderId);
+    new import_obsidian.Setting(this.containerEl).setName("Embedding dimensions").setDesc("Required for an external embedding provider: the vector length the model returns.").addText(
+      (text) => text.setPlaceholder("e.g. 1536").setValue(settings.embedding.dimensions != null ? String(settings.embedding.dimensions) : "").onChange(async (value) => {
+        const parsed = Number(value.trim());
+        const dimensions = Number.isInteger(parsed) && parsed > 0 ? parsed : void 0;
+        await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, dimensions } });
+      })
+    );
+    new import_obsidian.Setting(this.containerEl).setName("Embedding base URL").setDesc("Optional. Override the OpenAI-compatible endpoint for the external embedding provider.").addText(
+      (text) => text.setPlaceholder("https://api.openai.com/v1").setValue(settings.embedding.baseUrl ?? "").onChange(async (value) => {
+        const baseUrl = value.trim().length > 0 ? value.trim() : void 0;
+        await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, baseUrl } });
+      })
+    );
+    new import_obsidian.Setting(this.containerEl).setName("Embedding request timeout (ms)").setDesc("Optional. Applied only to the external embedding HTTP transport.").addText(
+      (text) => text.setPlaceholder("e.g. 30000").setValue(settings.embedding.timeoutMs != null ? String(settings.embedding.timeoutMs) : "").onChange(async (value) => {
+        const parsed = Number(value.trim());
+        const timeoutMs = Number.isFinite(parsed) && parsed > 0 ? parsed : void 0;
+        await this.onSave({ ...this.getSettings(), embedding: { ...this.getSettings().embedding, timeoutMs } });
+      })
+    );
+    new import_obsidian.Setting(this.containerEl).setName("Embedding API key").setDesc(
+      embeddingIsExternal ? `Stored for "${embeddingProviderId}": ${redactApiKey(settings.apiKeys[embeddingProviderId])}. Type a new key to replace it; leave blank to keep the existing one.` : "The selected embedding provider runs locally and needs no API key."
+    ).addText((text) => {
+      text.inputEl.type = "password";
+      text.setPlaceholder("Enter API key").onChange(async (value) => {
+        if (!embeddingIsExternal) return;
+        const trimmed = value.trim();
+        if (!trimmed) return;
+        await this.onSave(setApiKey(this.getSettings(), embeddingProviderId, trimmed));
+      });
+    }).addButton(
+      (button) => button.setButtonText("Clear").onClick(async () => {
+        if (!embeddingIsExternal) return;
+        await this.onSave(setApiKey(this.getSettings(), embeddingProviderId, ""));
+        this.display();
+      })
+    );
+    const llmProviderId = settings.llm.provider;
+    const llmKeyStatus = redactApiKey(settings.apiKeys[llmProviderId]);
+    new import_obsidian.Setting(this.containerEl).setName("LLM API key").setDesc(
+      llmProviderId === "none" ? "Select an LLM provider to set its API key." : `Stored for "${llmProviderId}": ${llmKeyStatus}. Type a new key to replace it; leave blank to keep the existing one.`
+    ).addText((text) => {
+      text.inputEl.type = "password";
+      text.setPlaceholder("Enter API key").onChange(async (value) => {
+        if (llmProviderId === "none") return;
+        const trimmed = value.trim();
+        if (!trimmed) return;
+        await this.onSave(setApiKey(this.getSettings(), llmProviderId, trimmed));
+      });
+    }).addButton(
+      (button) => button.setButtonText("Clear").onClick(async () => {
+        if (llmProviderId === "none") return;
+        await this.onSave(setApiKey(this.getSettings(), llmProviderId, ""));
+        this.display();
+      })
+    );
+    this.containerEl.createEl("h3", { text: "Status" });
+    new import_obsidian.Setting(this.containerEl).setName("Plugin status").setDesc(health.status);
+    new import_obsidian.Setting(this.containerEl).setName("API key").setDesc(health.apiKeyConfigured ? "configured" : "not configured");
+    new import_obsidian.Setting(this.containerEl).setName("AI (LLM)").setDesc(
+      isLlmConfigured(settings) ? `Configured: ${settings.llm.provider}${settings.llm.model ? ` / ${settings.llm.model}` : ""} (external).` : "Not configured. Ask AI and AI memory extraction are disabled until you set an LLM provider, model, and API key."
+    );
+    new import_obsidian.Setting(this.containerEl).setName("AI retrieval (embeddings)").setDesc(
+      isEmbeddingConfigured(settings) ? `Configured: ${settings.embedding.provider}${settings.embedding.model ? ` / ${settings.embedding.model}` : ""}${settings.embedding.dimensions ? ` / ${settings.embedding.dimensions}d` : ""} (external).` : "Not configured. Ask AI retrieval, MCP ask_vault, and MCP evidence search are disabled until you set an external embedding provider, model, dimensions, and API key. Required \u2014 not optional."
+    );
+    new import_obsidian.Setting(this.containerEl).setName("Embedding index").setDesc(
+      health.reindexNeeded === void 0 ? "Status unavailable until the database is ready." : health.reindexNeeded ? `Reindex needed \u2014 run the "Rebuild Embedding Index" command. ${health.reindexSummary ?? ""}`.trim() : `Up to date. ${health.reindexSummary ?? ""}`.trim()
+    );
+    if (health.embeddingUsedFallback) {
+      new import_obsidian.Setting(this.containerEl).setName("Embedding fallback").setDesc("The configured external embedding provider is not fully set up; using local token-hash-v1.");
+    }
+    new import_obsidian.Setting(this.containerEl).setName("Database location").setDesc(health.databasePath ?? "Unavailable");
+    new import_obsidian.Setting(this.containerEl).setName("SQLite storage").setDesc(health.realSqliteStorage ? "Connected to real local SQLite storage" : "Not connected");
+    new import_obsidian.Setting(this.containerEl).setName("Migration status").setDesc(`${health.migrationStatus}: ${health.appliedMigrationCount}/${health.packagedMigrationCount} applied`);
+    new import_obsidian.Setting(this.containerEl).setName("Last initialization error").setDesc(health.lastInitializationError ?? "None");
+    new import_obsidian.Setting(this.containerEl).setName("Native binding target").setDesc(health.nativeBindingTarget ?? "Unresolved");
+    new import_obsidian.Setting(this.containerEl).setName("Packaged native targets").setDesc(health.packagedNativeTargets.join(", ") || "None");
+    new import_obsidian.Setting(this.containerEl).setName("Dashboard").addButton((button) => button.setButtonText("Open dashboard").onClick(() => void this.navigation.openDashboard()));
+  }
+};
 
 // src/obsidian/TranscriptMemoryItemView.ts
-var TranscriptMemoryItemView = class extends import_obsidian3.ItemView {
-  constructor(leaf, type, getApi, vaultNavigation) {
+var import_obsidian2 = require("obsidian");
+var TranscriptMemoryItemView = class extends import_obsidian2.ItemView {
+  constructor(leaf, type, getApi, vaultNavigation, registry) {
     super(leaf);
     this.type = type;
     this.getApi = getApi;
     this.vaultNavigation = vaultNavigation;
+    this.registry = registry;
   }
   type;
   getApi;
   vaultNavigation;
+  registry;
   state = {};
   getViewType() {
     return this.type;
@@ -4437,16 +7319,22 @@ var TranscriptMemoryItemView = class extends import_obsidian3.ItemView {
     await this.render();
   }
   async onOpen() {
+    this.registry.register(this);
     await this.render();
   }
   async onClose() {
+    this.registry.unregister(this);
     this.contentEl.empty();
+  }
+  /** Re-fetch and re-render this view's current route. Invoked by the registry after a mutation elsewhere. */
+  async refresh() {
+    await this.render();
   }
   async render() {
     this.contentEl.empty();
     this.contentEl.addClass("transcript-memory-vault-host");
     try {
-      await mountObsidianUi(this.contentEl, this.getApi(), this.vaultNavigation, this.state.target ?? defaultTarget(this.type));
+      await mountObsidianUi(this.contentEl, this.getApi(), this.vaultNavigation, this.state.target ?? defaultTarget(this.type), () => this.registry.notifyMutation(this), (message) => new import_obsidian2.Notice(message));
     } catch (error) {
       console.error("Transcript Memory Vault view load failed", error);
       this.contentEl.empty();
@@ -4456,6 +7344,31 @@ var TranscriptMemoryItemView = class extends import_obsidian3.ItemView {
     }
   }
 };
+
+// src/obsidian/services/ObsidianAppApi.ts
+function createObsidianAppApi(db, vault, health, getSynthesis, getMemoryExtractor, options) {
+  const api = createSqliteFrontendApi(db, {
+    health,
+    getHealth: options?.getHealth,
+    getSynthesis,
+    getMemoryExtractor,
+    llmRequired: options?.llmRequired,
+    getLlmReady: options?.getLlmReady,
+    syncGeneratedViews: options?.syncGeneratedViews,
+    embeddingsRequired: options?.embeddingsRequired,
+    getEmbeddingHealth: options?.getEmbeddingHealth,
+    getEmbeddingProvider: options?.getEmbeddingProvider,
+    getSetupSummary: options?.getSetupSummary
+  });
+  return {
+    ...api,
+    async uploadVaultFile(file) {
+      const rawText = await vault.read(file);
+      validateTranscriptUpload({ filename: file.name, rawText });
+      return api.uploadTranscript({ filename: file.name, rawText });
+    }
+  };
+}
 
 // src/obsidian/startup.ts
 var DESKTOP_ONLY_MESSAGE = "Transcript Memory Vault is desktop-only right now because it uses local SQLite storage.";
@@ -4470,7 +7383,8 @@ var initialPluginHealth = () => ({
   firstRun: false,
   lastInitializationError: null,
   nativeBindingTarget: null,
-  packagedNativeTargets: []
+  packagedNativeTargets: [],
+  ...settingsHealthSummary(DEFAULT_SETTINGS)
 });
 function startupSupport(input) {
   return input.isDesktopApp && input.hasLocalFilesystem ? { supported: true } : { supported: false, message: DESKTOP_ONLY_MESSAGE };
@@ -4536,6 +7450,18 @@ function createUnavailableFrontendApi(getHealth) {
     },
     async submitCorrection() {
       return unavailable(getHealth());
+    },
+    async reviewMemoryObject() {
+      return unavailable(getHealth());
+    },
+    async getLlmStatus() {
+      return { required: true, ready: Boolean(getHealth().llmReady) };
+    },
+    async runExtraction() {
+      return unavailable(getHealth());
+    },
+    async deleteTranscript() {
+      return unavailable(getHealth());
     }
   };
 }
@@ -4543,33 +7469,404 @@ function readableStartupError(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
+// src/obsidian/embeddingSettings.ts
+function externalEmbeddingConfigFromSettings(settings) {
+  if (settings.mode !== "external") return null;
+  const { provider, model, dimensions, baseUrl, timeoutMs } = settings.embedding;
+  if (!isExternalEmbeddingProvider(provider)) return null;
+  const apiKey = settings.apiKeys[provider];
+  if (!apiKey || !apiKey.trim()) return null;
+  if (typeof dimensions !== "number" || !Number.isInteger(dimensions) || dimensions <= 0) return null;
+  const config = { provider, model, dimensions, apiKey: apiKey.trim() };
+  if (baseUrl) config.baseUrl = baseUrl;
+  if (typeof timeoutMs === "number" && timeoutMs > 0) config.timeoutMs = timeoutMs;
+  return config;
+}
+var summarizeResolution = (resolution) => ({
+  requestedId: resolution.requestedId,
+  model: resolution.provider.model,
+  usedFallback: resolution.usedFallback,
+  reason: resolution.reason
+});
+function resolveEmbeddingProviderFromSettings(settings, options = {}) {
+  const external = externalEmbeddingConfigFromSettings(settings);
+  if (external) {
+    const config = options.transport ? { ...external, transport: options.transport } : external;
+    return resolveEmbeddingProvider(void 0, { external: config });
+  }
+  if (settings.mode === "external" && isExternalEmbeddingProvider(settings.embedding.provider)) {
+    const fallback = resolveEmbeddingProvider();
+    return {
+      ...fallback,
+      requestedId: settings.embedding.provider,
+      usedFallback: true,
+      reason: `External embedding provider "${settings.embedding.provider}" is not fully configured (needs a non-blank API key and positive dimensions); using local ${TOKEN_HASH_MODEL}.`
+    };
+  }
+  return resolveEmbeddingProvider(settings.embedding.provider, { dimensions: settings.embedding.dimensions });
+}
+function embeddingReindexStatus(db, settings) {
+  const resolution = resolveEmbeddingProviderFromSettings(settings);
+  const assessment = detectReindexNeeded(db, resolution.provider);
+  return { summary: summarizeResolution(resolution), assessment };
+}
+async function runEmbeddingReindex(db, settings, options = {}) {
+  const resolution = resolveEmbeddingProviderFromSettings(settings, options);
+  const result = await rebuildRetrievalIndex(db, { embeddingProvider: resolution.provider });
+  const assessment = detectReindexNeeded(db, resolution.provider);
+  return { summary: summarizeResolution(resolution), result, assessment };
+}
+function askAiEmbeddingHealth(db, settings) {
+  const external = externalEmbeddingConfigFromSettings(settings);
+  if (!external) {
+    return { state: "setup_required", reason: "No API embedding provider is configured. token-hash-v1 is dev/test only and is not used for production Ask AI answers." };
+  }
+  const assessment = detectReindexNeeded(db, { provider: external.provider, model: external.model, dimensions: external.dimensions });
+  if (assessment.needsReindex) {
+    return { state: "reindex_required", reason: assessment.reasons.join(" ") || "The embedding index does not match the configured API embedding provider. Rebuild the embedding index." };
+  }
+  return { state: "ok", reason: "Embedding index matches the configured API embedding provider." };
+}
+function productionEmbeddingProvider(settings, options = {}) {
+  const resolution = resolveEmbeddingProviderFromSettings(settings, options);
+  return resolution.usedFallback ? void 0 : resolution.provider;
+}
+
+// src/obsidian/setupSummary.ts
+var import_node_path6 = require("node:path");
+function buildSetupSummary(db, settings, databasePath) {
+  const health = askAiEmbeddingHealth(db, settings);
+  const external = externalEmbeddingConfigFromSettings(settings);
+  const llmConfigured = isLlmConfigured(settings);
+  return {
+    llmConfigured,
+    // Provider/model are non-secret selections; only surface them when actually configured.
+    llmProvider: llmConfigured ? settings.llm.provider : void 0,
+    llmModel: llmConfigured && settings.llm.model.trim() ? settings.llm.model : void 0,
+    embeddingConfigured: external != null,
+    embeddingProvider: external?.provider ?? (settings.embedding.provider || void 0),
+    embeddingModel: external?.model ?? (settings.embedding.model || void 0),
+    embeddingDimensions: external?.dimensions ?? settings.embedding.dimensions,
+    embeddingHealth: health.state,
+    reindexNeeded: health.state === "reindex_required",
+    databasePath,
+    // The plugin's data.json lives next to the SQLite database (same plugin directory).
+    settingsPath: databasePath ? (0, import_node_path6.join)((0, import_node_path6.dirname)(databasePath), "data.json") : void 0
+  };
+}
+
+// src/obsidian/embeddingTransport.ts
+var import_obsidian3 = require("obsidian");
+function createObsidianEmbeddingTransport() {
+  return async (request) => {
+    const response = await (0, import_obsidian3.requestUrl)({
+      url: request.url,
+      method: request.method,
+      headers: request.headers,
+      body: request.body,
+      throw: false
+    });
+    let body = null;
+    try {
+      body = response.json;
+    } catch {
+      body = response.text ?? null;
+    }
+    return { status: response.status, body };
+  };
+}
+
+// src/llm/errors.ts
+var LlmError = class extends Error {
+  context;
+  constructor(message, context, options) {
+    super(message, options);
+    this.name = new.target.name;
+    this.context = context;
+  }
+};
+var LlmTimeoutError = class extends LlmError {
+};
+var LlmCancelledError = class extends LlmError {
+};
+var LlmAuthError = class extends LlmError {
+};
+var LlmRateLimitError = class extends LlmError {
+};
+var LlmProviderError = class extends LlmError {
+};
+var LlmResponseFormatError = class extends LlmError {
+};
+
+// src/llm/redaction.ts
+var REDACTED2 = "[redacted]";
+function redactSecret2(text, secret) {
+  if (!secret || !secret.trim()) return text;
+  return text.split(secret).join(REDACTED2);
+}
+
+// src/llm/timeout.ts
+async function runWithTimeout(operation, options = {}) {
+  const context = { provider: options.provider, model: options.model };
+  if (options.signal?.aborted) throw new LlmCancelledError("LLM request was cancelled", context);
+  const controller = new AbortController();
+  const onExternalAbort = () => controller.abort();
+  options.signal?.addEventListener("abort", onExternalAbort, { once: true });
+  let timedOut = false;
+  let timer;
+  const timeout = options.timeoutMs != null ? new Promise((_resolve, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+      reject(new LlmTimeoutError(`LLM request timed out after ${options.timeoutMs}ms`, context));
+    }, options.timeoutMs);
+  }) : null;
+  try {
+    return await (timeout ? Promise.race([operation(controller.signal), timeout]) : operation(controller.signal));
+  } catch (error) {
+    if (timedOut) throw error instanceof LlmTimeoutError ? error : new LlmTimeoutError(`LLM request timed out after ${options.timeoutMs}ms`, context);
+    if (options.signal?.aborted) throw new LlmCancelledError("LLM request was cancelled", context);
+    throw error;
+  } finally {
+    if (timer) clearTimeout(timer);
+    options.signal?.removeEventListener("abort", onExternalAbort);
+  }
+}
+
+// src/llm/externalLlmProvider.ts
+var DEFAULT_BASE_URL2 = "https://api.openai.com/v1";
+function createHttpLlmTransport(fetchImpl = globalThis.fetch) {
+  return async (request) => {
+    const response = await fetchImpl(request.url, {
+      method: request.method,
+      headers: request.headers,
+      body: request.body,
+      signal: request.signal
+    });
+    let body = null;
+    try {
+      body = await response.json();
+    } catch {
+      try {
+        body = await response.text();
+      } catch {
+        body = null;
+      }
+    }
+    return { status: response.status, body };
+  };
+}
+var asTokenCount = (value) => typeof value === "number" && Number.isFinite(value) ? value : void 0;
+var ExternalLlmProvider = class {
+  id;
+  model;
+  isLocal = false;
+  #apiKey;
+  #baseUrl;
+  #transport;
+  #timeoutMs;
+  constructor(config) {
+    if (!config.apiKey || !config.apiKey.trim()) {
+      throw new LlmAuthError("External LLM provider requires a non-blank API key", { provider: config.id, model: config.model });
+    }
+    this.id = config.id;
+    this.model = config.model;
+    this.#apiKey = config.apiKey.trim();
+    this.#baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL2).replace(/\/+$/, "");
+    this.#transport = config.transport ?? createHttpLlmTransport();
+    this.#timeoutMs = config.timeoutMs;
+  }
+  async complete(request, options) {
+    const messages = [];
+    if (request.system) messages.push({ role: "system", content: request.system });
+    messages.push({ role: "user", content: request.prompt });
+    const payload = { model: this.model, messages };
+    if (request.maxOutputTokens != null) payload.max_tokens = request.maxOutputTokens;
+    if (request.responseFormat === "json") payload.response_format = { type: "json_object" };
+    const body = JSON.stringify(payload);
+    let response;
+    try {
+      response = await runWithTimeout(
+        (signal) => this.#transport({
+          url: `${this.#baseUrl}/chat/completions`,
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.#apiKey}` },
+          body,
+          signal
+        }),
+        { timeoutMs: options?.timeoutMs ?? this.#timeoutMs, signal: options?.signal, provider: this.id, model: this.model }
+      );
+    } catch (error) {
+      if (error instanceof LlmError) throw error;
+      const detail = redactSecret2(error instanceof Error ? error.message : String(error), this.#apiKey);
+      throw new LlmProviderError(`LLM request failed: ${detail}`, { provider: this.id, model: this.model });
+    }
+    if (response.status === 401 || response.status === 403) {
+      throw new LlmAuthError("LLM provider rejected the API key", { provider: this.id, model: this.model });
+    }
+    if (response.status === 429) {
+      throw new LlmRateLimitError("LLM provider rate limit exceeded", { provider: this.id, model: this.model });
+    }
+    if (response.status < 200 || response.status >= 300) {
+      throw new LlmProviderError(`LLM provider returned status ${response.status}`, { provider: this.id, model: this.model });
+    }
+    const choice = response.body?.choices?.[0];
+    const content = choice?.message?.content;
+    if (typeof content !== "string") {
+      throw new LlmResponseFormatError("LLM response did not contain a text completion", { provider: this.id, model: this.model });
+    }
+    const finishReason = choice?.finish_reason === "length" ? "length" : "stop";
+    const usageRaw = response.body.usage;
+    const inputTokens = asTokenCount(usageRaw?.prompt_tokens);
+    const outputTokens = asTokenCount(usageRaw?.completion_tokens);
+    const usage = inputTokens !== void 0 || outputTokens !== void 0 ? { inputTokens, outputTokens } : void 0;
+    return { provider: this.id, model: this.model, text: content, finishReason, usage };
+  }
+};
+
+// src/obsidian/llmSettings.ts
+function externalLlmConfigFromSettings(settings) {
+  if (settings.mode !== "external") return null;
+  const { provider, model, baseUrl, timeoutMs } = settings.llm;
+  if (!isExternalLlmProvider(provider)) return null;
+  if (!model || !model.trim()) return null;
+  const apiKey = settings.apiKeys[provider];
+  if (!apiKey || !apiKey.trim()) return null;
+  const config = { id: provider, model: model.trim(), apiKey: apiKey.trim() };
+  if (baseUrl) config.baseUrl = baseUrl;
+  if (typeof timeoutMs === "number" && timeoutMs > 0) config.timeoutMs = timeoutMs;
+  return config;
+}
+function externalProviderFromSettings(settings, options) {
+  const external = externalLlmConfigFromSettings(settings);
+  if (!external) return null;
+  return new ExternalLlmProvider(options.transport ? { ...external, transport: options.transport } : external);
+}
+function askAiSynthesisFromSettings(settings, options = {}) {
+  const provider = externalProviderFromSettings(settings, options);
+  if (!provider) return void 0;
+  return {
+    llm: createLlmAskAILanguageModel(provider),
+    analysis: createLlmAskAIAnalysisModel(provider),
+    info: { mode: "external_llm", provider: provider.id, model: provider.model, usedFallback: false }
+  };
+}
+function memoryExtractorFromSettings(settings, options = {}) {
+  const provider = externalProviderFromSettings(settings, options);
+  if (!provider) return void 0;
+  return createLlmMemoryExtractor(provider);
+}
+
+// src/obsidian/llmTransport.ts
+var import_obsidian4 = require("obsidian");
+function createObsidianLlmTransport() {
+  return async (request) => {
+    const response = await (0, import_obsidian4.requestUrl)({
+      url: request.url,
+      method: request.method,
+      headers: request.headers,
+      body: request.body,
+      throw: false
+    });
+    let body = null;
+    try {
+      body = response.json;
+    } catch {
+      body = response.text ?? null;
+    }
+    return { status: response.status, body };
+  };
+}
+
+// src/obsidian/viewRefreshRegistry.ts
+var ViewRefreshRegistry = class {
+  /**
+   * @param beforeNotify Optional hook run ONCE before views are refreshed on each mutation. The plugin
+   * uses it to recompute live health (e.g. embedding reindex status) so a mutation like upload/extraction
+   * leaves the dashboard/settings showing current — not startup-frozen — status. Best-effort: a failure
+   * here must never block view refresh, so it is caught and logged.
+   */
+  constructor(beforeNotify) {
+    this.beforeNotify = beforeNotify;
+  }
+  beforeNotify;
+  views = /* @__PURE__ */ new Set();
+  register(view) {
+    this.views.add(view);
+  }
+  unregister(view) {
+    this.views.delete(view);
+  }
+  size() {
+    return this.views.size;
+  }
+  /** Refresh every registered view except `origin`. Never throws; logs and continues per view. */
+  async notifyMutation(origin) {
+    if (this.beforeNotify) {
+      try {
+        await this.beforeNotify();
+      } catch (error) {
+        console.error("Transcript Memory Vault pre-refresh hook failed", error);
+      }
+    }
+    for (const view of [...this.views]) {
+      if (view === origin) continue;
+      try {
+        await view.refresh();
+      } catch (error) {
+        console.error("Transcript Memory Vault view refresh failed", error);
+      }
+    }
+  }
+};
+
 // src/obsidian/Plugin.ts
-var TranscriptMemoryVaultPlugin = class extends import_obsidian4.Plugin {
+var TranscriptMemoryVaultPlugin = class extends import_obsidian5.Plugin {
   db = null;
+  // Absolute on-disk vault root (desktop only); the generated Markdown view layer is written under it.
+  vaultBasePath = null;
+  pluginSettings = DEFAULT_SETTINGS;
   health = initialPluginHealth();
   api = createUnavailableFrontendApi(() => this.health);
+  // Built once; reused. The transport makes no call until the synthesis adapter actually runs.
+  llmTransport = createObsidianLlmTransport();
+  // Tracks open plugin views so a mutating action in one refreshes the others (cross-view invalidation).
+  // Before refreshing views on any mutation (upload/extraction/review/…), recompute live reindex/health so
+  // the dashboard/settings never show startup-frozen status (e.g. a just-imported, not-yet-embedded index).
+  viewRegistry = new ViewRefreshRegistry(() => this.refreshReindexStatus());
   async onload() {
+    await this.loadSettings();
     const navigation = createObsidianNavigation(this.app);
     for (const type of Object.values(OBSIDIAN_VIEW_TYPES)) {
-      this.registerView(type, (leaf) => new TranscriptMemoryItemView(leaf, type, () => this.api, navigation));
+      this.registerView(type, (leaf) => new TranscriptMemoryItemView(leaf, type, () => this.api, navigation, this.viewRegistry));
     }
     for (const command of OBSIDIAN_COMMANDS) {
       this.addCommand({ id: command.id, name: command.name, callback: () => void navigationForView(navigation, command.viewType) });
     }
+    this.addCommand({ id: OBSIDIAN_REINDEX_COMMAND.id, name: OBSIDIAN_REINDEX_COMMAND.name, callback: () => void this.rebuildEmbeddingIndex() });
+    this.addCommand({ id: "run-ai-extraction", name: "Run AI extraction for transcripts missing it", callback: () => void this.runPendingExtraction() });
+    this.addCommand({ id: OBSIDIAN_SYNC_GRAPH_COMMAND.id, name: OBSIDIAN_SYNC_GRAPH_COMMAND.name, callback: () => void this.syncGeneratedGraphNotesCommand() });
+    this.addCommand({ id: OBSIDIAN_DEDUPE_COMMAND.id, name: OBSIDIAN_DEDUPE_COMMAND.name, callback: () => void this.mergeDuplicateMemoriesCommand() });
     this.addRibbonIcon(OBSIDIAN_RIBBON.icon, OBSIDIAN_RIBBON.title, () => void navigation.openDashboard());
-    this.addSettingTab(new TranscriptMemorySettingsTab(this.app, this, () => this.health, navigation));
+    this.registerObsidianProtocolHandler(OBSIDIAN_PROTOCOL_ACTION, (params) => {
+      const route = obsidianRouteFromProtocol(params);
+      if (route) void navigateInternal(navigation, route);
+      else new import_obsidian5.Notice("Transcript Memory Vault: could not open that link (unrecognized or invalid route).");
+    });
+    this.addSettingTab(new TranscriptMemorySettingsTab(this.app, this, () => this.health, navigation, () => this.pluginSettings, (next) => this.saveSettings(next)));
     const adapter = this.app.vault.adapter;
-    const fileSystemAdapter = adapter instanceof import_obsidian4.FileSystemAdapter ? adapter : null;
-    const support = startupSupport({ isDesktopApp: import_obsidian4.Platform.isDesktopApp, hasLocalFilesystem: fileSystemAdapter != null });
+    const fileSystemAdapter = adapter instanceof import_obsidian5.FileSystemAdapter ? adapter : null;
+    const support = startupSupport({ isDesktopApp: import_obsidian5.Platform.isDesktopApp, hasLocalFilesystem: fileSystemAdapter != null });
     if (!support.supported) {
       this.health = { ...this.health, status: "unsupported", lastInitializationError: support.message };
-      new import_obsidian4.Notice(DESKTOP_ONLY_MESSAGE);
+      new import_obsidian5.Notice(DESKTOP_ONLY_MESSAGE);
       console.error("Transcript Memory Vault unsupported environment:", support.message);
       return;
     }
-    const pluginDirectory = (0, import_node_path4.join)(fileSystemAdapter.getBasePath(), this.app.vault.configDir, "plugins", this.manifest.id);
-    const databasePath = (0, import_node_path4.join)(pluginDirectory, "transcript-memory.sqlite");
-    const migrationDirectory = (0, import_node_path4.join)(pluginDirectory, "migrations");
+    this.vaultBasePath = fileSystemAdapter.getBasePath();
+    const pluginDirectory = (0, import_node_path7.join)(this.vaultBasePath, this.app.vault.configDir, "plugins", this.manifest.id);
+    const databasePath = (0, import_node_path7.join)(pluginDirectory, "transcript-memory.sqlite");
+    const migrationDirectory = (0, import_node_path7.join)(pluginDirectory, "migrations");
     const nativeBinding = resolveNativeBinding(pluginDirectory);
     this.health = {
       ...this.health,
@@ -4580,7 +7877,7 @@ var TranscriptMemoryVaultPlugin = class extends import_obsidian4.Plugin {
     if (!nativeBinding.ok) {
       this.health = { ...this.health, status: "error", lastInitializationError: nativeBinding.error };
       this.api = createUnavailableFrontendApi(() => this.health);
-      new import_obsidian4.Notice(nativeBinding.error);
+      new import_obsidian5.Notice(nativeBinding.error);
       console.error("Transcript Memory Vault native binding unavailable:", nativeBinding.error);
       return;
     }
@@ -4605,15 +7902,36 @@ var TranscriptMemoryVaultPlugin = class extends import_obsidian4.Plugin {
         firstRun,
         lastInitializationError: null
       };
-      this.api = createObsidianAppApi(this.db, this.app.vault, this.health);
-      if (firstRun) new import_obsidian4.Notice("Transcript Memory Vault is ready. Upload a transcript to begin.");
+      this.api = createObsidianAppApi(
+        this.db,
+        this.app.vault,
+        this.health,
+        () => askAiSynthesisFromSettings(this.pluginSettings, { transport: this.llmTransport }),
+        () => memoryExtractorFromSettings(this.pluginSettings, { transport: this.llmTransport }),
+        {
+          llmRequired: true,
+          getLlmReady: () => isLlmConfigured(this.pluginSettings),
+          syncGeneratedViews: () => this.syncGeneratedGraphNotesForApi(),
+          // Production Ask AI requires API embeddings + a matching index; never falls back to token-hash-v1.
+          embeddingsRequired: true,
+          getEmbeddingHealth: () => askAiEmbeddingHealth(this.db, this.pluginSettings),
+          getEmbeddingProvider: () => productionEmbeddingProvider(this.pluginSettings, { transport: createObsidianEmbeddingTransport() }),
+          // Non-secret, display-only setup summary for the Claude/MCP dashboard card (no API keys).
+          getSetupSummary: () => buildSetupSummary(this.db, this.pluginSettings, this.health.databasePath ?? void 0),
+          // Live health so the dashboard reflects current status (LLM/embedding/migration/reindex/firstRun),
+          // not the snapshot captured when this api was constructed. Settings already reads this.health live.
+          getHealth: () => this.health
+        }
+      );
+      this.refreshReindexStatus();
+      if (firstRun) new import_obsidian5.Notice("Transcript Memory Vault is ready. Upload a transcript to begin.");
     } catch (error) {
       this.db?.close();
       this.db = null;
       const message = readableStartupError(error);
       this.health = { ...this.health, status: "error", databaseConnected: false, migrationStatus: "failed", realSqliteStorage: false, lastInitializationError: message };
       this.api = createUnavailableFrontendApi(() => this.health);
-      new import_obsidian4.Notice(`Transcript Memory Vault could not initialize: ${message}`);
+      new import_obsidian5.Notice(`Transcript Memory Vault could not initialize: ${message}`);
       console.error("Transcript Memory Vault initialization failed", error);
     }
   }
@@ -4623,9 +7941,141 @@ var TranscriptMemoryVaultPlugin = class extends import_obsidian4.Plugin {
     this.db = null;
     this.api = createUnavailableFrontendApi(() => this.health);
   }
+  async loadSettings() {
+    try {
+      this.pluginSettings = normalizeSettings(await this.loadData());
+    } catch (error) {
+      this.pluginSettings = DEFAULT_SETTINGS;
+      console.error("Transcript Memory Vault settings could not be loaded; using local deterministic defaults.");
+    }
+    this.health = { ...this.health, ...settingsHealthSummary(this.pluginSettings) };
+  }
+  async saveSettings(next) {
+    this.pluginSettings = normalizeSettings(next);
+    await this.saveData(this.pluginSettings);
+    this.health = { ...this.health, ...settingsHealthSummary(this.pluginSettings) };
+    this.refreshReindexStatus();
+  }
+  /** Read-only, network-free. Safe to call on startup and after every settings change. */
+  refreshReindexStatus() {
+    if (!this.db) return;
+    try {
+      const { summary, assessment } = embeddingReindexStatus(this.db, this.pluginSettings);
+      this.health = {
+        ...this.health,
+        reindexNeeded: assessment.needsReindex,
+        reindexSummary: assessment.reasons.join(" ") || "Embedding index is up to date.",
+        embeddingUsedFallback: summary.usedFallback
+      };
+    } catch {
+      this.health = { ...this.health, reindexSummary: "Reindex status unavailable." };
+    }
+  }
+  /** Run AI extraction for any transcript imported before the LLM was configured. Requires a configured LLM. */
+  async runPendingExtraction() {
+    if (!this.db || this.health.status !== "ready") {
+      new import_obsidian5.Notice("Transcript Memory Vault is not ready.");
+      return;
+    }
+    if (!isLlmConfigured(this.pluginSettings)) {
+      new import_obsidian5.Notice("Configure an LLM provider, model, and API key in Settings first.");
+      return;
+    }
+    new import_obsidian5.Notice("Running AI extraction\u2026");
+    let extracted = 0, failed = 0, skipped = 0;
+    for (const transcript of await this.api.listTranscripts()) {
+      const result = await this.api.runExtraction(transcript.id);
+      if (result.status === "extracted") extracted += 1;
+      else if (result.status === "failed") failed += 1;
+      else skipped += 1;
+    }
+    new import_obsidian5.Notice(`AI extraction: ${extracted} processed, ${skipped} already done, ${failed} failed.`);
+    await this.viewRegistry.notifyMutation();
+  }
+  /** EXPLICIT manual action. The only path that may make a network call (when external is configured). */
+  async rebuildEmbeddingIndex() {
+    if (!this.db || this.health.status !== "ready") {
+      new import_obsidian5.Notice("Transcript Memory Vault is not ready; cannot rebuild the embedding index.");
+      return;
+    }
+    new import_obsidian5.Notice("Rebuilding embedding index\u2026");
+    try {
+      const { summary, result } = await runEmbeddingReindex(this.db, this.pluginSettings, { transport: createObsidianEmbeddingTransport() });
+      if (summary.usedFallback && summary.reason) new import_obsidian5.Notice(summary.reason);
+      new import_obsidian5.Notice(`Embedding index rebuilt: ${result.indexed} indexed, ${result.embedded} embedded, ${result.errors} error(s).`);
+      await this.viewRegistry.notifyMutation();
+    } catch (error) {
+      new import_obsidian5.Notice(`Embedding index rebuild failed: ${readableStartupError(error)}`);
+      console.error("Transcript Memory Vault embedding reindex failed", error);
+    }
+  }
+  /**
+   * Core generated-Markdown sync (no UI side effects). Writes the disposable view layer under
+   * `<vault>/Transcript Memory Vault/` so Obsidian's native ribbon graph has notes + wikilinks.
+   * `cleanBeforeWrite` removes ONLY previously-generated files (tracked in the manifest) and never
+   * touches user-created notes. SQLite stays the source of truth; generated Markdown is never read back.
+   */
+  async runGeneratedVaultSync() {
+    if (!this.db || this.health.status !== "ready") throw new Error("Transcript Memory Vault is not ready.");
+    if (!this.vaultBasePath) throw new Error("Vault filesystem path is unavailable.");
+    return generateObsidianVault(this.db, { outputRoot: (0, import_node_path7.join)(this.vaultBasePath, GENERATED_VAULT_FOLDER), cleanBeforeWrite: true });
+  }
+  /** EXPLICIT manual action (command palette). Writes generated graph notes and reports via Notices. */
+  async syncGeneratedGraphNotesCommand() {
+    if (!this.db || this.health.status !== "ready") {
+      new import_obsidian5.Notice("Transcript Memory Vault is not ready; cannot sync graph notes.");
+      return;
+    }
+    new import_obsidian5.Notice("Syncing generated graph notes\u2026");
+    try {
+      const result = await this.runGeneratedVaultSync();
+      new import_obsidian5.Notice(result.errors.length ? `Graph notes synced with ${result.errors.length} file error(s); see "${GENERATED_VAULT_FOLDER}/_system/generation-log.md".` : `Graph notes synced into "${GENERATED_VAULT_FOLDER}/": ${result.filesWritten} written, ${result.filesSkipped} unchanged, ${result.graphNodeCount} nodes, ${result.graphEdgeCount} edges. Open Obsidian's graph view to see them.`);
+      await this.viewRegistry.notifyMutation();
+    } catch (error) {
+      new import_obsidian5.Notice(`Graph notes sync failed: ${readableStartupError(error)}`);
+      console.error("Transcript Memory Vault generated graph sync failed", error);
+    }
+  }
+  /**
+   * EXPLICIT manual action (command palette). Deterministic, idempotent: merges EXACT duplicate memories
+   * onto one canonical and consolidates their evidence. Never deletes raw data; never touches near-dups
+   * (those stay needs_review for human review). Reports the result via a Notice.
+   */
+  async mergeDuplicateMemoriesCommand() {
+    if (!this.db || this.health.status !== "ready") {
+      new import_obsidian5.Notice("Transcript Memory Vault is not ready; cannot merge duplicate memories.");
+      return;
+    }
+    try {
+      const r = dedupeCanonicalMemories(this.db);
+      new import_obsidian5.Notice(r.canonicalGroups === 0 ? "No exact duplicate memories found. Near-duplicates (if any) remain in the review queue." : `Merged duplicate memories: ${r.canonicalGroups} canonical group(s), ${r.duplicatesSuperseded} duplicate(s) superseded, ${r.evidenceLinksConsolidated} evidence link(s) consolidated. Resync graph notes to refresh the native graph.`);
+      await this.viewRegistry.notifyMutation();
+    } catch (error) {
+      new import_obsidian5.Notice(`Merge duplicate memories failed: ${readableStartupError(error)}`);
+      console.error("Transcript Memory Vault memory dedupe failed", error);
+    }
+  }
+  /** Same sync, triggered from the dashboard button. Returns a frontend-friendly summary (no Notices). */
+  async syncGeneratedGraphNotesForApi() {
+    try {
+      const result = await this.runGeneratedVaultSync();
+      return {
+        status: "synced",
+        filesWritten: result.filesWritten,
+        filesSkipped: result.filesSkipped,
+        graphNodeCount: result.graphNodeCount,
+        graphEdgeCount: result.graphEdgeCount,
+        warnings: result.warnings,
+        errors: result.errors
+      };
+    } catch (error) {
+      return { status: "failed", message: readableStartupError(error) };
+    }
+  }
 };
 function navigationForView(navigation, viewType) {
   if (viewType === OBSIDIAN_VIEW_TYPES.upload) return navigation.openUpload();
+  if (viewType === OBSIDIAN_VIEW_TYPES.transcripts) return navigation.openTranscripts();
   if (viewType === OBSIDIAN_VIEW_TYPES.ask) return navigation.openAskAI();
   if (viewType === OBSIDIAN_VIEW_TYPES.search) return navigation.openSearch();
   if (viewType === OBSIDIAN_VIEW_TYPES.graph) return navigation.openGraph();

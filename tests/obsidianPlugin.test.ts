@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceLeaf } from "obsidian";
 import { askAI, createDatabaseAskAIDependencies } from "../src/ask-ai/index.js";
 import { createRepositories, openDatabase, type SqliteDatabase } from "../src/db/index.js";
-import { createSqliteFrontendApi, isInternalNavigationTarget, navigateInternal, renderRoute, routeHref } from "../src/frontend/index.js";
+import { createSqliteFrontendApi, isInternalNavigationTarget, mountObsidianUi, navigateInternal, refreshTargetAfterAction, renderRoute, routeHref, type ObsidianNavigation } from "../src/frontend/index.js";
 import { importTranscript } from "../src/ingest/index.js";
 import { createObsidianNavigation } from "../src/obsidian/ObsidianNavigation.js";
 import { OBSIDIAN_COMMANDS, OBSIDIAN_RIBBON, OBSIDIAN_VIEW_TYPES } from "../src/obsidian/pluginTypes.js";
@@ -34,7 +34,7 @@ async function fixture() {
 describe("Obsidian plugin registration contract", () => {
   it("declares all required views, commands, and dashboard ribbon action", () => {
     expect(Object.values(OBSIDIAN_VIEW_TYPES)).toEqual([
-      "transcript-memory-dashboard", "transcript-memory-upload", "transcript-memory-transcript", "transcript-memory-ask",
+      "transcript-memory-dashboard", "transcript-memory-upload", "transcript-memory-transcripts", "transcript-memory-transcript", "transcript-memory-ask",
       "transcript-memory-answer", "transcript-memory-evidence", "transcript-memory-memory-object", "transcript-memory-graph",
       "transcript-memory-search", "transcript-memory-review",
     ]);
@@ -59,17 +59,24 @@ describe("Obsidian plugin registration contract", () => {
 });
 
 describe("Obsidian internal provenance navigation", () => {
-  it("renders keyboard-accessible nav and quick actions with explicit internal route handlers", async () => {
+  it("renders keyboard-accessible viewer nav with the workflow primary and Ask AI demoted to Advanced", async () => {
     const html = await renderRoute(createSqliteFrontendApi(db, { now }), routeHref.dashboard());
-    for (const target of [
-      routeHref.upload(), routeHref.ask(), routeHref.search(), routeHref.graph(), routeHref.reviewQueue(),
-    ]) {
-      expect(html).toContain(`type="button" class="route-action" data-route="${target}"`);
+    for (const target of [routeHref.upload(), routeHref.transcripts(), routeHref.ask(), routeHref.search(), routeHref.graph(), routeHref.reviewQueue()]) {
+      expect(html).toContain(`data-route="${target}"`); // every route still reachable from the viewer dashboard/nav
       expect(isInternalNavigationTarget(target)).toBe(true);
     }
-    for (const label of ["Upload transcript", "Ask AI", "Search vault", "Open graph", "Review queue"]) {
-      expect(html).toContain(`>${label}</button>`);
+    // Viewer-mode primary nav (before the Advanced disclosure) leads with the vault workflow —
+    // Upload/Review/Graph/Search/Transcripts — and EXCLUDES the demoted Ask AI.
+    const navPrimary = html.slice(html.indexOf('aria-label="Primary"'), html.indexOf('<details class="nav-advanced'));
+    for (const target of [routeHref.upload(), routeHref.reviewQueue(), routeHref.graph(), routeHref.search(), routeHref.transcripts()]) {
+      expect(navPrimary).toContain(`data-route="${target}"`);
     }
+    expect(navPrimary).not.toContain(`data-route="${routeHref.ask()}"`);
+    // The Advanced disclosure holds the demoted "Internal Ask AI" (route preserved), NOT Upload.
+    const advanced = html.slice(html.indexOf('<details class="nav-advanced'), html.indexOf("</details>"));
+    expect(advanced).toContain(`data-route="${routeHref.ask()}"`);
+    expect(advanced).toContain("Internal Ask AI");
+    expect(advanced).not.toContain(`data-route="${routeHref.upload()}"`);
     expect(isInternalNavigationTarget("https://example.com")).toBe(false);
   });
 
@@ -77,6 +84,7 @@ describe("Obsidian internal provenance navigation", () => {
     const navigation = {
       openDashboard: vi.fn(async () => undefined),
       openUpload: vi.fn(async () => undefined),
+      openTranscripts: vi.fn(async () => undefined),
       openTranscript: vi.fn(async () => undefined),
       openAskAI: vi.fn(async () => undefined),
       openAnswer: vi.fn(async () => undefined),
@@ -88,12 +96,14 @@ describe("Obsidian internal provenance navigation", () => {
     };
     await navigateInternal(navigation, routeHref.dashboard());
     await navigateInternal(navigation, routeHref.upload());
+    await navigateInternal(navigation, routeHref.transcripts());
     await navigateInternal(navigation, routeHref.ask());
     await navigateInternal(navigation, routeHref.search());
     await navigateInternal(navigation, routeHref.graph());
     await navigateInternal(navigation, routeHref.reviewQueue());
     expect(navigation.openDashboard).toHaveBeenCalledOnce();
     expect(navigation.openUpload).toHaveBeenCalledOnce();
+    expect(navigation.openTranscripts).toHaveBeenCalledOnce();
     expect(navigation.openAskAI).toHaveBeenCalledOnce();
     expect(navigation.openSearch).toHaveBeenCalledOnce();
     expect(navigation.openGraph).toHaveBeenCalledOnce();
@@ -114,7 +124,7 @@ describe("Obsidian internal provenance navigation", () => {
 
     const openTranscript = vi.fn(async () => undefined);
     await navigateInternal({
-      openDashboard: async () => undefined, openUpload: async () => undefined, openTranscript,
+      openDashboard: async () => undefined, openUpload: async () => undefined, openTranscripts: async () => undefined, openTranscript,
       openAskAI: async () => undefined, openAnswer: async () => undefined, openEvidence: async () => undefined,
       openMemoryObject: async () => undefined, openGraph: async () => undefined, openSearch: async () => undefined,
       openReviewQueue: async () => undefined,
@@ -130,5 +140,58 @@ describe("Obsidian internal provenance navigation", () => {
     const html = await renderRoute(api, routeHref.evidence(seeded.pointer.evidence_pointer_id));
     expect(html).toContain('data-trust-state="broken"');
     expect(html).not.toContain("Open exact transcript span");
+  });
+});
+
+describe("Obsidian UI mount does not stack duplicate listeners", () => {
+  // Minimal host backed by Node's built-in EventTarget so addEventListener({ signal }) + dispatchEvent
+  // work without jsdom; closest() is stubbed to return the clicked internal-route control.
+  class FakeHost extends EventTarget {
+    innerHTML = "";
+    routeControl: { dataset: { route?: string }; getAttribute: (name: string) => string | null } | null = null;
+    closest(selector: string): unknown {
+      if (selector.includes("data-copy-quote")) return null;
+      if (selector.includes("data-route") || selector.includes("a[href]")) return this.routeControl;
+      return null;
+    }
+  }
+
+  it("opens exactly one view per internal link click after re-mounting the same host", async () => {
+    const host = new FakeHost();
+    const navigation = {
+      openDashboard: vi.fn(async () => undefined), openUpload: vi.fn(async () => undefined),
+      openTranscripts: vi.fn(async () => undefined), openTranscript: vi.fn(async () => undefined), openAskAI: vi.fn(async () => undefined),
+      openAnswer: vi.fn(async () => undefined), openEvidence: vi.fn(async () => undefined),
+      openMemoryObject: vi.fn(async () => undefined), openGraph: vi.fn(async () => undefined),
+      openSearch: vi.fn(async () => undefined), openReviewQueue: vi.fn(async () => undefined),
+    } satisfies ObsidianNavigation;
+    const api = createSqliteFrontendApi(db); // the upload route renders without DB rows
+    const el = host as unknown as HTMLElement;
+
+    // Obsidian re-renders on both onOpen and setState, so the same host is mounted twice.
+    await mountObsidianUi(el, api, navigation, "mv://upload");
+    await mountObsidianUi(el, api, navigation, "mv://upload");
+
+    host.routeControl = { dataset: { route: "mv://memory/m1" }, getAttribute: () => null };
+    host.dispatchEvent(new Event("click"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Without listener de-duplication this would be called twice (two stacked click handlers).
+    expect(navigation.openMemoryObject).toHaveBeenCalledTimes(1);
+    expect(navigation.openMemoryObject).toHaveBeenCalledWith("m1");
+
+    // A second click still routes exactly once: handlers are not recreated by repeated renders/clicks.
+    host.dispatchEvent(new Event("click"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(navigation.openMemoryObject).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes the current route after an action, resolving review-detail pages to the queue", () => {
+    expect(refreshTargetAfterAction("mv://review")).toBe("mv://review");
+    expect(refreshTargetAfterAction("mv://memory/m1")).toBe("mv://memory/m1");
+    expect(refreshTargetAfterAction("mv://dashboard")).toBe("mv://dashboard");
+    // A resolved review-detail item has nothing to show, so the refresh falls back to the review queue.
+    expect(refreshTargetAfterAction("mv://review/memory:m1")).toBe(routeHref.reviewQueue());
+    expect(refreshTargetAfterAction(`mv://review/weak:evp_1`)).toBe(routeHref.reviewQueue());
   });
 });

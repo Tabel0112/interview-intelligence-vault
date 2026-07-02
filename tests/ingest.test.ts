@@ -40,11 +40,11 @@ describe("format, hash, and timestamp utilities", () => {
 
 describe("deterministic turn and span parsing", () => {
   it("detects speakers, timestamps, normalization, and continuation lines", () => {
-    const raw = "[00:01:23] Baiyang Chen: First line\r\ncontinuation\r\n\r\nAlex: hello";
+    const raw = "[00:01:23] Jordan Lee: First line\r\ncontinuation\r\n\r\nAlex: hello";
     const turns = parseSpeakerTurns(raw, "txt");
     expect(turns).toHaveLength(2);
-    expect(turns[0]).toMatchObject({ speakerLabel: "Baiyang Chen", speakerNormalized: "baiyang chen", startTimeMs: 83_000, startLine: 1, endLine: 2 });
-    expect(turns[0].rawText).toBe("[00:01:23] Baiyang Chen: First line\r\ncontinuation");
+    expect(turns[0]).toMatchObject({ speakerLabel: "Jordan Lee", speakerNormalized: "jordan lee", startTimeMs: 83_000, startLine: 1, endLine: 2 });
+    expect(turns[0].rawText).toBe("[00:01:23] Jordan Lee: First line\r\ncontinuation");
     expect(turns[1]).toMatchObject({ speakerLabel: "Alex", startTimeMs: null });
   });
 
@@ -88,7 +88,7 @@ describe("transcript import", () => {
     const raw = `[00:00:01] Alex: We should build the transcript memory app first.
 It needs source-backed spans.
 
-[00:00:08] Baiyang: Raw transcripts should never be changed.
+[00:00:08] Jordan: Raw transcripts should never be changed.
 Evidence has to point back to exact text.
 
 [00:00:15] Alex: If evidence is weak, Ask AI should say that.`;
@@ -144,7 +144,7 @@ Evidence has to point back to exact text.
 
   it("imports transcripts without timestamps as usable evidence", () => {
     const raw = `Alex: We need SQLite as the source of truth.
-Baiyang: Markdown should only be a view.
+Jordan: Markdown should only be a view.
 
 This paragraph has no speaker but should still become usable evidence.`;
     const result = importTranscript(db, { filename: "notes.txt", rawText: raw });

@@ -1,12 +1,17 @@
 import type { AskAIResponse } from "../ask-ai/index.js";
 import type { ConflictAssessment } from "../conflicts/index.js";
+import type { DeleteTranscriptSummary } from "../db/index.js";
 import type { CanonicalMemoryObject } from "../memory/index.js";
 import type { ObsidianGraph } from "../obsidian/index.js";
 import type { EvidencePointer } from "../provenance/index.js";
 import type { PluginHealth } from "../obsidian/startup.js";
 
+export type { DeleteTranscriptSummary };
+/** Outcome of a transcript hard-delete: the transcript and its derived provenance are gone (irreversible). */
+export interface DeleteTranscriptResult { status: "deleted"; summary: DeleteTranscriptSummary; }
+
 export type TrustState = "strong" | "mixed" | "weak" | "conflicting" | "no_evidence" | "broken" | "needs_review" | "rejected" | "superseded";
-export type RouteId = "dashboard" | "upload" | "transcript" | "ask" | "answer" | "evidence" | "memory" | "graph" | "search" | "review" | "review_detail" | "not_found";
+export type RouteId = "dashboard" | "upload" | "transcripts" | "transcript" | "ask" | "answer" | "evidence" | "memory" | "graph" | "search" | "review" | "review_detail" | "not_found";
 
 export interface RouteMatch {
   id: RouteId;
@@ -71,6 +76,24 @@ export interface MemoryView {
   conflicts: ConflictAssessment[];
 }
 
+/** Status of the disposable generated-Markdown view layer that powers Obsidian's native (ribbon) graph. */
+export interface GeneratedSyncStatus {
+  /** False => never synced (no generated notes written yet). */
+  synced: boolean;
+  lastSyncedAt?: string;
+  fileCount?: number;
+  graphNodeCount?: number;
+  graphEdgeCount?: number;
+  status?: "completed" | "failed";
+  error?: string;
+}
+
+/** Outcome of a generated-notes sync triggered from the UI. Navigation/view layer only — never truth. */
+export type GeneratedSyncResult =
+  | { status: "synced"; filesWritten: number; filesSkipped: number; graphNodeCount: number; graphEdgeCount: number; warnings: string[]; errors: string[] }
+  | { status: "unavailable"; message: string }
+  | { status: "failed"; message: string };
+
 export interface DashboardView {
   totalTranscriptCount: number;
   transcripts: TranscriptListItem[];
@@ -80,6 +103,14 @@ export interface DashboardView {
   conflictCount: number;
   brokenCount: number;
   health?: PluginHealth;
+  /** Live app requires a configured LLM for generation. */
+  llmRequired?: boolean;
+  /** Whether a usable external LLM is currently configured. */
+  llmReady?: boolean;
+  /** Last generated-graph-notes sync (for Obsidian's native graph); omitted in unavailable-DB states. */
+  generatedSync?: GeneratedSyncStatus;
+  /** Top weak/broken/conflicting review items to surface on the viewer dashboard (read-only projection). */
+  attention?: ReviewItemView[];
 }
 
 export interface SearchResultView {
@@ -92,6 +123,9 @@ export interface SearchResultView {
 }
 
 export type ReviewItemType = "weak_evidence" | "broken_pointer" | "memory_needs_review" | "conflict" | "user_correction";
+
+/** Shown on a degraded (zero-live-evidence) memory review item — e.g. its source transcript was deleted. */
+export const DEGRADED_MEMORY_REASON = "Evidence was removed or no longer resolves, possibly because the source transcript was deleted. This memory cannot be approved, but you can reject it to dismiss it.";
 
 export interface ReviewItemView {
   id: string;
@@ -107,6 +141,15 @@ export interface ReviewItemView {
   status: "open" | "resolved" | "dismissed";
   relatedTranscriptIds: string[];
   relatedEvidenceIds: string[];
+  /**
+   * Actionability for memory review items. A memory with no live evidence (span/pointer/link) — e.g. after
+   * its source transcript was deleted — is degraded: it cannot be approved (the trust gate requires
+   * evidence) but can be rejected to dismiss it. Undefined on non-memory items (treated as actionable).
+   */
+  hasLiveEvidence?: boolean;
+  canApprove?: boolean;
+  canReject?: boolean;
+  degradedReason?: string;
 }
 
 export interface CorrectionDraft {
@@ -121,13 +164,33 @@ export interface UploadInput {
   rawText: string;
 }
 
+/**
+ * Non-secret, display-only summary of the LLM + embedding + database setup for the dashboard's
+ * "Use Claude Desktop with this vault" card. NEVER contains API key material — only key PRESENCE
+ * (the `*Configured` booleans) and non-secret provider/model/dimension/path metadata. Read-only:
+ * building it performs no DB writes and no network calls.
+ */
+export interface SetupSummary {
+  llmConfigured: boolean;
+  llmProvider?: string;
+  llmModel?: string;
+  embeddingConfigured: boolean;
+  embeddingProvider?: string;
+  embeddingModel?: string;
+  embeddingDimensions?: number;
+  embeddingHealth: "ok" | "setup_required" | "reindex_required";
+  reindexNeeded: boolean;
+  databasePath?: string;
+  settingsPath?: string;
+}
+
 export interface FrontendApi {
   getDashboard(): Promise<DashboardView>;
   listTranscripts(): Promise<TranscriptListItem[]>;
   uploadTranscript(input: UploadInput): Promise<{ transcriptId: string; status: "imported" | "duplicate"; warning?: string }>;
   getTranscript(id: string): Promise<TranscriptView | null>;
-  ask(question: string, options?: { transcriptIds?: string[] }): Promise<AskAIResponse>;
-  askAI(question: string, options?: { transcriptIds?: string[] }): Promise<AskAIResponse>;
+  ask(question: string, options?: { transcriptIds?: string[]; maxEvidence?: number }): Promise<AskAIResponse>;
+  askAI(question: string, options?: { transcriptIds?: string[]; maxEvidence?: number }): Promise<AskAIResponse>;
   getAnswer(id: string): Promise<FrontendAnswerView | null>;
   getEvidence(id: string): Promise<EvidenceView>;
   getMemory(id: string): Promise<MemoryView | null>;
@@ -140,6 +203,30 @@ export interface FrontendApi {
   listReviewItems(filter?: { type?: ReviewItemType; status?: ReviewItemView["status"] }): Promise<ReviewItemView[]>;
   getReviewItem(id: string): Promise<ReviewItemView | null>;
   submitCorrection(input: CorrectionDraft): Promise<{ correctionId: string; status: "received" }>;
+  reviewMemoryObject(memoryId: string, decision: "approve" | "reject"): Promise<{ status: "approved" | "rejected" | "cannot_approve"; warning?: string }>;
+  /** Whether the live app requires an LLM and whether one is currently configured. */
+  getLlmStatus(): Promise<{ required: boolean; ready: boolean }>;
+  /** Production Ask AI embedding readiness: setup-required / reindex-required / ok. Optional (headless: ok). */
+  getEmbeddingStatus?(): Promise<{ required: boolean; state: "ok" | "setup_required" | "reindex_required"; reason?: string }>;
+  /**
+   * Non-secret setup summary for the Claude/MCP dashboard card. Returns null when not wired (headless/MCP
+   * or dev contexts that never inject it). NEVER returns API key material — presence booleans only.
+   */
+  getSetupSummary?(): Promise<SetupSummary | null>;
+  /** Run AI extraction for a transcript that has no completed run yet (e.g. imported before LLM setup). */
+  runExtraction(transcriptId: string): Promise<{ status: "extracted" | "skipped" | "setup_required" | "failed"; warning?: string }>;
+  /**
+   * Hard-delete a whole transcript and its derived provenance (transactional, irreversible). Raw transcript
+   * text is never edited — the wrong-import recovery flow is delete + re-import. Memories/conflicts/answers
+   * are not deleted; they degrade via existing cleanup/downgrade triggers.
+   */
+  deleteTranscript(id: string): Promise<DeleteTranscriptResult>;
+  /**
+   * Write the disposable generated-Markdown view layer that powers Obsidian's native (ribbon) graph.
+   * Optional: only the Obsidian plugin injects a real implementation (it needs the on-disk vault path).
+   * Headless/MCP contexts return `{ status: "unavailable" }`. Never reads generated Markdown back as truth.
+   */
+  syncGeneratedGraphNotes?(): Promise<GeneratedSyncResult>;
 }
 
 export interface FrontendAnswerView extends AskAIResponse {

@@ -16,6 +16,7 @@ export function createObsidianNavigation(app: Pick<App, "workspace">): ObsidianN
   return {
     openDashboard: () => open(OBSIDIAN_VIEW_TYPES.dashboard, "mv://dashboard"),
     openUpload: () => open(OBSIDIAN_VIEW_TYPES.upload, "mv://upload"),
+    openTranscripts: () => open(OBSIDIAN_VIEW_TYPES.transcripts, "mv://transcripts"),
     openTranscript: (id, options) => open(OBSIDIAN_VIEW_TYPES.transcript, `mv://transcripts/${encodeURIComponent(id)}${options?.spanId ? `?span=${encodeURIComponent(options.spanId)}` : ""}`),
     openAskAI: (options) => open(OBSIDIAN_VIEW_TYPES.ask, `mv://ask${options?.transcriptIds?.length ? `?transcriptIds=${options.transcriptIds.map(encodeURIComponent).join(",")}` : ""}`),
     openAnswer: (id) => open(OBSIDIAN_VIEW_TYPES.answer, `mv://answers/${encodeURIComponent(id)}`),

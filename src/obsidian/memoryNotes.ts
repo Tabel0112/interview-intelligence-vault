@@ -2,12 +2,22 @@ import type { SqliteDatabase } from "../db/connection.js";
 import { createConflictRepository } from "../conflicts/index.js";
 import { getCanonicalMemoryObject, isStrongMemoryObject, type RawMemoryObjectForCanonical } from "../memory/canonical.js";
 import { renderEvidenceCitation } from "./citations.js";
+import { MEMORY_HAS_GRAPH_EVIDENCE_SQL } from "./liveEvidence.js";
 import { frontmatter, generatedWarning, makeGeneratedFile } from "./markdown.js";
 import { conflictPath, memoryPath, wikiLink } from "./paths.js";
 import type { GeneratedFile } from "./types.js";
 
 export function generateMemoryNotes(db: SqliteDatabase, maxQuoteLength = 300): GeneratedFile[] {
-  const rows = db.prepare("SELECT * FROM memory_objects ORDER BY id").all() as RawMemoryObjectForCanonical[];
+  // Generate a note only for CANONICAL memories with a GRAPH-LINKABLE evidence pointer — duplicate/
+  // superseded/rejected rows are excluded so the native graph shows one node per claim, and rows with no
+  // graph-linkable pointer (unbridged needs_review/weak, or downgraded after their only transcript was
+  // deleted) are excluded so the generated note never floats disconnected. Full ids still live in SQLite,
+  // and those memories remain in Review/detail views.
+  const rows = db.prepare(`SELECT * FROM memory_objects
+    WHERE duplicate_of_id IS NULL AND status NOT IN ('superseded','rejected')
+      AND (extraction_status IS NULL OR extraction_status NOT IN ('superseded','rejected'))
+      AND ${MEMORY_HAS_GRAPH_EVIDENCE_SQL}
+    ORDER BY id`).all() as RawMemoryObjectForCanonical[];
   return rows.map((row) => {
     const pointers = db.prepare("SELECT evidence_pointer_id FROM evidence_pointers WHERE target_type IN ('memory_object','claim','summary') AND target_id=? ORDER BY evidence_pointer_id").all(row.id) as Array<{ evidence_pointer_id: string }>;
     const legacy = db.prepare("SELECT span_id FROM memory_object_evidence WHERE memory_id=? ORDER BY span_id").all(row.id) as Array<{ span_id: string }>;
@@ -21,9 +31,11 @@ export function generateMemoryNotes(db: SqliteDatabase, maxQuoteLength = 300): G
       : strongest === "conflicting" || conflicts.some((item) => item.status === "active")
         ? "> [!warning] Conflicting evidence\n> Both sides must be reviewed." : "";
     const title = canonical.title || canonical.body.slice(0, 80) || row.id;
-    const conflictLinks = conflicts.map((item) => `- ${wikiLink(conflictPath(item.id), item.summary)}`).join("\n") || "_None._";
+    const conflictLinks = conflicts.map((item) => `- ${wikiLink(conflictPath(item.summary, item.id), item.summary)}`).join("\n") || "_None._";
     const content = `${frontmatter({ mv_entity_type: "memory", mv_entity_id: row.id, mv_generated: true, mv_source_of_truth: "sqlite", mv_support_status: strongest, mv_confidence: canonical.confidence })}
 # ${title}
+
+#tmv/memory
 
 ${generatedWarning}
 

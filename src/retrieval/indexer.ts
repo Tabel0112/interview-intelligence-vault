@@ -96,6 +96,21 @@ export const indexTranscriptSpanForSearch = (db: SqliteDatabase, spanId: string,
 export const indexMemoryObjectForSearch = (db: SqliteDatabase, id: string, options?: RetrievalIndexOptions) => indexDocument(db, "memory_object", id, options);
 export const indexEvidencePointerForSearch = (db: SqliteDatabase, id: string, options?: RetrievalIndexOptions) => indexDocument(db, "evidence_pointer", id, options);
 
+/**
+ * Remove a target's local retrieval/index rows so it is no longer discoverable by search.
+ * Idempotent (DELETEs are no-ops when nothing matches) and offline (no embedding call). Deleting the
+ * retrieval_index_status row lets a later re-index recreate the document cleanly. FTS removal is
+ * best-effort because FTS5 may be unavailable. Does NOT touch memory rows, evidence, or raw sources.
+ */
+export function removeRetrievalDocument(db: SqliteDatabase, targetType: RetrievalTargetType, targetId: string): void {
+  try {
+    db.prepare("DELETE FROM retrieval_documents_fts WHERE target_type=? AND target_id=?").run(targetType, targetId);
+  } catch { /* FTS5 unavailable; the retrieval_documents JOIN drops any orphaned FTS row anyway. */ }
+  db.prepare("DELETE FROM retrieval_documents WHERE target_type=? AND target_id=?").run(targetType, targetId);
+  db.prepare("DELETE FROM search_embeddings WHERE target_type=? AND target_id=?").run(targetType, targetId);
+  db.prepare("DELETE FROM retrieval_index_status WHERE target_type=? AND target_id=?").run(targetType, targetId);
+}
+
 export async function rebuildRetrievalIndex(db: SqliteDatabase, options: RetrievalIndexOptions = {}) {
   const types = options.targetTypes ?? ["transcript_span", "memory_object", "evidence_pointer"];
   let indexed = 0, skipped = 0, embedded = 0, errors = 0;

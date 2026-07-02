@@ -1,12 +1,17 @@
 import type { SqliteDatabase } from "../db/connection.js";
 import { renderEvidenceCitation } from "./citations.js";
 import { frontmatter, generatedWarning, makeGeneratedFile } from "./markdown.js";
+import { MEMORY_HAS_GRAPH_EVIDENCE_SQL } from "./liveEvidence.js";
 import { entityPath, wikiLink } from "./paths.js";
 import type { GeneratedFile } from "./types.js";
 
 export function generateEntityNotes(db: SqliteDatabase): GeneratedFile[] {
   const graphRows = db.prepare("SELECT * FROM graph_nodes WHERE node_type IN ('entity','topic') ORDER BY node_type,id").all() as Array<Record<string, unknown>>;
-  const decisions = db.prepare("SELECT id,title,generated_text,status FROM memory_objects WHERE COALESCE(extraction_type,type)='decision' ORDER BY id").all() as Array<Record<string, unknown>>;
+  const decisions = db.prepare(`SELECT id,title,generated_text,status FROM memory_objects
+    WHERE COALESCE(extraction_type,type)='decision' AND duplicate_of_id IS NULL AND status NOT IN ('superseded','rejected')
+      AND (extraction_status IS NULL OR extraction_status NOT IN ('superseded','rejected'))
+      AND ${MEMORY_HAS_GRAPH_EVIDENCE_SQL}
+    ORDER BY id`).all() as Array<Record<string, unknown>>;
   const graphNotes = graphRows.map((row) => {
     const kind = row.node_type === "entity" ? "person" : "topic";
     const evidence = (db.prepare("SELECT evidence_pointer_id FROM evidence_pointers WHERE target_type='graph_node' AND target_id=? ORDER BY evidence_pointer_id").all(row.id) as Array<{ evidence_pointer_id: string }>)
@@ -17,6 +22,8 @@ export function generateEntityNotes(db: SqliteDatabase): GeneratedFile[] {
       .map((item) => `- ${item.edge_type}: ${item.node_type === "entity" || item.node_type === "topic" ? wikiLink(entityPath(item.node_type === "entity" ? "person" : "topic", item.label, item.ref_id), item.label) : item.label}`).join("\n") || "_No related graph objects._";
     return makeGeneratedFile(kind === "person" ? "person_note" : "topic_note", entityPath(kind, String(row.label), String(row.ref_id)), `${frontmatter({ mv_entity_type: kind, mv_entity_id: String(row.ref_id), mv_generated: true, mv_source_of_truth: "sqlite" })}
 # ${row.label}
+
+#tmv/${kind}
 
 ${generatedWarning}
 
@@ -37,6 +44,8 @@ ${related}`, kind, String(row.ref_id));
       .map((item) => renderEvidenceCitation(db, item.evidence_pointer_id).markdown).join("\n\n") || "> [!danger] Unsupported decision\n> No evidence pointers.";
     return makeGeneratedFile("decision_note", entityPath("decision", String(row.title ?? row.generated_text), String(row.id)), `${frontmatter({ mv_entity_type: "decision", mv_entity_id: String(row.id), mv_generated: true, mv_source_of_truth: "sqlite", mv_support_status: String(row.status) })}
 # ${row.title ?? "Decision"}
+
+#tmv/memory
 
 ${generatedWarning}
 

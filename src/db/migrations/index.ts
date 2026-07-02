@@ -17,6 +17,10 @@ export const PACKAGED_MIGRATIONS = [
   { id: "010", name: "conflict_detection", filename: "010_conflict_detection.sql" },
   { id: "011", name: "agent_orchestration_hermes", filename: "011_agent_orchestration_hermes.sql" },
   { id: "012", name: "obsidian_views", filename: "012_obsidian_views.sql" },
+  { id: "013", name: "ask_ai_claim_support", filename: "013_ask_ai_claim_support.sql" },
+  { id: "014", name: "ask_ai_analysis", filename: "014_ask_ai_analysis.sql" },
+  { id: "015", name: "ask_ai_unconfirmed", filename: "015_ask_ai_unconfirmed.sql" },
+  { id: "016", name: "ask_ai_analysis_pk", filename: "016_ask_ai_analysis_pk.sql" },
 ] as const;
 
 export const PACKAGED_MIGRATION_COUNT = PACKAGED_MIGRATIONS.length;

@@ -70,21 +70,26 @@ describe("migration packaging and first-run health", () => {
     expect(html).toContain("database connected");
     expect(html).toContain(`${PACKAGED_MIGRATION_COUNT}`);
     expect(html).toContain("No transcripts");
+    // Viewer-mode (Pass 3) order: Upload first, Claude/MCP setup second, then review/attention, graph,
+    // transcripts, recent answers, and finally Advanced tools (which nests the database-health card).
     const orderedContent = [
       'aria-label="Primary"',
       "<h1>Dashboard</h1>",
-      'class="immutable-notice status-banner"',
-      'class="metric-grid"',
-      'class="vault-section database-health-section"',
-      'class="vault-section quick-actions"',
+      'class="status-banner',
+      'class="vault-section upload-section',
+      'class="vault-section mcp-card',
+      'class="vault-section review-summary-section', // now the merged "Review & attention" card
+      'class="vault-section generated-notes-section"',
       'class="vault-section transcripts-section"',
       'class="vault-section recent-answers-section"',
+      'class="vault-section advanced-tools-section"',
+      'class="vault-section database-health-section"', // nested inside Advanced tools
     ];
     for (let index = 1; index < orderedContent.length; index += 1) {
-      expect(html.indexOf(orderedContent[index])).toBeGreaterThan(html.indexOf(orderedContent[index - 1]));
+      expect(html.indexOf(orderedContent[index]), `out of order: ${orderedContent[index]}`).toBeGreaterThan(html.indexOf(orderedContent[index - 1]));
     }
-    expect(html.indexOf("No transcripts")).toBeGreaterThan(html.indexOf('class="vault-section database-health-section"'));
-    expect(html.indexOf("No answers")).toBeGreaterThan(html.indexOf('class="vault-section database-health-section"'));
+    expect(html.indexOf("No transcripts")).toBeGreaterThan(html.indexOf('class="vault-section transcripts-section"'));
+    expect(html.indexOf("No answers")).toBeGreaterThan(html.indexOf('class="vault-section recent-answers-section"'));
     expect(html).not.toContain('<section class="empty-state"');
   });
 });

@@ -17,6 +17,8 @@ export interface ValidatedMemoryCandidate extends ExtractedMemoryCandidate {
 }
 export interface MemoryExtractor {
   kind?: ExtractorKind; model?: string | null;
+  /** Prompt version recorded on the extraction run/objects. Defaults to the deterministic prompt version. */
+  promptVersion?: string;
   extract(window: ExtractionWindow): Promise<ExtractedMemoryCandidate[]>;
 }
 export interface ExtractionRunResult {

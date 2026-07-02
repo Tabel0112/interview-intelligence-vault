@@ -1,7 +1,7 @@
 import type { SqliteDatabase } from "../db/connection.js";
-import { makeSourcePointerUri, resolveSourcePointer } from "../provenance/index.js";
+import { makeSourcePointerUri, resolveEvidencePointer, resolveSourcePointer } from "../provenance/index.js";
 import { frontmatter, generatedWarning, makeGeneratedFile, quote } from "./markdown.js";
-import { transcriptPath } from "./paths.js";
+import { evidencePath, transcriptPath, wikiLink } from "./paths.js";
 import type { GeneratedFile } from "./types.js";
 
 const time = (ms: number | null) => ms == null ? "Unknown" : `${String(Math.floor(ms / 60000)).padStart(2, "0")}:${String(Math.floor((ms % 60000) / 1000)).padStart(2, "0")}`;
@@ -24,18 +24,30 @@ export function generateTranscriptNotes(db: SqliteDatabase, maxQuoteLength = 100
 ${quote(String(span.text ?? span.text_preview), maxQuoteLength)}
 `;
     }).join("\n");
+    // Meaningful provenance edge: this transcript -> the evidence drawn from it (one note per pointer).
+    const evidenceLinks = (db.prepare("SELECT evidence_pointer_id FROM evidence_pointers WHERE transcript_id=? ORDER BY evidence_pointer_id").all(item.id) as Array<{ evidence_pointer_id: string }>)
+      .map(({ evidence_pointer_id }) => {
+        const resolved = resolveEvidencePointer(db, evidence_pointer_id);
+        return `- ${wikiLink(evidencePath(resolved.ok ? resolved.spanText : "Broken evidence", evidence_pointer_id), `Evidence ${evidence_pointer_id}`)}`;
+      }).join("\n") || "_No source-backed evidence drawn from this transcript yet._";
     const content = `${frontmatter({ mv_entity_type: "transcript", mv_entity_id: String(item.id), mv_generated: true, mv_source_of_truth: "sqlite", mv_raw_hash: String(item.raw_sha256 ?? item.content_hash) })}
 # ${item.title}
+
+#tmv/transcript
 
 ${generatedWarning}
 
 > [!important] Immutable source
 > Transcript text and spans are rendered from immutable SQLite source records.
 
-**Transcript ID:** \`${item.id}\`  
-**Source ID:** \`${item.source_id}\`  
-**Raw hash:** \`${item.raw_sha256 ?? item.content_hash}\`  
+**Transcript ID:** \`${item.id}\`
+**Source ID:** \`${item.source_id}\`
+**Raw hash:** \`${item.raw_sha256 ?? item.content_hash}\`
 **Imported:** ${item.imported_at}
+
+## Source-Backed Evidence
+
+${evidenceLinks}
 
 ## Transcript Spans
 

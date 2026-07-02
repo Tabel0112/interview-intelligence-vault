@@ -3,6 +3,7 @@ import { matchRoute } from "./router.js";
 export interface ObsidianNavigation {
   openDashboard(): Promise<void>;
   openUpload(): Promise<void>;
+  openTranscripts(): Promise<void>;
   openTranscript(transcriptId: string, options?: { spanId?: string }): Promise<void>;
   openAskAI(options?: { transcriptIds?: string[] }): Promise<void>;
   openAnswer(answerId: string): Promise<void>;
@@ -18,6 +19,7 @@ export async function navigateInternal(navigation: ObsidianNavigation, target: s
   switch (route.id) {
     case "dashboard": return navigation.openDashboard();
     case "upload": return navigation.openUpload();
+    case "transcripts": return navigation.openTranscripts();
     case "transcript": return navigation.openTranscript(route.params.id, { spanId: route.query.get("span") ?? undefined });
     case "ask": return navigation.openAskAI();
     case "answer": return navigation.openAnswer(route.params.id);

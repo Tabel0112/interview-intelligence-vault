@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { askAI, createDatabaseAskAIDependencies, type AskAIResponse } from "../src/ask-ai/index.js";
+import { askAI, createDatabaseAskAIDependencies, understandQuestion, type AskAIResponse } from "../src/ask-ai/index.js";
 import { createRepositories, openDatabase, type SqliteDatabase } from "../src/db/index.js";
 import { createSqliteFrontendApi, matchRoute, renderPage, renderRoute, routeHref, validateTranscriptUpload, type FrontendApi } from "../src/frontend/index.js";
 import { importTranscript } from "../src/ingest/index.js";
@@ -73,11 +73,7 @@ describe("frontend routes and trust rendering", () => {
       claims: hasEvidence ? [{ id: "claim_1", kind: "fact", text: "Traceable claim", supportStatus: confidence === "conflicting" ? "conflicting" : "weakly_supported", evidencePointerIds: ["evp_1"], citationIds: ["cit_1"] }] : [],
       citations: hasEvidence ? [{ id: "cit_1", label: "[1]", evidencePointerId: "evp_1", transcriptId: "tr_1", spanId: "sp_1", quotePreview: "Source", clickbackUri: "mv://evidence/evp_1" }] : [],
       evidence: hasEvidence ? [{ evidencePointerId: "evp_1", transcriptId: "tr_1", spanId: "sp_1", quotePreview: "Source", evidenceScore: 0.4, evidenceConfidence: confidence, scoringExplanation: "Traceable", clickbackUri: "mv://evidence/evp_1", stance: confidence === "conflicting" ? "opposes" : "supports", sourceKind: "raw_transcript_span" }] : [],
-      createdAt: now().toISOString(), queryUnderstanding: {
-        originalQuestion: "What is true?", normalizedQuestion: "What is true?", answerMode: "direct", detectedEntities: [],
-        detectedTopics: [], timeHints: [], requestedClaimKinds: ["fact"], needsRecommendation: false, needsComparison: false,
-        needsChronology: false, shouldUseMemoryObjects: true, shouldUseRawTranscriptSpans: true, transcriptIds: [], entityIds: [], memoryObjectIds: [],
-      }, conflicts: [],
+      createdAt: now().toISOString(), queryUnderstanding: understandQuestion("What is true?"), conflicts: [],
     });
     };
     for (const state of ["weak", "conflicting", "no_evidence"] as const) {
@@ -92,11 +88,7 @@ describe("frontend routes and trust rendering", () => {
     const unsupported = {
       id: "ask_bad", question: "Unsupported?", answerMarkdown: "Trust me", evidenceConfidence: "strong",
       claims: [], citations: [], evidence: [], suggestedFollowups: [], notEnoughEvidence: false, createdAt: now().toISOString(),
-      queryUnderstanding: {
-        originalQuestion: "Unsupported?", normalizedQuestion: "Unsupported?", answerMode: "direct", detectedEntities: [], detectedTopics: [],
-        timeHints: [], requestedClaimKinds: ["fact"], needsRecommendation: false, needsComparison: false, needsChronology: false,
-        shouldUseMemoryObjects: true, shouldUseRawTranscriptSpans: true, transcriptIds: [], entityIds: [], memoryObjectIds: [],
-      }, conflicts: [],
+      queryUnderstanding: understandQuestion("Unsupported?"), conflicts: [],
     } satisfies AskAIResponse;
     const api = { getAnswer: async () => unsupported } as unknown as FrontendApi;
     const html = await renderRoute(api, "/answers/ask_bad");
@@ -189,6 +181,53 @@ describe("SQLite frontend adapter", () => {
     expect((db.prepare("SELECT raw_text FROM transcripts WHERE id=?").get(seeded.imported.transcriptId) as { raw_text: string }).raw_text).toBe(seeded.rawText);
   });
 
+  it("exposes Approve/Reject for reviewable memory objects on the memory page and weak-evidence detail", async () => {
+    const seeded = await fixture();
+    const api = createSqliteFrontendApi(db, { now });
+
+    // The memory page of a needs_review memory now offers Approve/Reject, so following a review item
+    // to its memory page is not a dead end. Append-only correction is preserved alongside.
+    const memoryHtml = await renderRoute(api, routeHref.memory(seeded.weak.id));
+    expect(memoryHtml).toContain("Review decision");
+    expect(memoryHtml).toContain('data-action="review"');
+    expect(memoryHtml).toContain(`name="memoryId" value="${seeded.weak.id}"`);
+    expect(memoryHtml).toContain("Approve");
+    expect(memoryHtml).toContain("Reject");
+    expect(memoryHtml).toContain("Submit a correction");
+
+    // A weak-evidence review item tied to a memory object exposes Approve/Reject on its detail page,
+    // wired to that memory id (not the evidence pointer id).
+    const weakPointer = linkMemoryObjectToSpan(db, {
+      memoryObjectId: seeded.strong.id, transcriptId: seeded.imported.transcriptId, spanId: seeded.spans[1].id,
+      evidenceRole: "support", evidenceStrength: "weak", confidence: 0.3,
+    });
+    const weakItems = await api.listReviewItems({ type: "weak_evidence" });
+    expect(weakItems.some((item) => item.id === `weak:${weakPointer.evidence_pointer_id}` && item.targetType === "memory_object" && item.targetId === seeded.strong.id)).toBe(true);
+    const detailHtml = await renderRoute(api, `/review/weak:${weakPointer.evidence_pointer_id}`);
+    expect(detailHtml).toContain('data-action="review"');
+    expect(detailHtml).toContain(`name="memoryId" value="${seeded.strong.id}"`);
+    expect(detailHtml).toContain("Approve");
+    expect(detailHtml).toContain("Reject");
+  });
+
+  it("approving a memory from a weak-evidence task resolves it without a new user-correction task", async () => {
+    const seeded = await fixture();
+    const api = createSqliteFrontendApi(db, { now });
+    const weakPointer = linkMemoryObjectToSpan(db, {
+      memoryObjectId: seeded.strong.id, transcriptId: seeded.imported.transcriptId, spanId: seeded.spans[1].id,
+      evidenceRole: "support", evidenceStrength: "weak", confidence: 0.3,
+    });
+    // The weak-evidence task exists and is tied to the memory object.
+    expect((await api.listReviewItems()).some((item) => item.id === `weak:${weakPointer.evidence_pointer_id}` && item.type === "weak_evidence" && item.targetId === seeded.strong.id)).toBe(true);
+
+    // Approve via the same API the review UI uses.
+    expect((await api.reviewMemoryObject(seeded.strong.id, "approve")).status).toBe("approved");
+    const after = await api.listReviewItems();
+    expect(after.some((item) => item.type === "weak_evidence" && item.targetId === seeded.strong.id)).toBe(false); // resolved
+    expect(after.some((item) => item.type === "user_correction")).toBe(false); // confirm correction is not a task
+    expect((db.prepare("SELECT COUNT(*) c FROM user_corrections WHERE target_id=? AND correction_type='confirm'").get(seeded.strong.id) as { c: number }).c).toBeGreaterThanOrEqual(1); // audit retained
+  });
+
   it("limits dashboard and transcript rendering for large vaults", async () => {
     for (let index = 0; index < 12; index += 1) {
       importTranscript(db, { filename: `many-${index}.txt`, rawText: `Speaker: Unique transcript ${index}.` });
@@ -197,6 +236,6 @@ describe("SQLite frontend adapter", () => {
     const dashboard = await api.getDashboard();
     expect(dashboard.totalTranscriptCount).toBe(12);
     expect(dashboard.transcripts).toHaveLength(10);
-    expect(await renderRoute(api, "/")).toContain("Quick actions");
+    expect(await renderRoute(api, "/")).toContain("Upload a transcript");
   });
 });

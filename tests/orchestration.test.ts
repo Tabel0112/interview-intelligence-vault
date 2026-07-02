@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { type AskAILanguageModel, type SynthesisInfo } from "../src/ask-ai/index.js";
 import { createRepositories, openDatabase, type SqliteDatabase } from "../src/db/index.js";
 import {
   AgentRegistry, createOrchestrationRepository, runAskAIOrchestrationPipeline, runPendingReprocessingJobs,
@@ -8,6 +9,14 @@ import { linkMemoryObjectToSpan } from "../src/provenance/index.js";
 import { indexEvidencePointerForSearch } from "../src/retrieval/index.js";
 
 const fixedNow = () => new Date("2026-06-12T12:00:00.000Z");
+// The DORMANT orchestration Ask AI path is LLM-required like the live app: tests inject a mock external
+// LLM through the explicit synthesis seam (never a silent deterministic fallback).
+const mockLlm: AskAILanguageModel = {
+  generateClaims: async ({ evidence }) => evidence.length
+    ? [{ kind: "fact", text: evidence[0].quotePreview, evidencePointerIds: [evidence[0].evidencePointerId] }]
+    : [],
+};
+const mockSynthesis = { llm: mockLlm, info: { mode: "external_llm", provider: "mock", model: "mock", usedFallback: false } satisfies SynthesisInfo };
 
 describe("generic orchestration runner", () => {
   let db: SqliteDatabase;
@@ -78,12 +87,31 @@ describe("generic orchestration runner", () => {
     );
     const pointer = linkMemoryObjectToSpan(db, { memoryObjectId: memory.id, transcriptId, spanId: span.id, evidenceStrength: "strong", confidence: 0.95 });
     await indexEvidencePointerForSearch(db, pointer.evidence_pointer_id);
-    const result = await runAskAIOrchestrationPipeline(db, { question: "SQLite source truth", userId: "user" }, { now: fixedNow });
+    const result = await runAskAIOrchestrationPipeline(db, { question: "SQLite source truth", userId: "user" }, { now: fixedNow, synthesis: mockSynthesis });
     expect(result.output).toMatchObject({ evidenceQualitySummary: "weak", evidenceQualityNotice: "Evidence is weak or missing.", selectedEvidencePointerIds: [pointer.evidence_pointer_id] });
     const output = result.output as { answerId: string; claimIds: string[]; citationIds: string[] };
     expect(output.claimIds).toHaveLength(1);
     expect(output.citationIds).toHaveLength(1);
     expect(db.prepare("SELECT COUNT(*) count FROM citation_links WHERE answer_id=?").get(output.answerId)).toEqual({ count: 1 });
+  });
+
+  it("HARDENED dormant path: with evidence selected and NO injected LLM, it fails closed (setup-required) and never emits deterministic output", async () => {
+    const imported = await runTranscriptImportPipeline(db, { sourceName: "gated.txt", rawText: "Alex: SQLite is the structured source of truth." }, { now: fixedNow });
+    const transcriptId = (imported.output as { transcriptId: string }).transcriptId;
+    const span = db.prepare("SELECT id FROM transcript_spans WHERE transcript_id=?").get(transcriptId) as { id: string };
+    const memory = createRepositories(db).memoryObjects.createMemoryObject(
+      { type: "decision", generated_text: "SQLite is authoritative.", confidence: 0.95, created_by: "agent" },
+      [{ span_id: span.id, role: "supports", evidence_score: 0.95 }],
+    );
+    const pointer = linkMemoryObjectToSpan(db, { memoryObjectId: memory.id, transcriptId, spanId: span.id, evidenceStrength: "strong", confidence: 0.95 });
+    await indexEvidencePointerForSearch(db, pointer.evidence_pointer_id);
+    const answersBefore = (db.prepare("SELECT COUNT(*) count FROM ask_ai_runs").get() as { count: number }).count;
+    // No `synthesis` injected -> the answer_synthesis step must throw SynthesisSetupRequiredError.
+    const result = await runAskAIOrchestrationPipeline(db, { question: "SQLite source truth", userId: "user" }, { now: fixedNow });
+    expect(result.status).toBe("failed");
+    expect(JSON.stringify(result.error ?? {})).toMatch(/requires a configured LLM/i); // fail-closed, not a deterministic answer
+    // Nothing was persisted as an answer — the gate fires before persistence.
+    expect((db.prepare("SELECT COUNT(*) count FROM ask_ai_runs").get() as { count: number }).count).toBe(answersBefore);
   });
 
   it("reprocessing supersedes generated objects when replacements exist without changing raw text", async () => {

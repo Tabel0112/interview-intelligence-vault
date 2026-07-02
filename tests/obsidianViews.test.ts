@@ -101,7 +101,8 @@ describe("Obsidian-style generated views", () => {
     expect(resolveObsidianClickbackTarget(db, data.leftPointer.source_pointer_uri)).toEqual({ error: "hash_mismatch" });
     const result = await generateObsidianVault(db, { outputRoot: root, now: fixedNow });
     expect(result.warnings).toEqual(expect.arrayContaining([expect.stringContaining(`Broken evidence pointer ${data.leftPointer.evidence_pointer_id}`)]));
-    expect(await file(root, `Evidence/${data.leftPointer.evidence_pointer_id}.md`)).toContain("Broken evidence pointer");
+    const evidenceNote = result.files.find((item) => item.entityId === data.leftPointer.evidence_pointer_id && item.logicalType === "evidence_note")!;
+    expect(await file(root, evidenceNote.relativePath)).toContain("Broken evidence pointer");
     const unlinkedNote = result.files.find((item) => item.entityId === unlinked.transcriptId && item.logicalType === "transcript_note")!;
     expect(await file(root, unlinkedNote.relativePath)).toContain("No validated source pointer for this span");
   });

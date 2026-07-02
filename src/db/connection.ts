@@ -21,6 +21,9 @@ export function openDatabase(
   if (options.nativeBinding !== undefined) sqliteOptions.nativeBinding = options.nativeBinding;
   const db = new Database(filename, sqliteOptions);
   db.pragma("foreign_keys = ON");
+  // Two processes may open the same file (the Obsidian plugin + the MCP server). WAL lets readers and a
+  // single writer coexist; busy_timeout makes a brief lock contention wait-and-retry instead of throwing.
+  db.pragma("busy_timeout = 5000");
   if (filename !== ":memory:" && !options.readonly) {
     db.pragma("journal_mode = WAL");
   }

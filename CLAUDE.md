@@ -26,6 +26,21 @@ Do not treat generated Markdown, summaries, graph files, or AI answers as source
 12. Do not remove warnings unless the underlying evidence/provenance issue is actually fixed.
 13. Do not weaken tests to make changes pass.
 
+## Current MVP Gap Rules
+
+The live Obsidian app is **LLM-required**: Ask AI synthesis and AI memory extraction must use a configured external LLM. Deterministic/local generation (templated Ask AI claims, `DeterministicRuleExtractor`, `LocalDeterministicLlmProvider`) and `token-hash-v1` embedding vectors are **dev-only / test-only seams**, reachable only through explicit injection — they are NOT a product mode and must never run as a live fallback. See `docs/APP_SPEC.md` (architecture contract) and `docs/MVP_GAP_ANALYSIS.md` (gap status); keep both updated when these facts change.
+
+1. Do not expose or use deterministic/local generation as a real product path, and do not describe `token-hash-v1` vectors as semantic. Deterministic Ask AI claims and the rule extractor exist only for unit tests, offline fixtures, explicit injected dev seams, and deterministic conflict formatting of already-cited evidence.
+2. In the live app, generation requires a configured external LLM (provider + model + API key). When none is configured, show a setup-required state (do not generate). When the LLM fails after evidence is selected, show a generic, key-free failure (never fall back to deterministic output). External **embeddings are required for production Ask AI and MCP `ask_vault`** — missing/stale embedding config fails closed (`embedding_setup_required` / `embedding_reindex_required`); deterministic/token-hash embeddings are dev/test seams only, and keyword/nonsemantic search may remain available for non-Ask-AI inspection surfaces. Missing/invalid keys must be handled safely — typed errors, no crash, never silent vector-space corruption.
+3. Never mix vectors across providers/models/dimensions. Compare only within one `(provider, model, dimensions)` space; changing provider/model is a new space and requires reindexing.
+4. No external model may be enabled before its grounding check exists: claim↔evidence **entailment** verification for Ask AI synthesis, and structured-output shape validation + fallback for extraction. Citation/provenance enforcement alone is **not** entailment.
+5. The live pipeline is wired end-to-end: upload imports the immutable transcript, then (when an LLM is configured) runs LLM extraction, bridges usable memory to provenance pointers, and indexes for retrieval; Ask AI requires the configured LLM and refuses (setup-required) otherwise. A transcript imported before the LLM is configured keeps its raw text but has no memory until "Run AI extraction" is run.
+6. API keys must never be logged, persisted into vault data, or surfaced in errors, health, or generated Markdown. Obsidian has no secret store — plugin `data.json` is plaintext and may sync — so key storage is a deliberate decision, not a given.
+7. Tests must always run offline with mock/injected providers (mock external LLM transports, or deterministic/local providers passed in explicitly). No real network calls in tests, ever.
+8. Never make a network call inside a SQLite transaction.
+9. Hermes personalization is presentation/ranking only and is currently **not invoked in the live frontend Ask AI path** (it lives only in the orchestration `answerSynthesisAgent`). Do not rely on it running there, and never let it change evidence scores, truth status, conflict status, provenance, or warnings.
+10. Add real providers only behind the existing injection seams (`EmbeddingProvider`, `AskAILanguageModel`, `MemoryExtractor`) so a mock can be injected in tests. The live wiring passes `llmRequired: true`; deterministic providers are reachable only through explicit injection, never the live resolvers (`askAiSynthesisFromSettings` / `memoryExtractorFromSettings` return `undefined` when no LLM is configured).
+
 ## Existing Implemented Areas
 
 The project already includes these major layers:

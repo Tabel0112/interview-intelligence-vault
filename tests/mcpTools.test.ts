@@ -1,0 +1,300 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+// Mocking the "obsidian" runtime package to THROW proves the MCP/service chain is headless: if any
+// imported module pulled in the obsidian package, this file would fail to load.
+vi.mock("obsidian", () => { throw new Error("the headless MCP service must not import the obsidian runtime package"); });
+
+import { createRepositories, openDatabase, type SqliteDatabase } from "../src/db/index.js";
+import { importTranscript } from "../src/ingest/index.js";
+import { linkMemoryObjectToSpan } from "../src/provenance/index.js";
+import { indexEvidencePointerForSearch } from "../src/retrieval/index.js";
+import { createLlmAskAILanguageModel, type SynthesisInfo } from "../src/ask-ai/index.js";
+import { ExternalLlmProvider, type LlmTransport } from "../src/llm/index.js";
+import { createSqliteFrontendApi, type FrontendApi } from "../src/frontend/index.js";
+import { createVaultTools, McpInputError } from "../src/mcp/tools.js";
+import { loadMcpConfig, McpConfigError } from "../src/mcp/config.js";
+import type { AnswerBundle } from "../src/mcp/answerBundle.js";
+
+const RAW = "Alex: We decided to use SQLite as the source of truth for the vault.";
+const SECRET = "sk-mcp-PLANTED-SECRET-1234567890";
+const QUESTION = "What is the source of truth?";
+const LLM_CLAIM = "SQLite is the source of truth for the vault.";
+const now = () => new Date("2026-06-12T12:00:00.000Z");
+
+let db: SqliteDatabase;
+beforeEach(() => { db = openDatabase(":memory:"); });
+afterEach(() => db.close());
+
+const count = (sql: string, ...args: unknown[]) => (db.prepare(`SELECT COUNT(*) c FROM ${sql}`).get(...args) as { c: number }).c;
+const lastUserMessage = (body: string): string => {
+  const messages = (JSON.parse(body) as { messages: Array<{ content: string }> }).messages;
+  return messages[messages.length - 1].content;
+};
+
+// Grounded synthesis: cite the selected pointerId + an exact verbatim quote from the prompt.
+const groundedTransport: LlmTransport = async (req) => {
+  const m = lastUserMessage(req.body).match(/pointerId:\s*(\S+)\n\s*quote:\s*(.+)/);
+  const content = JSON.stringify({ claims: [{ kind: "fact", text: LLM_CLAIM, evidencePointerIds: [m?.[1] ?? "x"], supportingQuote: (m?.[2] ?? "").trim() }] });
+  return { status: 200, body: { choices: [{ message: { content }, finish_reason: "stop" }] } };
+};
+// Ungrounded synthesis: a fabricated quote that is NOT in any cited snippet -> grounding gate discards it.
+const ungroundedTransport: LlmTransport = async () => ({
+  status: 200,
+  body: { choices: [{ message: { content: JSON.stringify({ claims: [{ kind: "fact", text: "FABRICATED CLAIM", evidencePointerIds: ["evp_unknown"], supportingQuote: "totally fabricated text" }] }) }, finish_reason: "stop" }] },
+});
+const failingTransport: LlmTransport = async () => ({ status: 500, body: { error: "upstream" } });
+
+const info: SynthesisInfo = { mode: "external_llm", provider: "openai", model: "gpt-x", usedFallback: false };
+function makeApi(transport: LlmTransport | null): FrontendApi {
+  return createSqliteFrontendApi(db, {
+    now,
+    llmRequired: true,
+    getLlmReady: () => transport != null,
+    getSynthesis: transport
+      ? () => ({ llm: createLlmAskAILanguageModel(new ExternalLlmProvider({ id: "openai", model: "gpt-x", apiKey: SECRET, transport })), info })
+      : () => undefined,
+  });
+}
+const tools = (transport: LlmTransport | null) => createVaultTools({ db, api: makeApi(transport) });
+
+async function seedEvidence(): Promise<string> {
+  const repos = createRepositories(db);
+  const imported = importTranscript(db, { filename: "t.txt", rawText: RAW });
+  const span = db.prepare("SELECT id FROM transcript_spans WHERE transcript_id=?").get(imported.transcriptId) as { id: string };
+  const memory = repos.memoryObjects.createMemoryObject(
+    { type: "decision", generated_text: "SQLite is authoritative.", confidence: 0.95, created_by: "agent" },
+    [{ span_id: span.id, role: "supports", evidence_score: 0.95 }],
+  );
+  const pointer = linkMemoryObjectToSpan(db, { memoryObjectId: memory.id, transcriptId: imported.transcriptId, spanId: span.id, evidenceRole: "support", evidenceStrength: "strong", confidence: 0.95 });
+  await indexEvidencePointerForSearch(db, pointer.evidence_pointer_id);
+  return memory.id;
+}
+
+describe("MCP tools", () => {
+  it("exposes all Phase 1 tool definitions with input schemas and validates required inputs", async () => {
+    const t = tools(groundedTransport);
+    expect(t.definitions.map((d) => d.name).sort()).toEqual(
+      ["ask_vault", "get_answer", "get_conflicts", "get_memory_object", "list_recent_answers", "search_evidence", "search_vault_answers"].sort(),
+    );
+    expect((t.definitions.find((d) => d.name === "ask_vault")!.inputSchema as { required: string[] }).required).toContain("question");
+    await expect(t.call("ask_vault", {})).rejects.toBeInstanceOf(McpInputError); // missing question
+    await expect(t.call("nope", {})).rejects.toBeInstanceOf(McpInputError); // unknown tool
+  });
+
+  it("ask_vault runs the evidence-first pipeline and returns a validated, cited AnswerBundle (persisted)", async () => {
+    const memoryId = await seedEvidence();
+    await tools(null).call("get_memory_object", { memory_object_id: memoryId }); // (warm path, no effect)
+    const before = count("ask_ai_runs");
+    const result = await tools(groundedTransport).call("ask_vault", { question: QUESTION }) as { ok: boolean; answer_bundle: Record<string, unknown> };
+    expect(result.ok).toBe(true);
+    const bundle = result.answer_bundle as { claims: Array<{ text: string }>; citations: Array<{ evidence_uri: string; source_span_uri: string }>; not_enough_evidence: boolean; links: { answer_uri: string } };
+    expect(bundle.not_enough_evidence).toBe(false);
+    expect(bundle.claims.some((c) => c.text === LLM_CLAIM)).toBe(true); // came from the LLM pipeline, not a parallel path
+    expect(bundle.citations.length).toBeGreaterThan(0);
+    expect(bundle.citations.every((c) => c.evidence_uri.startsWith("mv://evidence/") && c.source_span_uri.startsWith("mv://transcripts/"))).toBe(true);
+    expect(bundle.links.answer_uri).toMatch(/^mv:\/\/answers\//);
+    expect(count("ask_ai_runs")).toBe(before + 1); // answer persisted through the existing path
+  });
+
+  it("get_answer reconstructs the same persisted bundle: trust fields preserved, citations aligned with evidence", async () => {
+    await seedEvidence();
+    type Bundle = { answer_id: string; claims: Array<{ support_state: string }>; citations: Array<{ evidence_pointer_id: string }>; evidence: Array<{ evidence_pointer_id: string }> };
+    const asked = await tools(groundedTransport).call("ask_vault", { question: QUESTION }) as { answer_bundle: Bundle };
+    const reloaded = await tools(groundedTransport).call("get_answer", { answer_id: asked.answer_bundle.answer_id }) as { ok: boolean; answer_bundle: Bundle };
+    expect(reloaded.ok).toBe(true);
+    expect(reloaded.answer_bundle.answer_id).toBe(asked.answer_bundle.answer_id);
+    expect(reloaded.answer_bundle.claims.length).toBe(asked.answer_bundle.claims.length);
+
+    // Trust-bearing claim support_state must be preserved (never stronger than the live pipeline).
+    const order = { unsupported: 0, weakly_supported: 1, conflicting: 1, supported: 2 } as Record<string, number>;
+    reloaded.answer_bundle.claims.forEach((claim, i) => {
+      expect(claim.support_state).toBe(asked.answer_bundle.claims[i].support_state);
+      expect(order[claim.support_state]).toBeLessThanOrEqual(order[asked.answer_bundle.claims[i].support_state]);
+    });
+    // Every reconstructed citation pointer must line up with an item in evidence[].
+    const evidencePtrs = new Set(reloaded.answer_bundle.evidence.map((e) => e.evidence_pointer_id));
+    expect(reloaded.answer_bundle.citations.length).toBeGreaterThan(0);
+    for (const c of reloaded.answer_bundle.citations) expect(evidencePtrs.has(c.evidence_pointer_id)).toBe(true);
+
+    expect(await tools(groundedTransport).call("get_answer", { answer_id: "missing" })).toMatchObject({ ok: false, state: "not_found" });
+  });
+
+  it("discards unsupported LLM claims and returns a safe refusal (grounding gate -> no-evidence, NOT llm_failed)", async () => {
+    await seedEvidence();
+    const before = count("ask_ai_runs");
+    // The LLM call SUCCEEDS but its only claim is ungrounded; the grounding gate discards it, leaving no
+    // grounded claims. That is a legitimate evidence-driven refusal (no fabricated answer), not a synthesis
+    // FAILURE — so ask_vault returns a refusal bundle, not `llm_failed`. (A real LLM call failure, exercised
+    // by failingTransport below, still maps to `llm_failed`.)
+    const result = await tools(ungroundedTransport).call("ask_vault", { question: QUESTION }) as { ok: boolean; answer_bundle: { not_enough_evidence: boolean; evidence_confidence: string; claims: unknown[] } };
+    expect(result.ok).toBe(true);
+    expect(result.answer_bundle).toMatchObject({ not_enough_evidence: true, evidence_confidence: "no_evidence" });
+    expect(result.answer_bundle.claims).toHaveLength(0); // the fabricated claim was discarded, none survived
+    expect(JSON.stringify(result)).not.toContain("FABRICATED"); // never surfaces the ungrounded text
+    expect(count("ask_ai_runs")).toBe(before + 1); // a refusal IS persisted (it is not a fake answer)
+  });
+
+  it("setup-required persists no answer when no LLM is configured", async () => {
+    await seedEvidence();
+    const before = count("ask_ai_runs");
+    expect(await tools(null).call("ask_vault", { question: QUESTION })).toMatchObject({ ok: false, state: "setup_required" });
+    expect(count("ask_ai_runs")).toBe(before);
+  });
+
+  it("LLM failure persists no answer", async () => {
+    await seedEvidence();
+    const before = count("ask_ai_runs");
+    expect(await tools(failingTransport).call("ask_vault", { question: QUESTION })).toMatchObject({ ok: false, state: "llm_failed" });
+    expect(count("ask_ai_runs")).toBe(before);
+  });
+
+  it("not-enough-evidence returns the existing persisted refusal", async () => {
+    await seedEvidence();
+    const before = count("ask_ai_runs");
+    const result = await tools(groundedTransport).call("ask_vault", { question: "completely unrelated xyzzy question" }) as { ok: boolean; answer_bundle: { not_enough_evidence: boolean } };
+    expect(result.ok).toBe(true);
+    expect(result.answer_bundle.not_enough_evidence).toBe(true);
+    expect(count("ask_ai_runs")).toBe(before + 1); // refusal IS persisted (existing behavior)
+  });
+
+  it("search_evidence returns scored, provenance-backed cards (not unscored raw chunks), and points users to ask_vault", async () => {
+    await seedEvidence();
+    const result = await tools(null).call("search_evidence", { query: "SQLite source of truth", limit: 5 }) as { evidence: Array<Record<string, unknown>>; note: string };
+    expect(result.evidence.length).toBeGreaterThan(0);
+    const card = result.evidence[0];
+    expect(typeof card.score).toBe("number");
+    expect(String(card.evidence_uri)).toMatch(/^mv:\/\/evidence\//);
+    expect(card.confidence).toBeTruthy();
+    expect(result.note).toMatch(/ask_vault/);
+  });
+
+  it("list_recent_answers and search_vault_answers are size-limited summaries", async () => {
+    await seedEvidence();
+    await tools(groundedTransport).call("ask_vault", { question: QUESTION });
+    const recent = await tools(null).call("list_recent_answers", { limit: 999 }) as { answers: Array<{ answer_uri: string; answer_preview: string }> };
+    expect(recent.answers.length).toBeGreaterThan(0);
+    expect(recent.answers.length).toBeLessThanOrEqual(50); // clamped
+    expect(recent.answers[0].answer_uri).toMatch(/^mv:\/\/answers\//);
+    const found = await tools(null).call("search_vault_answers", { query: "source of truth" }) as { answers: unknown[] };
+    expect(found.answers.length).toBeGreaterThan(0);
+  });
+
+  it("get_memory_object returns provenance/evidence pointers and a not-evidence-alone note", async () => {
+    const memoryId = await seedEvidence();
+    const result = await tools(null).call("get_memory_object", { memory_object_id: memoryId }) as { ok: boolean; memory_object: { evidence: unknown[]; note: string; memory_uri: string } };
+    expect(result.ok).toBe(true);
+    expect(result.memory_object.note).toMatch(/not evidence on its own/i);
+    expect(result.memory_object.memory_uri).toMatch(/^mv:\/\/memory\//);
+  });
+
+  it("get_conflicts uses the conflict repository and returns a safe, size-limited list", async () => {
+    await seedEvidence();
+    const result = await tools(null).call("get_conflicts", {}) as { conflicts: unknown[] };
+    expect(Array.isArray(result.conflicts)).toBe(true); // none seeded -> []
+  });
+
+  it("AnswerBundle carries parallel obsidian:// deep links (vault threaded) that decode back to the mv:// routes", async () => {
+    await seedEvidence();
+    const VAULT = "My Vault";
+    const t = createVaultTools({ db, api: makeApi(groundedTransport), obsidianVault: VAULT });
+    const result = await t.call("ask_vault", { question: QUESTION }) as { ok: boolean; answer_bundle: AnswerBundle };
+    expect(result.ok).toBe(true);
+    const b = result.answer_bundle;
+    // Every external link is an obsidian://transcript-memory-vault deep link whose decoded route is the
+    // SAME canonical mv:// URI (navigation only; no extra/secret data is smuggled in the link).
+    const decodeRoute = (obsidianUri: string | undefined): string | null => {
+      expect(obsidianUri).toBeTruthy();
+      const url = new URL(obsidianUri!);
+      expect(url.protocol).toBe("obsidian:");
+      expect(url.host).toBe("transcript-memory-vault");
+      expect(url.searchParams.get("vault")).toBe(VAULT);
+      return url.searchParams.get("route");
+    };
+    expect(b.citations.length).toBeGreaterThan(0);
+    for (const c of b.citations) {
+      expect(decodeRoute(c.obsidian_uri)).toBe(c.evidence_uri);
+      expect(decodeRoute(c.source_span_obsidian_uri)).toBe(c.source_span_uri);
+      expect(c.obsidian_internal_uri?.startsWith("mv://")).toBe(true); // existing clickback unchanged
+    }
+    for (const e of b.evidence) {
+      expect(decodeRoute(e.obsidian_uri)).toBe(e.evidence_uri);
+      expect(decodeRoute(e.source_span_obsidian_uri)).toBe(e.source_span_uri);
+    }
+    expect(decodeRoute(b.links.answer_obsidian_uri)).toBe(b.links.answer_uri);
+    expect(decodeRoute(b.links.graph_obsidian_uri)).toBe(b.links.graph_uri);
+    expect(b.links.evidence_obsidian_uris?.map(decodeRoute)).toEqual(b.links.evidence_uris);
+    expect(b.links.source_span_obsidian_uris?.map(decodeRoute)).toEqual(b.links.source_span_uris);
+  });
+
+  it("inspection tools (search_evidence, get_memory_object) carry obsidian:// deep links beside the mv:// links", async () => {
+    const memoryId = await seedEvidence();
+    const VAULT = "Vault Two";
+    const t = createVaultTools({ db, api: makeApi(null), obsidianVault: VAULT });
+    const decodeRoute = (obsidianUri: string | undefined): string | null => {
+      expect(obsidianUri).toBeTruthy();
+      const url = new URL(obsidianUri!);
+      expect(url.searchParams.get("vault")).toBe(VAULT);
+      return url.searchParams.get("route");
+    };
+    const search = await t.call("search_evidence", { query: "SQLite source of truth", limit: 5 }) as {
+      evidence: Array<{ evidence_uri: string; obsidian_uri?: string; source_span_uri: string | null; source_span_obsidian_uri?: string | null }>;
+    };
+    expect(search.evidence.length).toBeGreaterThan(0);
+    for (const card of search.evidence) {
+      expect(decodeRoute(card.obsidian_uri)).toBe(card.evidence_uri);
+      if (card.source_span_uri) expect(decodeRoute(card.source_span_obsidian_uri ?? undefined)).toBe(card.source_span_uri);
+      else expect(card.source_span_obsidian_uri).toBeNull();
+    }
+    const mem = await t.call("get_memory_object", { memory_object_id: memoryId }) as {
+      memory_object: { memory_uri: string; memory_obsidian_uri: string; evidence: Array<{ evidence_uri: string; obsidian_uri: string; source_span_uri: string; source_span_obsidian_uri: string }> };
+    };
+    expect(decodeRoute(mem.memory_object.memory_obsidian_uri)).toBe(mem.memory_object.memory_uri);
+    expect(mem.memory_object.evidence.length).toBeGreaterThan(0);
+    for (const e of mem.memory_object.evidence) {
+      expect(decodeRoute(e.obsidian_uri)).toBe(e.evidence_uri);
+      expect(decodeRoute(e.source_span_obsidian_uri)).toBe(e.source_span_uri);
+    }
+  });
+
+  it("omits the vault param from deep links when no obsidianVault is configured", async () => {
+    await seedEvidence();
+    const result = await tools(groundedTransport).call("ask_vault", { question: QUESTION }) as { answer_bundle: AnswerBundle };
+    const uri = result.answer_bundle.links.answer_obsidian_uri!;
+    expect(uri.startsWith("obsidian://transcript-memory-vault?")).toBe(true);
+    expect(new URL(uri).searchParams.get("vault")).toBeNull();
+    expect(new URL(uri).searchParams.get("route")).toBe(result.answer_bundle.links.answer_uri);
+  });
+
+  it("never leaks the API key / Authorization header / raw provider error into MCP output or persisted rows", async () => {
+    await seedEvidence();
+    const ok = await tools(groundedTransport).call("ask_vault", { question: QUESTION });
+    const fail = await tools(failingTransport).call("ask_vault", { question: QUESTION });
+    const dump = JSON.stringify([ok, fail, db.prepare("SELECT * FROM ask_ai_runs").all(), db.prepare("SELECT * FROM ai_answers").all()]);
+    for (const forbidden of [SECRET, "Bearer", "Authorization", "chat/completions", "upstream"]) {
+      expect(dump).not.toContain(forbidden);
+    }
+  });
+});
+
+// Inject an empty settings reader so these env-only cases never depend on a stray /tmp/data.json on disk.
+const noFile = { readSettingsFile: () => undefined };
+describe("loadMcpConfig", () => {
+  it("requires TMV_DB_PATH and builds settings from env LLM when no settings file is present", () => {
+    expect(() => loadMcpConfig({})).toThrow(McpConfigError);
+    expect(() => loadMcpConfig({})).toThrow(/TMV_DB_PATH/); // missing DB path fails with a clear, actionable message
+    const cfg = loadMcpConfig({ TMV_DB_PATH: "/tmp/vault.sqlite", TMV_LLM_PROVIDER: "openai", TMV_LLM_MODEL: "gpt-x", TMV_LLM_API_KEY: SECRET }, noFile);
+    expect(cfg.dbPath).toBe("/tmp/vault.sqlite");
+    expect(cfg.llmReady).toBe(true);
+    expect(cfg.settings.mode).toBe("external");
+    expect(cfg.settingsSource.loaded).toBe(false); // no data.json -> env/defaults
+  });
+
+  it("reports llmReady false when the LLM is not fully configured", () => {
+    expect(loadMcpConfig({ TMV_DB_PATH: "/tmp/v.sqlite" }, noFile).llmReady).toBe(false); // no model/key
+  });
+
+  it("threads TMV_OBSIDIAN_VAULT into obsidianVault (optional; trimmed; absent -> undefined)", () => {
+    expect(loadMcpConfig({ TMV_DB_PATH: "/tmp/v.sqlite", TMV_OBSIDIAN_VAULT: "My Vault" }, noFile).obsidianVault).toBe("My Vault");
+    expect(loadMcpConfig({ TMV_DB_PATH: "/tmp/v.sqlite" }, noFile).obsidianVault).toBeUndefined();
+    expect(loadMcpConfig({ TMV_DB_PATH: "/tmp/v.sqlite", TMV_OBSIDIAN_VAULT: "   " }, noFile).obsidianVault).toBeUndefined();
+  });
+});

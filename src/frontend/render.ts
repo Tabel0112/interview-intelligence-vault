@@ -1,9 +1,13 @@
 import { appShell, emptyState, escapeHtml, routeButton, score, trustBadge } from "./html.js";
 import { routeHref } from "./router.js";
-import type { EvidenceView, FrontendAnswerView, MemoryView, PageContext, RenderedPage, ReviewItemView, SearchResultView, TranscriptView, TrustState } from "./types.js";
+import { DEGRADED_MEMORY_REASON } from "./types.js";
+import type { EvidenceView, FrontendAnswerView, MemoryView, PageContext, RenderedPage, ReviewItemView, SearchResultView, SetupSummary, TranscriptView, TrustState } from "./types.js";
 
 const section = (title: string, body: string, className = "") => `<section class="vault-section${className ? ` ${escapeHtml(className)}` : ""}"><h2>${escapeHtml(title)}</h2>${body}</section>`;
 const links = (items: Array<{ href: string; label: string }>) => `<div class="route-actions">${items.map((item) => routeButton(item.href, item.label)).join("")}</div>`;
+/** A light status chip: a small muted pill with a state dot. State is carried by the TEXT (not color alone). */
+const statusChip = (state: "ok" | "warn" | "error", label: string) =>
+  `<span class="tmv-status tmv-status--${state}">${escapeHtml(label)}</span>`;
 const correctionForm = (targetType: string, targetId: string) => ["memory_object", "answer_claim", "citation", "graph_node", "graph_edge", "evidence", "speaker", "answer", "span", "transcript"].includes(targetType)
   ? `<form data-action="correction"><input type="hidden" name="targetType" value="${escapeHtml(targetType)}"><input type="hidden" name="targetId" value="${escapeHtml(targetId)}">
       <label>Append-only correction <textarea name="correctionText" required></textarea></label><label>Reason <input name="reason"></label>
@@ -75,19 +79,57 @@ function transcriptView(transcript: TranscriptView, selectedSpanId?: string): st
 function memoryView(view: MemoryView): string {
   const memory = view.memory;
   const warning = view.trustState === "strong" ? "" : `<aside class="trust-warning">${trustBadge(view.trustState)} This memory is not independent strong truth.</aside>`;
+  // A memory in a reviewable state gets the same Approve/Reject controls here as in the review queue,
+  // so following a review item to its memory page is never a dead end.
+  const reviewable = memory.status === "needs_review" || memory.status === "weak";
+  // Same actionability rule as the review queue: a memory with no live evidence span (e.g. its source
+  // transcript was deleted) is degraded — Approve is omitted with a warning; Reject/Dismiss stays available.
+  const hasLiveEvidence = memory.evidenceSpanIds.length > 0;
+  const reviewSection = reviewable
+    ? section("Review decision", `<p>Approve to promote this memory to active, citable evidence, or Reject to remove it from Ask AI and search. Both are append-only and never edit raw transcript text.</p>${memoryReviewControls(memory.id, { canApprove: hasLiveEvidence, degradedReason: hasLiveEvidence ? undefined : DEGRADED_MEMORY_REASON })}`)
+    : "";
   return `${warning}<article class="memory-object">
     <p>${trustBadge(view.trustState)} ${escapeHtml(memory.type)} · confidence ${score(memory.confidence)} (${escapeHtml(memory.confidenceLabel)})</p>
     <h2>${escapeHtml(memory.title || memory.type)}</h2><p>${escapeHtml(memory.body)}</p>
     <dl><dt>Canonical status</dt><dd>${escapeHtml(memory.status)}</dd><dt>Evidence spans</dt><dd>${memory.evidenceSpanIds.length}</dd><dt>User corrected</dt><dd>${memory.userCorrected ? "yes" : "no"}</dd><dt>Duplicate of</dt><dd>${escapeHtml(memory.duplicateOfId ?? "none")}</dd></dl>
   </article>${section("Evidence", view.evidence.map(evidenceCard).join("") || emptyState("No linked evidence pointers", "This memory cannot be treated as strong."))}
   ${view.conflicts.length ? section("Conflicts", view.conflicts.map((item) => `<article>${trustBadge("conflicting")} <strong>${escapeHtml(item.summary)}</strong><p>${escapeHtml(item.explanation)}</p></article>`).join("")) : ""}
+  ${reviewSection}
   ${section("Submit a correction", correctionForm("memory_object", memory.id))}`;
 }
 
+// Approve/Reject operate on a memory object's review status via reviewMemoryObject. They are shown
+// only when the review item is safely tied to a real memory_object id — never creating fake evidence
+// or editing raw transcript text. The submit handler reads memoryId from this form. A degraded memory
+// (zero live evidence, e.g. its source transcript was deleted) CANNOT be approved — Approve is omitted and
+// a clear warning is shown — but it stays dismissible via Reject so it is never a dead/actionless item.
+const memoryReviewControls = (memoryId: string, options: { canApprove?: boolean; degradedReason?: string } = {}): string => {
+  // Presentation only: the degraded warning is the same reason text, now in a warning callout that also
+  // spells out WHY Approve is unavailable. The canApprove gate itself is unchanged.
+  const warning = options.degradedReason
+    ? `<aside class="trust-warning tmv-callout tmv-callout--warning">${trustBadge("no_evidence", "Evidence removed")} ${escapeHtml(options.degradedReason)} <em>Approve is unavailable because there is no live evidence to promote — you can still Reject / Dismiss.</em></aside>`
+    : "";
+  const approve = options.canApprove === false ? "" : `<button type="submit" name="decision" value="approve" class="tmv-btn tmv-btn-primary">Approve</button>`;
+  return `${warning}<form data-action="review" class="review-actions"><input type="hidden" name="memoryId" value="${escapeHtml(memoryId)}">
+      ${approve}<button type="submit" name="decision" value="reject" class="tmv-btn tmv-btn-secondary">${options.canApprove === false ? "Reject / Dismiss" : "Reject"}</button></form><div data-form-result></div>`;
+};
+
+const reviewActions = (item: ReviewItemView): string => {
+  // memory_needs_review is always a memory_object; weak_evidence may be attached to a memory_object.
+  if (item.targetType === "memory_object" && (item.type === "memory_needs_review" || item.type === "weak_evidence")) {
+    return memoryReviewControls(item.targetId, { canApprove: item.canApprove, degradedReason: item.degradedReason });
+  }
+  // Weak evidence not tied to a memory object: no safe direct Approve/Reject — explain instead.
+  if (item.type === "weak_evidence") {
+    return `<p class="trust-warning">This weak-evidence item is attached to a ${escapeHtml(item.targetType)}, not a memory object, so it has no direct Approve/Reject. Open the linked evidence and use the append-only correction below.</p>`;
+  }
+  return "";
+};
+
 function reviewCard(item: ReviewItemView): string {
-  return `<article class="review-card">${trustBadge(item.trustState)}<h3><a href="${escapeHtml(item.href)}">${escapeHtml(item.title)}</a></h3>
+  return `<article class="review-card tmv-card">${trustBadge(item.trustState)}<h3 class="tmv-section-header"><a href="${escapeHtml(item.href)}">${escapeHtml(item.title)}</a></h3>
     <p>${escapeHtml(item.detail)}</p><small>${escapeHtml(item.severity)} severity · ${escapeHtml(item.status)} · ${escapeHtml(item.type)} · ${escapeHtml(item.targetType)}:${escapeHtml(item.targetId)}</small>
-    <a href="${escapeHtml(routeHref.review(item.id))}">Review and correct</a></article>`;
+    <a href="${escapeHtml(routeHref.review(item.id))}">Review and correct</a>${reviewActions(item)}</article>`;
 }
 
 function searchCard(item: SearchResultView): string {
@@ -107,16 +149,124 @@ function healthView(health: NonNullable<Awaited<ReturnType<PageContext["api"]["g
   const status = health.status === "ready" ? trustBadge("strong", "database connected")
     : health.status === "unsupported" ? trustBadge("no_evidence", "desktop only")
       : health.status === "error" ? trustBadge("broken", "startup failed") : trustBadge("needs_review", "initializing");
-  return section("Database health", `<article class="database-health">${status}<dl>
+  return section("Database health", `<article class="database-health tmv-card">${status}<dl>
     <dt>SQLite storage</dt><dd>${health.realSqliteStorage ? "real local SQLite" : "not connected"}</dd>
     <dt>Migration status</dt><dd>${escapeHtml(health.migrationStatus)}</dd>
     <dt>Packaged migrations</dt><dd>${health.packagedMigrationCount}</dd>
     <dt>Applied migrations</dt><dd>${health.appliedMigrationCount}</dd>
-    <dt>Database location</dt><dd>${escapeHtml(health.databasePath ?? "unavailable")}</dd>
+    <dt>Database location</dt><dd><code class="tmv-code">${escapeHtml(health.databasePath ?? "unavailable")}</code></dd>
     <dt>Last initialization error</dt><dd>${escapeHtml(health.lastInitializationError ?? "none")}</dd>
     <dt>Native binding target</dt><dd>${escapeHtml(health.nativeBindingTarget ?? "unresolved")}</dd>
     <dt>Packaged native targets</dt><dd>${escapeHtml(health.packagedNativeTargets.join(", ") || "none")}</dd>
-  </dl></article>`, "database-health-section");
+  </dl>
+  <p class="tmv-callout tmv-callout--info">LLM and embedding providers, models, and API keys are configured in the Obsidian plugin <strong>Settings</strong> tab. Keys are never shown here or in generated notes.</p></article>`, "database-health-section");
+}
+
+const SUPPORTED_UPLOAD_FORMATS = ".txt, .md, .srt, .vtt";
+
+/** Post-import guidance (informational; no new backend behavior). Collapsed so it never crowds the CTA. */
+function uploadNextSteps(): string {
+  return `<details class="tmv-advanced upload-next-steps"><summary>After importing — recommended next steps</summary>
+    <ol class="upload-next-list">
+      <li>Import stores the immutable raw transcript in local SQLite (the source of truth).</li>
+      <li>Run <strong>AI extraction</strong> if the transcript was imported before an LLM was configured (command: "Run AI extraction", or open the transcript).</li>
+      <li>Rebuild the <strong>embedding index</strong> after changing embedding settings (command: "Rebuild Embedding Index").</li>
+      <li>Sync <strong>generated graph notes</strong> for Obsidian's native graph (the "Native Obsidian graph" card below, or command: "Sync generated graph notes").</li>
+      <li>Chat in <strong>Claude Desktop</strong> (via MCP) — the recommended Ask AI experience.</li>
+    </ol></details>`;
+}
+
+/**
+ * The obvious, primary upload surface — a drop-zone form reused by the dashboard and the /upload route.
+ * Uses the EXISTING `data-action="upload"` form + hidden filename/rawText fields, so upload/ingest backend
+ * behavior is unchanged. The native file input is visually hidden (but keyboard-focusable) inside the
+ * styled "Choose transcript" label; `data-dropzone` adds the drag visual + drop-to-fill in app.ts. Layout:
+ * short description → drop-zone → filename status → submit (secondary) → collapsed next steps.
+ */
+function uploadCard(): string {
+  // Compact, product-like: a Choose button + inline filename status on one row, quiet formats helper text,
+  // a secondary Upload submit, and a subtle "drag a file here" hint. Drag/drop is an enhancement — the whole
+  // form is the drop target (`data-dropzone`), styled only on drag (no permanent dashed box). The native
+  // file input is visually hidden inside the styled label but stays keyboard-focusable and `required`.
+  return `<p class="upload-desc">Import an immutable transcript source into the evidence vault.</p>
+    <form data-action="upload" class="upload-form" data-dropzone>
+      <div class="upload-row">
+        <label class="upload-choose tmv-btn tmv-btn-primary">Choose transcript<input class="upload-file-input" name="file" type="file" accept=".txt,.md,.srt,.vtt" required></label>
+        <span class="upload-file-status" data-file-status>No file selected</span>
+      </div>
+      <p class="upload-formats">Supports ${SUPPORTED_UPLOAD_FORMATS}</p>
+      <input name="filename" type="hidden"><textarea name="rawText" hidden></textarea>
+      <div class="upload-actions"><button type="submit" class="tmv-btn tmv-btn-secondary upload-submit">Upload transcript</button><span class="upload-drop-hint">or drag a file here</span></div>
+    </form>
+    <p data-loading-message hidden>Importing immutable transcript source…</p><div data-form-result></div>
+    ${uploadNextSteps()}`;
+}
+
+/** Non-secret Claude Desktop MCP config snippet. NEVER contains an API key (the key stays in data.json). */
+function mcpConfigSnippet(dbPath?: string): string {
+  return `{
+  "mcpServers": {
+    "transcript-memory-vault": {
+      "command": "node",
+      "args": ["<path-to-plugin-checkout>/dist/mcp/server.cjs"],
+      "env": {
+        "TMV_DB_PATH": "${dbPath ?? "<path-to>/transcript-memory.sqlite"}"
+      }
+    }
+  }
+}`;
+}
+
+/**
+ * The Claude/MCP setup-status card. Renders ONLY the non-secret `SetupSummary` (key PRESENCE + provider/
+ * model/dimensions/paths) — never an API key value. Falls back to a minimal message when the summary is
+ * not wired (headless/dev). Copy buttons carry only non-secret paths/snippets.
+ */
+function setupCard(setup: SetupSummary | null, fallbackDbPath?: string): string {
+  const dbPath = setup?.databasePath ?? fallbackDbPath;
+  const snippet = mcpConfigSnippet(dbPath);
+
+  // Default view: one-line explanation, a compact status row, and a quiet metadata line — no paths, no JSON.
+  const embeddingLabel = !setup
+    ? ""
+    : setup.embeddingHealth === "ok" ? "Embeddings OK"
+      : setup.embeddingHealth === "reindex_required" ? "Reindex needed"
+        : "Embeddings not set up";
+  const statusRow = setup
+    ? `<div class="setup-status">
+        ${statusChip(setup.llmConfigured ? "ok" : "warn", setup.llmConfigured ? "LLM ready" : "LLM not configured")}
+        ${statusChip(setup.embeddingHealth === "ok" ? "ok" : "warn", embeddingLabel)}
+        ${statusChip(setup.reindexNeeded ? "warn" : "ok", setup.reindexNeeded ? "Reindex needed" : "Reindex not needed")}
+      </div>`
+    : `<p class="setup-meta">Detailed setup status appears inside the Obsidian plugin.</p>`;
+  const metaBits = setup
+    ? [
+        setup.llmProvider ? `${setup.llmProvider}${setup.llmModel ? ` / ${setup.llmModel}` : ""}` : "",
+        setup.embeddingProvider ? `${setup.embeddingProvider}${setup.embeddingModel ? ` / ${setup.embeddingModel}` : ""}${setup.embeddingDimensions ? ` / ${setup.embeddingDimensions}d` : ""}` : "",
+      ].filter(Boolean)
+    : [];
+  const metaLine = metaBits.length ? `<p class="setup-meta">${metaBits.map(escapeHtml).join(" · ")}</p>` : "";
+
+  // Progressive disclosure: full DB path, data.json path, and the FULL MCP JSON config live ONLY here,
+  // inside a collapsed <details> — never in the default dashboard view. No API keys anywhere.
+  const setupDetails = `<details class="tmv-advanced setup-details"><summary>Setup details</summary>
+      ${dbPath
+        ? `<p class="setup-detail-label">Database — <code>TMV_DB_PATH</code></p><p class="mcp-db-path"><code class="tmv-code">${escapeHtml(dbPath)}</code></p>`
+        : `<p class="setup-meta"><code>TMV_DB_PATH</code> will appear once the database has initialized.</p>`}
+      ${setup?.settingsPath ? `<p class="setup-detail-label">Settings file — data.json</p><p><code class="tmv-code">${escapeHtml(setup.settingsPath)}</code></p>` : ""}
+      <p class="setup-detail-label">Claude Desktop MCP config <span class="setup-meta">(no API keys — the key stays in data.json)</span></p>
+      <pre class="tmv-code mcp-config-snippet">${escapeHtml(snippet)}</pre>
+      <div class="setup-detail-actions">${dbPath ? `<button type="button" class="tmv-btn tmv-btn-secondary" data-copy="${escapeHtml(snippet)}">Copy MCP config</button>` : ""}</div>
+      <p class="setup-meta">See <code>docs/MCP.md</code> for the full setup. API keys are configured in the Obsidian Settings tab and never shown here.</p>
+    </details>`;
+
+  return `<p class="setup-intro">Use Claude Desktop for normal chat. This plugin stores, indexes, reviews, and visualizes the evidence vault.</p>
+    ${statusRow}
+    ${metaLine}
+    <div class="setup-actions">
+      ${dbPath ? `<button type="button" class="tmv-btn tmv-btn-secondary" data-copy="${escapeHtml(dbPath)}">Copy DB path</button>` : ""}
+    </div>
+    ${setupDetails}`;
 }
 
 export async function renderPage(context: PageContext): Promise<RenderedPage> {
@@ -124,29 +274,133 @@ export async function renderPage(context: PageContext): Promise<RenderedPage> {
   switch (route.id) {
     case "dashboard": {
       const view = await api.getDashboard();
+      // Compact ready line — no full DB path on the first screen (it lives in the setup card's details).
       const readyStatus = view.health?.status === "ready"
-        ? `<aside class="immutable-notice status-banner"><strong>Transcript Memory Vault is ready.</strong> ${view.health.firstRun ? "Upload a transcript to begin. " : ""}Imported raw transcript snapshots are immutable and stored in local SQLite at ${escapeHtml(view.health.databasePath)}.</aside>` : "";
+        ? `<aside class="status-banner tmv-callout tmv-callout--success">${statusChip("ok", "Vault ready")} <strong>Transcript Memory Vault is ready.</strong> ${view.health.firstRun ? "Upload a transcript to begin. " : ""}Imported raw transcript snapshots are immutable; SQLite is the source of truth.</aside>` : "";
       const startupProblem = view.health && view.health.status !== "ready"
         ? `<aside class="trust-warning">${view.health.status === "unsupported" ? trustBadge("no_evidence", "desktop only") : trustBadge("broken", "startup unavailable")} ${escapeHtml(view.health.lastInitializationError ?? "Database initialization has not completed.")}</aside>` : "";
-      const body = `${readyStatus}${startupProblem}<div class="metric-grid"><span>${view.totalTranscriptCount} total transcripts</span>${routeButton(routeHref.reviewQueue(), `${view.reviewCount} review items`, "route-action metric-action")}<span>${view.weakCount} weak/review</span><span>${view.conflictCount} conflicts</span><span>${view.brokenCount} broken pointers</span></div>
+      const llmBanner = view.llmRequired && view.llmReady === false
+        ? `<aside class="trust-warning llm-setup-required">${trustBadge("no_evidence", "LLM required")} AI is not configured. Ask AI needs an external LLM (grounded extraction + answer synthesis) AND an external embedding provider (retrieval) — open plugin Settings and configure both. Transcripts still import; run the "Run AI extraction" command afterward. (Embedding status is shown in the setup card below.)</aside>`
+        : "";
+      const sync = view.generatedSync;
+      const syncStatusLine = !sync
+        ? "Generated graph notes status is unavailable in this context."
+        : !sync.synced
+          ? "Never synced — Obsidian's native graph has no generated notes yet. Sync after importing transcripts, running AI extraction, or asking AI."
+          : `Last synced ${escapeHtml(sync.lastSyncedAt ?? "unknown")} · ${sync.fileCount ?? 0} files · ${sync.graphNodeCount ?? 0} nodes · ${sync.graphEdgeCount ?? 0} edges.`;
+      const syncWarn = sync?.status === "failed"
+        ? `<aside class="trust-warning">${trustBadge("broken", "last sync had errors")} ${escapeHtml(sync.error ?? "Some generated files could not be written.")}</aside>` : "";
+
+      const dbPath = view.health?.databasePath ?? undefined;
+      const setup = (await api.getSetupSummary?.()) ?? null;
+
+      // 1. Upload — the most obvious, primary first action.
+      const uploadSection = section("Upload a transcript", uploadCard(), "upload-section tmv-card--primary");
+
+      // 2. Claude Desktop / MCP setup + status (non-secret setup summary).
+      const setupSection = section("Use Claude Desktop with this vault", setupCard(setup, dbPath), "mcp-card tmv-card");
+
+      // 3. One calm "Review & attention" card: light status chips summarise counts, then the top items.
+      const attention = view.attention ?? [];
+      const reviewMetrics = `<div class="review-metrics">
+          ${statusChip(view.reviewCount ? "warn" : "ok", `${view.reviewCount} to review`)}
+          ${view.conflictCount ? statusChip("warn", `${view.conflictCount} conflicts`) : ""}
+          ${view.brokenCount ? statusChip("error", `${view.brokenCount} broken pointers`) : ""}
+          ${statusChip("ok", `${view.totalTranscriptCount} transcripts`)}
+        </div>`;
+      const attentionList = attention.length
+        ? `<ul class="attention-list">${attention.map((item) => `<li class="attention-item">${trustBadge(item.trustState)} <a href="${escapeHtml(item.href)}">${escapeHtml(item.title)}</a> <small>${escapeHtml(item.detail)}</small></li>`).join("")}</ul>`
+        : `<p class="setup-meta">Nothing needs attention right now.</p>`;
+      const reviewSection = section("Review and attention", `${reviewMetrics}${attentionList}${links([{ href: routeHref.reviewQueue(), label: "Open review queue" }])}`, "review-summary-section attention-section");
+
+      // 4. Graph / evidence viewer (generated notes + a link to the live plugin graph).
+      const graphSection = section("Native Obsidian graph", `<p>These generated Markdown notes power Obsidian's <strong>native (ribbon) graph</strong>. The plugin's own Graph page reads SQLite live; the native graph only sees Markdown files and wiki links, so it needs these notes. SQLite stays the source of truth — editing a generated note never changes memory.</p>
+        <p class="generated-sync-status">${syncStatusLine}</p>${syncWarn}
+        <form data-action="sync-graph"><button type="submit" class="tmv-btn tmv-btn-secondary">Sync Obsidian graph notes</button></form>
+        <p data-loading-message hidden>Generating Markdown graph notes…</p><div data-form-result></div>
+        ${links([{ href: routeHref.graph(), label: "Open graph & evidence viewer" }])}`, "generated-notes-section");
+
+      // 5. Recent transcripts (links to the full Transcripts route).
+      const transcriptsSection = section("Transcripts", `${view.transcripts.map((item) => `<article><a href="${escapeHtml(routeHref.transcript(item.id))}">${escapeHtml(item.title)}</a> · ${item.spanCount} spans</article>`).join("") || emptyState("No transcripts", "Upload a transcript to begin.", { href: routeHref.upload(), label: "Upload transcript" })}
+        ${links([{ href: routeHref.transcripts(), label: "All transcripts" }, { href: routeHref.upload(), label: "Upload transcript" }])}`, "transcripts-section");
+
+      // 6. Recent answers/evidence.
+      const recentAnswers = section("Recent answers", view.recentAnswers.map((item) => `<article>${trustBadge(item.confidence)} <a href="${escapeHtml(routeHref.answer(item.id))}">${escapeHtml(item.question)}</a></article>`).join("")
+        || emptyState("No answers yet", "Ask in Claude Desktop for chat. Answers run there — or via Internal Ask AI under Advanced tools — appear here."), "recent-answers-section");
+
+      // 7. Advanced / internal tools — collapsed, low prominence.
+      const advancedSection = section("Advanced / Internal tools", `<details class="tmv-advanced advanced-tools"><summary>Show advanced / internal tools</summary>
+        <p>Debugging and inspection tools. For normal chat, use Claude Desktop.</p>
+        ${links([{ href: routeHref.search(), label: "Search vault" }, { href: routeHref.ask(), label: "Internal Ask AI" }])}
         ${view.health ? healthView(view.health) : ""}
-        ${section("Quick actions", links([{ href: routeHref.upload(), label: "Upload transcript" }, { href: routeHref.ask(), label: "Ask AI" }, { href: routeHref.search(), label: "Search vault" }, { href: routeHref.graph(), label: "Open graph" }, { href: routeHref.reviewQueue(), label: "Review queue" }]), "quick-actions")}
-        ${section("Transcripts", view.transcripts.map((item) => `<article><a href="${escapeHtml(routeHref.transcript(item.id))}">${escapeHtml(item.title)}</a> · ${item.spanCount} spans</article>`).join("") || emptyState("No transcripts", "Upload a transcript to begin.", { href: routeHref.upload(), label: "Upload transcript" }), "transcripts-section")}
-        ${section("Recent Ask AI answers", view.recentAnswers.map((item) => `<article>${trustBadge(item.confidence)} <a href="${escapeHtml(routeHref.answer(item.id))}">${escapeHtml(item.question)}</a></article>`).join("") || emptyState("No answers", "Ask a question after adding evidence.", { href: routeHref.ask(), label: "Ask AI" }), "recent-answers-section")}`;
+      </details>`, "advanced-tools-section");
+
+      const body = `${readyStatus}${startupProblem}${llmBanner}
+        ${uploadSection}
+        ${setupSection}
+        ${reviewSection}
+        ${graphSection}
+        ${transcriptsSection}
+        ${recentAnswers}
+        ${advancedSection}`;
       return { title: "Dashboard", html: appShell("Dashboard", body) };
     }
     case "upload":
       return { title: "Upload transcript", html: appShell("Upload transcript", `<aside class="immutable-notice">Uploads become immutable raw transcript sources. Re-uploading identical content reuses the existing transcript.</aside>
-        <form data-action="upload"><label>Transcript file (.txt, .md, .srt, .vtt) <input name="file" type="file" accept=".txt,.md,.srt,.vtt" required></label>
-        <p data-file-status>No file selected.</p><input name="filename" type="hidden"><textarea name="rawText" hidden></textarea>
-        <button type="submit">Import transcript</button></form><p data-loading-message hidden>Importing immutable transcript source...</p><div data-form-result></div>`) };
+        ${section("Upload a transcript", uploadCard(), "upload-section tmv-card--primary")}`) };
+    case "transcripts": {
+      // Viewer-mode Transcripts list: a read-only projection of listTranscripts(). No new backend behavior;
+      // each item links to the existing immutable transcript detail route.
+      const transcripts = await api.listTranscripts();
+      const list = transcripts.map((item) => `<article class="transcript-list-item">
+        <h3><a href="${escapeHtml(routeHref.transcript(item.id))}">${escapeHtml(item.title)}</a></h3>
+        <p>${trustBadge(item.processingStatus === "ready" ? "strong" : item.processingStatus === "failed" ? "broken" : "needs_review", item.processingStatus)} ${item.spanCount} spans · ${item.speakerCount} speaker(s) · ${escapeHtml(item.sourceType)} · imported ${escapeHtml(item.importedAt)}</p>
+      </article>`).join("");
+      const body = `<aside class="immutable-notice">Imported raw transcript sources are immutable. This is a read-only list; open one to view its spans or delete it.</aside>
+        ${transcripts.length
+          ? section(`${transcripts.length} transcript(s)`, list)
+          : emptyState("No transcripts yet", "Upload a transcript to begin building the evidence vault.", { href: routeHref.upload(), label: "Upload transcript" })}
+        ${links([{ href: routeHref.upload(), label: "Upload transcript" }])}`;
+      return { title: "Transcripts", html: appShell("Transcripts", body) };
+    }
     case "transcript": {
       const view = await api.getTranscript(route.params.id);
-      return { title: view?.title ?? "Transcript not found", html: appShell(view?.title ?? "Transcript not found", view ? transcriptView(view, route.query.get("span") ?? undefined) : emptyState("Transcript not found", "The requested immutable source is unavailable.")) };
+      if (!view) return { title: "Transcript not found", html: appShell("Transcript not found", emptyState("Transcript not found", "The requested immutable source is unavailable.")) };
+      // Danger zone: deleting a whole transcript is allowed (raw text stays immutable — there is no edit path).
+      // Tucked in a <details> with a required confirmation so it cannot be clicked by accident.
+      const dangerZone = `${section("Danger zone", `<details class="danger-zone"><summary>Delete this transcript</summary>
+        <aside class="trust-warning">${trustBadge("broken", "irreversible")} This will permanently delete this transcript and remove or invalidate generated evidence, memories, answers, conflicts, and graph notes that depend on it. Transcript text cannot be edited. If the transcript is wrong, delete it and re-import the corrected file. This action cannot be undone.</aside>
+        <form data-action="delete-transcript"><input type="hidden" name="transcriptId" value="${escapeHtml(view.id)}">
+        <label><input type="checkbox" name="confirm" required> I understand this permanently deletes the transcript and its dependent data, and cannot be undone.</label>
+        <button type="submit">Delete transcript</button></form>
+        <p data-loading-message hidden>Deleting transcript and dependent data…</p><div data-form-result></div></details>`, "danger-zone-section")}`;
+      return { title: view.title, html: appShell(view.title, `${transcriptView(view, route.query.get("span") ?? undefined)}${dangerZone}`) };
     }
     case "ask": {
+      const llm = await api.getLlmStatus();
+      // Viewer-mode: Ask AI is DEMOTED to an internal/debug tool (reached via Advanced), but stays fully
+      // functional. Claude Desktop (MCP) is the recommended chat UI. This is the SAME evidence-grounded,
+      // LLM-required pipeline — not a legacy or local mode.
+      const internalDebugCallout = `<aside class="trust-warning ask-internal-callout">Internal Ask AI — for debugging. Use Claude Desktop for normal chat.</aside>`;
+      const claudeDesktopBanner = `${internalDebugCallout}<aside class="immutable-notice claude-desktop-banner">Claude Desktop (via MCP) is the recommended chat UI; this page runs the same evidence-grounded, LLM-required pipeline.</aside>`;
+      if (llm.required && !llm.ready) {
+        return { title: "Ask AI", html: appShell("Ask AI", `${claudeDesktopBanner}<section class="trust-warning ask-setup-required">${trustBadge("no_evidence", "LLM required")}<h2>Set up an LLM to use Ask AI</h2>
+          <p>Ask AI answers only from your transcripts, with citations — but it needs a configured external LLM to generate the answer. Add a provider, model, and API key in the plugin Settings.</p>
+          ${links([{ href: routeHref.dashboard(), label: "Open dashboard" }])}</section>`) };
+      }
+      // Production embedding gate: block factual answers until an API embedding provider is configured and the
+      // index matches it (token-hash-v1 is dev/test only, never a production retrieval path).
+      const embedding = (await api.getEmbeddingStatus?.()) ?? { required: false, state: "ok" as const };
+      if (embedding.required && embedding.state !== "ok") {
+        const setup = embedding.state === "setup_required";
+        return { title: "Ask AI", html: appShell("Ask AI", `${claudeDesktopBanner}<section class="trust-warning ask-setup-required">${trustBadge("no_evidence", setup ? "Embeddings required" : "Reindex required")}<h2>${setup ? "Set up an API embedding provider to use Ask AI" : "Rebuild the embedding index to use Ask AI"}</h2>
+          <p>${setup
+            ? "Ask AI uses semantic retrieval over your transcripts and needs a configured API embedding provider (provider, model, dimensions, API key) in Settings. token-hash-v1 is a dev/test seam, not a production retrieval path."
+            : "The embedding index was built with a different or stale provider (e.g. after changing embedding settings). Run the \"Rebuild embedding index\" command before Ask AI can answer."}${embedding.reason ? ` ${escapeHtml(embedding.reason)}` : ""}</p>
+          ${links([{ href: routeHref.dashboard(), label: "Open dashboard" }])}</section>`) };
+      }
       const transcripts = (await api.listTranscripts()).slice(0, 100);
-      return { title: "Ask AI", html: appShell("Ask AI", `<aside class="immutable-notice">Ask AI retrieves and scores evidence before answering. Weak or conflicting evidence remains visibly labeled.</aside>
+      return { title: "Ask AI", html: appShell("Ask AI", `${claudeDesktopBanner}<aside class="immutable-notice">Ask AI retrieves and scores evidence before answering. Weak or conflicting evidence remains visibly labeled.</aside>
         <form data-action="ask"><label>Question <textarea name="question" required></textarea></label>
         <label>Optional transcript filter <select name="transcriptIds" multiple>${transcripts.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.title)}</option>`).join("")}</select></label>
         <button type="submit">Retrieve, score, and answer</button></form>
@@ -158,7 +412,12 @@ export async function renderPage(context: PageContext): Promise<RenderedPage> {
     }
     case "evidence": {
       const evidence = await api.getEvidence(route.params.id);
-      const body = `${evidence.brokenReason ? `<aside class="trust-warning">${trustBadge("broken")} This pointer cannot be trusted until repaired.</aside>` : ""}
+      // A clear, honest header: broken pointers warn; healthy ones are labelled transcript-backed so the
+      // reader knows this traces to an immutable source span. Trust state/score are unchanged.
+      const statusCallout = evidence.brokenReason
+        ? `<aside class="trust-warning tmv-callout tmv-callout--warning">${trustBadge("broken")} This pointer cannot be trusted until repaired: ${escapeHtml(evidence.brokenReason)}</aside>`
+        : `<aside class="immutable-notice tmv-callout tmv-callout--success">${trustBadge(evidence.strength)} Transcript-backed evidence — it resolves to an immutable source span (open it below). Score ${score(evidence.finalScore ?? evidence.confidence)}.</aside>`;
+      const body = `${statusCallout}
         ${evidenceCard(evidence)}${section("Resolved transcript span", evidence.brokenReason ? emptyState("Resolution failed", evidence.brokenReason) : `<blockquote>${escapeHtml(evidence.spanText)}</blockquote><a href="${escapeHtml(routeHref.transcript(evidence.transcriptId, evidence.spanId))}">Open highlighted source span</a>`)}
         ${section("Submit a correction", correctionForm("evidence", evidence.id))}`;
       return { title: `Evidence ${evidence.id}`, html: appShell(`Evidence ${evidence.id}`, body) };
@@ -183,8 +442,13 @@ export async function renderPage(context: PageContext): Promise<RenderedPage> {
         : selectedEdge
           ? section("Selected edge", `<article>${selectedEdge.type === "contradicts" || selectedEdge.type === "updates" ? trustBadge("conflicting", selectedEdge.type) : ""}<p>${escapeHtml(selectedEdge.source)} → ${escapeHtml(selectedEdge.target)}</p><p>${escapeHtml(selectedEdge.type)} · confidence ${score(selectedEdge.confidence)} · ${selectedEdge.evidencePointerId ? "1 evidence link" : "0 evidence links"}</p>${selectedEdge.evidencePointerId ? `<a href="${escapeHtml(routeHref.evidence(selectedEdge.evidencePointerId))}">Open linked evidence</a>` : ""}</article>`)
           : "";
-      return { title: "Graph", html: appShell("Graph", `<form data-action="filter" data-view="graph"><label>Filter graph <input name="q" value="${escapeHtml(query)}"></label><label>Node type <input name="type" value="${escapeHtml(type)}"></label><label>Limit (max 100) <input name="limit" type="number" min="1" max="100" value="${limit}"></label><button type="submit">Apply</button></form>
-        <p>Showing ${visibleNodes.length} of ${graph.nodes.length} nodes and ${visibleEdges.length} edges.</p>${warnings.length ? `<aside class="trust-warning">${warnings.map(escapeHtml).join("<br>")}</aside>` : ""}${details}${section("Nodes", `<ul>${nodes}</ul>`)}${section("Edges", `<ul>${edges}</ul>`)}`) };
+      const legend = `<aside class="tmv-callout tmv-callout--info graph-legend"><strong>What this shows.</strong> Nodes are memory objects, transcripts, and evidence pointers. Edges are relationships — <em>supports</em>, <em>contradicts</em>, <em>updates</em>. An edge tagged "inferred / no evidence link" has no backing evidence pointer, so it is not part of the clean provenance chain. This page reads SQLite live (the source of truth); Obsidian's native Markdown graph is a separate, disposable view.</aside>`;
+      const warningsCallout = warnings.length ? `<aside class="trust-warning tmv-callout tmv-callout--warning">${warnings.map(escapeHtml).join("<br>")}</aside>` : "";
+      const filterForm = `<form data-action="filter" data-view="graph"><label>Filter graph <input name="q" value="${escapeHtml(query)}"></label><label>Node type <input name="type" value="${escapeHtml(type)}"></label><label>Limit (max 100) <input name="limit" type="number" min="1" max="100" value="${limit}"></label><button type="submit" class="tmv-btn tmv-btn-secondary">Apply</button></form>`;
+      const listings = graph.nodes.length
+        ? `<p>Showing ${visibleNodes.length} of ${graph.nodes.length} nodes and ${visibleEdges.length} edges.</p>${details}${section("Nodes", `<ul>${nodes}</ul>`)}${section("Edges", `<ul>${edges}</ul>`)}`
+        : emptyState("Graph is empty", "No memory, transcript, or evidence nodes yet. Import a transcript and run AI extraction to populate the provenance graph.");
+      return { title: "Graph", html: appShell("Graph", `${legend}${filterForm}${warningsCallout}${listings}`) };
     }
     case "search": {
       const query = route.query.get("q") ?? "";
@@ -200,7 +464,16 @@ export async function renderPage(context: PageContext): Promise<RenderedPage> {
     case "review": {
       const items = await api.listReviewItems(), type = route.query.get("type") ?? "all", status = route.query.get("status") ?? "open";
       const filtered = items.filter((item) => (type === "all" || item.type === type) && (status === "all" || item.status === status));
-      return { title: "Review queue", html: appShell("Review queue", `<form data-action="filter" data-view="review"><label>Item type <input name="type" value="${escapeHtml(type)}"></label><label>Status <select name="status"><option>${escapeHtml(status)}</option><option>open</option><option>resolved</option><option>dismissed</option><option>all</option></select></label><button type="submit">Filter items</button></form>${filtered.map(reviewCard).join("") || emptyState("Review queue is clear", "No weak, broken, conflicting, or review-only items were found.")}`) };
+      const intro = `<aside class="immutable-notice tmv-callout tmv-callout--info">Approving promotes a memory to active, citable evidence; Reject / Dismiss removes it from Ask AI and search. Both are append-only and never edit raw transcript text. Items with no live evidence cannot be approved — only dismissed.</aside>`;
+      const filterForm = `<form data-action="filter" data-view="review"><label>Item type <input name="type" value="${escapeHtml(type)}"></label><label>Status <select name="status"><option>${escapeHtml(status)}</option><option>open</option><option>resolved</option><option>dismissed</option><option>all</option></select></label><button type="submit" class="tmv-btn tmv-btn-secondary">Filter items</button></form>`;
+      // Visual grouping only — every item still comes from `filtered` and renders via the same reviewCard.
+      const conflicts = filtered.filter((item) => item.type === "conflict");
+      const degraded = filtered.filter((item) => item.type !== "conflict" && item.canApprove === false);
+      const active = filtered.filter((item) => item.type !== "conflict" && item.canApprove !== false);
+      const group = (title: string, list: ReviewItemView[], className: string) => list.length ? section(title, list.map(reviewCard).join(""), className) : "";
+      const groups = `${group("Needs review", active, "review-active-group")}${group("Conflicts / tensions", conflicts, "review-conflicts-group")}${group("Degraded — evidence missing", degraded, "review-degraded-group")}`;
+      const body = `${intro}${filterForm}${filtered.length ? groups : emptyState("Review queue is clear", "No weak, broken, conflicting, or review-only items were found.")}`;
+      return { title: "Review queue", html: appShell("Review queue", body) };
     }
     case "review_detail": {
       const item = await api.getReviewItem(route.params.id);

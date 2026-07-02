@@ -1,3 +1,12 @@
+// DORMANT / EXPERIMENTAL agent — not invoked by any live product path (see askAiPipeline.ts header).
+//
+// HARDENED: this agent enforces the SAME production rule as the live Ask AI wiring — `requireLlm` is
+// ALWAYS on. Synthesis uses the external LLM injected via `context.synthesis` (the same explicit-injection
+// seam the live app uses); with evidence selected and no LLM injected, askAI throws
+// SynthesisSetupRequiredError and the pipeline fails closed. It can never silently fall back to the
+// deterministic dev/test synthesis. (No-evidence questions still refuse deterministically BEFORE the LLM
+// gate, exactly like the live path.)
+
 import { askAI } from "../../ask-ai/index.js";
 import { createConflictRepository } from "../../conflicts/index.js";
 import { getEvidenceCandidatesForTarget, scoreEvidenceBundle } from "../../evidence/index.js";
@@ -10,6 +19,8 @@ export const answerSynthesisAgent: Agent<{ question: string; validatedPointerIds
     const allowed = new Set(input.validatedPointerIds ?? []);
     const response = await askAI({ question: input.question }, {
       db: context.db, now: context.now,
+      // Production LLM requirement — identical to the live app's askGated wiring. Never deterministic.
+      llm: context.synthesis?.llm, synthesisInfo: context.synthesis?.info, requireLlm: true,
       retrieveCandidates: async () => [...allowed].flatMap((id) => {
         const pointer = context.db.prepare("SELECT target_type,target_id FROM evidence_pointers WHERE evidence_pointer_id=?").get(id) as { target_type: Parameters<typeof getEvidenceCandidatesForTarget>[1]; target_id: string } | undefined;
         return pointer ? getEvidenceCandidatesForTarget(context.db, pointer.target_type, pointer.target_id).filter((item) => item.evidencePointerId === id) : [];

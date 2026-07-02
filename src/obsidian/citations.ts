@@ -10,6 +10,6 @@ export function renderEvidenceCitation(db: SqliteDatabase, evidencePointerId: st
   const score = resolved.evidence.final_score ?? resolved.evidence.confidence;
   return {
     broken: false,
-    markdown: `${wikiLink(transcriptPath(title, resolved.evidence.transcript_id), `${title}, ${resolved.evidence.span_id}`, resolved.evidence.span_id)}  \n${wikiLink(evidencePath(evidencePointerId), "Evidence note")}  \n\`${resolved.evidence.pointer_uri}\`  \n\`${resolved.evidence.source_pointer_uri}\`  \n**Role:** ${resolved.evidence.evidence_role} · **Strength:** ${resolved.evidence.evidence_strength} · **Score:** ${score.toFixed(3)}\n\n${quote(resolved.spanText, maxQuoteLength)}`,
+    markdown: `${wikiLink(transcriptPath(title, resolved.evidence.transcript_id), `${title}, ${resolved.evidence.span_id}`, resolved.evidence.span_id)}  \n${wikiLink(evidencePath(resolved.spanText, evidencePointerId), "Evidence note")}  \n\`${resolved.evidence.pointer_uri}\`  \n\`${resolved.evidence.source_pointer_uri}\`  \n**Role:** ${resolved.evidence.evidence_role} · **Strength:** ${resolved.evidence.evidence_strength} · **Score:** ${score.toFixed(3)}\n\n${quote(resolved.spanText, maxQuoteLength)}`,
   };
 }

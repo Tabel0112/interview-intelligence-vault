@@ -1,6 +1,7 @@
 export const OBSIDIAN_VIEW_TYPES = {
   dashboard: "transcript-memory-dashboard",
   upload: "transcript-memory-upload",
+  transcripts: "transcript-memory-transcripts",
   transcript: "transcript-memory-transcript",
   ask: "transcript-memory-ask",
   answer: "transcript-memory-answer",
@@ -28,9 +29,19 @@ export const OBSIDIAN_COMMANDS = [
 
 export const OBSIDIAN_RIBBON = { icon: "database", title: "Open Transcript Memory Dashboard" } as const;
 
+// Explicit (manual) action commands — kept out of OBSIDIAN_COMMANDS (which are navigation only).
+export const OBSIDIAN_REINDEX_COMMAND = { id: "rebuild-embedding-index", name: "Rebuild Embedding Index" } as const;
+// Writes the disposable generated-Markdown view layer (so Obsidian's native ribbon graph has notes/links).
+export const OBSIDIAN_SYNC_GRAPH_COMMAND = { id: "sync-generated-graph-notes", name: "Sync generated graph notes" } as const;
+// Deterministic, idempotent repair: merge EXACT duplicate memories onto one canonical (consolidating evidence).
+export const OBSIDIAN_DEDUPE_COMMAND = { id: "merge-duplicate-memories", name: "Merge duplicate memories" } as const;
+// Folder (relative to the vault root) the generated Markdown view layer is written into. Disposable; SQLite stays truth.
+export const GENERATED_VAULT_FOLDER = "Transcript Memory Vault" as const;
+
 export const viewTitle = (type: TranscriptMemoryViewType): string => ({
   [OBSIDIAN_VIEW_TYPES.dashboard]: "Transcript Memory Dashboard",
   [OBSIDIAN_VIEW_TYPES.upload]: "Upload Transcript",
+  [OBSIDIAN_VIEW_TYPES.transcripts]: "Transcripts",
   [OBSIDIAN_VIEW_TYPES.transcript]: "Transcript Source",
   [OBSIDIAN_VIEW_TYPES.ask]: "Ask AI",
   [OBSIDIAN_VIEW_TYPES.answer]: "AI Answer",
@@ -44,6 +55,7 @@ export const viewTitle = (type: TranscriptMemoryViewType): string => ({
 export const defaultTarget = (type: TranscriptMemoryViewType): string => ({
   [OBSIDIAN_VIEW_TYPES.dashboard]: "mv://dashboard",
   [OBSIDIAN_VIEW_TYPES.upload]: "mv://upload",
+  [OBSIDIAN_VIEW_TYPES.transcripts]: "mv://transcripts",
   [OBSIDIAN_VIEW_TYPES.transcript]: "mv://transcripts/missing",
   [OBSIDIAN_VIEW_TYPES.ask]: "mv://ask",
   [OBSIDIAN_VIEW_TYPES.answer]: "mv://answers/missing",

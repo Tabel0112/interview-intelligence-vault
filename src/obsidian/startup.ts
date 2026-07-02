@@ -1,5 +1,6 @@
 import type { FrontendApi } from "../frontend/index.js";
 import { PACKAGED_MIGRATION_COUNT } from "../db/migrations/index.js";
+import { DEFAULT_SETTINGS, settingsHealthSummary, type ProviderMode } from "./settings.js";
 
 export const DESKTOP_ONLY_MESSAGE = "Transcript Memory Vault is desktop-only right now because it uses local SQLite storage.";
 
@@ -18,6 +19,19 @@ export interface PluginHealth {
   lastInitializationError: string | null;
   nativeBindingTarget: string | null;
   packagedNativeTargets: string[];
+  // Non-secret provider/settings summary. Never contains API key material.
+  providerMode?: ProviderMode;
+  llmProvider?: string;
+  llmModel?: string;
+  embeddingProvider?: string;
+  embeddingModel?: string;
+  apiKeyConfigured?: boolean;
+  /** True when a usable external LLM is configured. The live app requires this for generation. */
+  llmReady?: boolean;
+  // Embedding reindex status (read-only, network-free). No secret material.
+  reindexNeeded?: boolean;
+  reindexSummary?: string;
+  embeddingUsedFallback?: boolean;
 }
 
 export const initialPluginHealth = (): PluginHealth => ({
@@ -32,6 +46,7 @@ export const initialPluginHealth = (): PluginHealth => ({
   lastInitializationError: null,
   nativeBindingTarget: null,
   packagedNativeTargets: [],
+  ...settingsHealthSummary(DEFAULT_SETTINGS),
 });
 
 export function startupSupport(input: { isDesktopApp: boolean; hasLocalFilesystem: boolean }): { supported: true } | { supported: false; message: string } {
@@ -65,6 +80,10 @@ export function createUnavailableFrontendApi(getHealth: () => PluginHealth): Fro
     async listReviewItems() { return unavailable(getHealth()); },
     async getReviewItem() { return unavailable(getHealth()); },
     async submitCorrection() { return unavailable(getHealth()); },
+    async reviewMemoryObject() { return unavailable(getHealth()); },
+    async getLlmStatus() { return { required: true, ready: Boolean(getHealth().llmReady) }; },
+    async runExtraction() { return unavailable(getHealth()); },
+    async deleteTranscript() { return unavailable(getHealth()); },
   };
 }
 

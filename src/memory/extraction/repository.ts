@@ -73,3 +73,25 @@ export function storeMemoryObjectWithEvidence(db: SqliteDatabase, runId: string,
 export function markDuplicate(db: SqliteDatabase, candidate: ValidatedMemoryCandidate, existingObjectId: string, runId: string, promptVersion: string): StoredExtractedMemoryObject {
   return storeMemoryObjectWithEvidence(db, runId, promptVersion, { ...candidate, status: "needs_review" }, existingObjectId);
 }
+
+/**
+ * EXACT-duplicate consolidation: attach a (new) source's evidence spans onto an EXISTING canonical memory
+ * instead of creating a competing memory. Idempotent at the (memory, span) level — a span already linked to
+ * the canonical is left alone, so re-running extraction adds nothing. Never deletes evidence; never changes
+ * the canonical's claim/status. Returns the number of newly-attached span links.
+ */
+export function attachEvidenceToMemory(db: SqliteDatabase, memoryId: string, candidate: ValidatedMemoryCandidate): number {
+  return db.transaction(() => {
+    const timestamp = now();
+    let added = 0;
+    for (const span of candidate.evidenceSpans) {
+      if (db.prepare("SELECT 1 FROM memory_object_evidence WHERE memory_id=? AND span_id=? LIMIT 1").get(memoryId, span.spanId)) continue;
+      const evidenceId = stableProvenanceId("mev_", `${memoryId}:${span.spanId}:supporting`);
+      db.prepare(`INSERT OR IGNORE INTO memory_object_evidence(
+        id,memory_id,span_id,role,evidence_score,created_at,metadata_json,transcript_id,turn_id,extraction_role
+      ) VALUES (?,?,?,'source',?,?, '{}',?,?, 'supporting')`).run(evidenceId, memoryId, span.spanId, candidate.finalConfidence, timestamp, span.transcriptId, span.turnId);
+      added += 1;
+    }
+    return added;
+  })();
+}
