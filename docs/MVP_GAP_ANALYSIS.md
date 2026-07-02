@@ -57,16 +57,16 @@
 ## 2. Partially implemented
 - **Semantic embeddings in retrieval.** The external embedding provider, settings adapter, and manual reindex command exist — but **post-import indexing is keyword-only** (no embedding provider passed), so real semantic vectors populate **only** via the manual "Rebuild Embedding Index" command. Automatic semantic retrieval is opt-in/manual, not on by default.
 - **Grounding ≠ entailment.** Both Ask AI synthesis and extraction enforce **quote-anchoring** (a verbatim quote from a cited span). This is a real guard, but **not** full semantic entailment/NLI — a claim could wrap a real quote in a misleading paraphrase.
-- **Reindex-needed status freshness.** `detectReindexNeeded` + a status surface exist; the Plugin refreshes it on DB-ready and `saveSettings`, but **not after upload/approval**, so it can read stale after new content lands.
+- **Reindex-needed status freshness.** Resolved for the UI: the Plugin refreshes reindex status on DB-ready, `saveSettings`, after the manual reindex, and — via the view-refresh registry's pre-notify hook — after every mutating action (upload/extraction/review), and the dashboard reads live health (`getHealth`). The **reindex itself remains a manual command** ("Rebuild Embedding Index").
 - **LLM failure semantics.** Timeout/malformed/error/empty → typed setup-required / generic-failure in the live app (Ask AI + extraction), with no deterministic fallback and no fake output persisted. Not handled: **evidence token-budget/truncation** when selected evidence exceeds the model's context window.
 - **Search surfaces are not unified.** Ask AI and memory discovery use the retrieval engine (`retrieval_documents`/`evidence_pointers`); the user-facing **Search view still uses a separate `transcript_spans LIKE` / `ask_ai_runs LIKE` scan** (`sqliteApi.searchVault`).
 - **Review reject UI scope.** `reviewMemoryObject(id, "reject")` works for any memory at the API level, but the Review UI renders the Reject button **only for `memory_needs_review` items** (`render.ts` `reviewActions`). There is **no UI path today to reject an already-approved/active memory**. The approve → ask → reject lifecycle is covered at the API/smoke-test level (`tests/reviewApproval.test.ts`, `tests/mvpSmoke.test.ts`); until an active-memory reject UI is added, the manual packaged checklist rejects a *separate* `needs_review` item. *(Verified.)*
 
 ## 3. Still missing
 - **Full entailment/NLI verification** of LLM claims/memories (beyond quote-anchoring) — the deeper grounding guarantee.
-- **Automatic semantic embedding** after import/approval, plus **auto-refresh of reindex-needed status** after upload/approval.
-- **Hermes in the live path.** Hermes + its guardrail exist and are tested but are **not invoked by the live frontend Ask AI** (only the unwired orchestration `answerSynthesisAgent`). Personalization is inert in the live app. *(Verified: no Hermes reference in `src/frontend` or `ask-ai/pipeline.ts`.)*
-- **Conflict detection on new memory.** The conflicts subsystem exists, but no live path **runs detection** on newly extracted/approved memory; the live code only *lists* existing conflicts (`listConflictsForTarget`). *(Verified.)*
+- **Automatic semantic embedding** after import/approval (the reindex itself is still the manual "Rebuild Embedding Index" command; its *status* now auto-refreshes after upload/approval).
+- **Hermes in the live path.** Hermes + its guardrail exist and are tested as infrastructure, but they are **not invoked by the live Obsidian Ask AI, the frontend, or MCP `ask_vault`** — those call the evidence-first `askAI` pipeline directly, with no Hermes presentation step. The only consumer is the **dormant** orchestration `answerSynthesisAgent`, which is now **hardened**: its synthesis is LLM-required like the live app (with evidence selected and no injected external LLM it fails closed as setup-required; it can never emit deterministic output). Negative tests (`tests/liveAskAiNoHermes.test.ts`) fail if the live module graph ever loads Hermes/orchestration. *(Verified.)*
+- ~~**Conflict detection on new memory.**~~ **Done.** Live conflict detection is wired: upload/extraction and review approval run deterministic detection over evidence-backed active memory and persist assessments (`src/conflicts/liveDetection.ts`; hooks in `src/frontend/sqliteApi.ts`), surfaced in Review, MCP `get_conflicts`, the graph, and Ask AI (`tests/liveConflictDetection.test.ts`).
 - **Generated Obsidian views not wired to a live action.** The Markdown/vault view generator exists (`src/obsidian/generateVault.ts`, with manifest-scoped cleanup that preserves user files) and is tested, but **no live user command, ribbon, or frontend action invokes it** (verified: not referenced in `Plugin.ts` or the frontend). Packaged smoke testing should verify source-of-truth immutability and the rendered plugin views, not assume a user-triggered generated-vault command until one is added.
 - **Unified Search** routed through the retrieval engine.
 - **Retrieval-degradation warning surface** (a provider/model-mismatch vector query silently yields no matches; no user-facing warning).
@@ -87,10 +87,10 @@
 Each is its own focused branch (`inspect → plan → approve → implement → test`); approval required before anything touching network/providers/keys or a trust boundary. Tests stay offline.
 
 1. **Make semantic retrieval real-by-default** — pass the configured embedding provider into post-import indexing *or* auto-flag reindex-needed after upload/approval (low risk, biggest MVP-completeness win). Keep external embedding opt-in; never auto-call external APIs without configuration.
-2. **Decide Hermes** — wire it into the live Ask AI path with the (hardened, structural) warning guardrail, or formally mark it out-of-MVP.
+2. **Decide Hermes** — wire it into the live Ask AI path with the (hardened, structural) warning guardrail, or formally mark it out-of-MVP. *(Interim state: dormant; the orchestration path it lives in is LLM-required fail-closed, and negative tests guard the live path.)*
 3. **Evidence token-budget/truncation** for the external LLM (real correctness risk once large transcripts hit the context window).
 4. **Unify the Search view** onto the retrieval engine + **incremental per-target indexing** (consistency + scaling).
-5. **Conflict detection on new/approved memory** (run detection, preserve both sides, append-only).
+5. ~~**Conflict detection on new/approved memory**~~ — done (live detection on upload/extraction/approval; both sides preserved with citations; idempotent by pair).
 6. **Entailment verifier pass** (deeper grounding beyond quote-anchoring).
 7. **Shipping**: native-target fallback, key-storage decision, and a real end-to-end run of the packaged plugin against a real key.
 
@@ -98,4 +98,4 @@ Each is its own focused branch (`inspect → plan → approve → implement → 
 
 ---
 
-*Analysis only — no implementation performed. The MVP backbone is wired end-to-end; the remaining work is automatic semantic embeddings, deeper grounding, live Hermes/conflict decisions, search unification, scaling, and packaging.*
+*The MVP backbone is wired end-to-end (including live conflict detection); the remaining work is automatic semantic embeddings, deeper grounding, the live-Hermes decision (currently dormant + hardened), search unification, scaling, and packaging.*

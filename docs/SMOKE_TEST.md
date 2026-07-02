@@ -59,7 +59,7 @@ Sam: We need to write the onboarding documentation.
 
 ## 7. Settings + commands — checks 14–15
 - [ ] Open **Settings → Transcript Memory Vault**. Confirm it shows the **AI (LLM)** readiness state (configured vs. "Not configured. Ask AI and AI memory extraction are disabled…"), the LLM provider/model, embedding provider/model, and whether an API key is configured — and **never any key value**. There is no user-facing local/deterministic mode dropdown.
-- [ ] Open the command palette and confirm **Rebuild Embedding Index** and **Run AI extraction for transcripts missing it** both exist. (Embeddings remain optional; the local keyword index rebuilds with no network call.)
+- [ ] Open the command palette and confirm **Rebuild Embedding Index** and **Run AI extraction for transcripts missing it** both exist. (An external embedding provider is **required** for Ask AI / MCP `ask_vault` — see step 3a; without it Ask AI fails closed with an embedding-setup-required state. "Rebuild Embedding Index" is the only action that may call the embedding API.)
 
 ## 8. Secret safety — check 16
 With the real LLM key configured (it is now exercised by extraction + Ask AI), confirm the key never leaks:

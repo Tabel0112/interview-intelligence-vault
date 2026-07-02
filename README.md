@@ -34,31 +34,15 @@ npm run mcp:start   # configured via TMV_DB_PATH, TMV_LLM_PROVIDER, TMV_LLM_MODE
 
 See [docs/MCP.md](docs/MCP.md) for tools, the AnswerBundle shape, env vars, Claude Desktop setup, and Phase 1 limitations.
 
-> **Note on AI mode:** the live app is now **LLM-required** — Ask AI and AI memory extraction need a configured external LLM; deterministic/local generation is a dev/test-only injected seam, never a live fallback. The "Current MVP Gap" section below predates that change; see [docs/APP_SPEC.md](docs/APP_SPEC.md) and [docs/MVP_GAP_ANALYSIS.md](docs/MVP_GAP_ANALYSIS.md) for the current contract.
+> **Note on AI mode:** see [docs/APP_SPEC.md](docs/APP_SPEC.md) (architecture contract) and [docs/MVP_GAP_ANALYSIS.md](docs/MVP_GAP_ANALYSIS.md) (gap status) for the authoritative current contract.
 
-## Current MVP Gap
+## Current AI Requirements
 
-The intended MVP includes external AI provider support.
-
-The current code contains deterministic local substitutes:
-- token-hash-v1 vectors instead of neural embedding-model vectors
-- rule-based Ask AI answer generation instead of external LLM grounded synthesis
-- deterministic/local extraction instead of provider-backed extraction
-
-These are acceptable as fallback/test/offline modes, but they are not the complete intended MVP.
-
-Do not treat local deterministic substitutes as the final product unless the user explicitly says to reduce scope.
-
-The intended MVP must support:
-- API key entry/storage through settings
-- provider abstraction for LLM calls
-- provider abstraction for embedding calls
-- grounded Ask AI synthesis using retrieved/scored evidence
-- optional LLM-backed memory extraction
-- local deterministic fallback for tests/offline mode
-- evidence/provenance/citation validation after LLM output
-- no unsupported LLM claims persisted as supported
-- no mixing vectors from incompatible embedding providers/models
+The live app is **provider-required** (fail-closed, never a deterministic fallback):
+- Ask AI synthesis and AI memory extraction require a configured external (OpenAI-compatible) **LLM** (provider + model + API key in plugin settings); without one the app shows setup-required and does not generate.
+- Ask AI retrieval and MCP `ask_vault` also require a configured external **embedding provider** (provider + model + dimensions + API key); missing/stale embedding config fails closed (`embedding_setup_required` / `embedding_reindex_required`).
+- Deterministic/local generation and `token-hash-v1` vectors are **dev/test-only injected seams** — never a live product mode or fallback; keyword (nonsemantic) search remains only for non-Ask-AI inspection surfaces.
+- Grounded Ask AI synthesis uses retrieved/scored evidence; evidence/provenance/citation validation runs after LLM output; unsupported LLM claims are never persisted as supported; vectors from incompatible embedding providers/models are never mixed.
 
 ## Repo-Specific Notes From Initial Claude Review
 
@@ -73,4 +57,4 @@ The intended MVP must support:
 - Warning preservation must be structural, not string-matching only.
 - Current answer-claim status is promotion-only; evidence deletion does not currently recompute supported claims.
 - Only `darwin-arm64-abi140` native binding is currently packaged.
-- Retrieval indexing currently happens at Ask-AI time, not ingest time.
+- Retrieval indexing/bridging happens during import, extraction, and review-approval workflows (local keyword index, offline). Building the semantic embedding space remains the manual **Rebuild Embedding Index** command, and reindex-needed status refreshes live after mutations and reindex actions.
