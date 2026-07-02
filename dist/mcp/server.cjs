@@ -4528,7 +4528,8 @@ function createSqliteFrontendApi(db, options = {}) {
         weakCount: review.filter((item) => item.trustState === "weak" || item.trustState === "needs_review").length,
         conflictCount: review.filter((item) => item.trustState === "conflicting").length,
         brokenCount: review.filter((item) => item.trustState === "broken").length,
-        health: options.health,
+        // Live read (getHealth) so the dashboard reflects current status; static `health` is the fallback.
+        health: options.getHealth?.() ?? options.health,
         llmRequired: !!options.llmRequired,
         llmReady: options.getLlmReady ? options.getLlmReady() : !options.llmRequired,
         generatedSync: generatedSyncStatus(db),
@@ -5479,9 +5480,25 @@ function createVaultTools(deps) {
   };
 }
 
+// src/mcp/serverMeta.ts
+var MCP_PROTOCOL_VERSION = "2024-11-05";
+var MCP_SERVER_INFO = { name: "transcript-memory-vault", version: "0.1.0" };
+var MCP_SERVER_INSTRUCTIONS = [
+  "Use `ask_vault` for user-facing questions about this vault. It runs the vault's evidence-first pipeline (retrieve \u2192 score \u2192 grounded synthesis \u2192 citation validation) and returns a validated, citation-grounded answer with any trust warnings.",
+  "Do NOT synthesize a final answer from `search_evidence` results. `search_evidence` is for inspection, debugging, and exploration only \u2014 it returns raw scored evidence cards, not an answer.",
+  "Preserve the citations and warnings that `ask_vault` returns; present them to the user and do not drop or override them.",
+  "If `ask_vault` refuses because there is not enough evidence, or reports a setup/reindex requirement, surface that refusal or setup state to the user \u2014 do not invent an answer from raw snippets."
+].join(" ");
+function buildInitializeResult(requestedProtocolVersion) {
+  return {
+    protocolVersion: requestedProtocolVersion ?? MCP_PROTOCOL_VERSION,
+    capabilities: { tools: { listChanged: false } },
+    serverInfo: { ...MCP_SERVER_INFO },
+    instructions: MCP_SERVER_INSTRUCTIONS
+  };
+}
+
 // src/mcp/server.ts
-var PROTOCOL_VERSION = "2024-11-05";
-var SERVER_INFO = { name: "transcript-memory-vault", version: "0.1.0" };
 var log = (message) => process.stderr.write(`[tmv-mcp] ${message}
 `);
 var send = (message) => process.stdout.write(`${JSON.stringify(message)}
@@ -5542,7 +5559,7 @@ function main() {
     try {
       if (method === "initialize") {
         const requested = params?.protocolVersion;
-        reply(id, { protocolVersion: requested ?? PROTOCOL_VERSION, capabilities: { tools: { listChanged: false } }, serverInfo: SERVER_INFO });
+        reply(id, buildInitializeResult(requested));
       } else if (method === "notifications/initialized" || method === "notifications/cancelled") {
       } else if (method === "ping") {
         reply(id, {});

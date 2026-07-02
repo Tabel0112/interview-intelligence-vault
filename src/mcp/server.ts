@@ -18,9 +18,7 @@ import { askAiSynthesisFromSettings } from "../obsidian/llmSettings.js";
 import { askAiEmbeddingHealth, productionEmbeddingProvider } from "../obsidian/embeddingSettings.js";
 import { loadMcpConfig, McpConfigError } from "./config.js";
 import { createVaultTools, McpInputError } from "./tools.js";
-
-const PROTOCOL_VERSION = "2024-11-05";
-const SERVER_INFO = { name: "transcript-memory-vault", version: "0.1.0" } as const;
+import { buildInitializeResult } from "./serverMeta.js";
 
 interface JsonRpcMessage { jsonrpc?: string; id?: string | number | null; method?: string; params?: unknown }
 const log = (message: string) => process.stderr.write(`[tmv-mcp] ${message}\n`);
@@ -90,7 +88,8 @@ function main(): void {
     try {
       if (method === "initialize") {
         const requested = (params as { protocolVersion?: string } | undefined)?.protocolVersion;
-        reply(id, { protocolVersion: requested ?? PROTOCOL_VERSION, capabilities: { tools: { listChanged: false } }, serverInfo: SERVER_INFO });
+        // Includes the server-level `instructions` hint that steers clients to ask_vault (see serverMeta).
+        reply(id, buildInitializeResult(requested));
       } else if (method === "notifications/initialized" || method === "notifications/cancelled") {
         // notifications: no response
       } else if (method === "ping") {
