@@ -25,7 +25,7 @@ export async function runPipeline<I extends JsonRecord, O extends JsonRecord = J
       const run = repo.createAgentRun({ pipelineRunId: pipeline.id, agentType: step.agentType, input: state });
       repo.startAgentRun(run.id);
       const logger = { event: (eventType: string, message: string, metadata: JsonRecord = {}) => repo.appendPipelineEvent({ pipelineRunId: pipeline.id, agentRunId: run.id, eventType, message, metadata }) };
-      const context: AgentContext = { pipelineRunId: pipeline.id, agentRunId: run.id, now: options.now ?? (() => new Date()), db, logger, hermesProfile: options.hermesProfile };
+      const context: AgentContext = { pipelineRunId: pipeline.id, agentRunId: run.id, now: options.now ?? (() => new Date()), db, logger, hermesProfile: options.hermesProfile, synthesis: options.synthesis };
       logger.event("agent_started", `${step.agentType} started`);
       try {
         const output = await (step.run ? step.run(state, context) : registry.get(step.agentType).run(state, context)) as unknown;

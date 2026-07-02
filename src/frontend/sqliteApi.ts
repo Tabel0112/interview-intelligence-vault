@@ -224,7 +224,10 @@ export function createSqliteFrontendApi(
   db: SqliteDatabase,
   options: {
     now?: () => Date;
+    /** Static health snapshot. Prefer `getHealth` for a LIVE read; `health` is a fallback for callers/tests. */
     health?: PluginHealth;
+    /** Live health getter — the dashboard reads this so it never renders a startup-frozen snapshot. */
+    getHealth?: () => PluginHealth | undefined;
     getSynthesis?: () => { llm?: AskAILanguageModel; analysis?: AskAIAnalysisModel; info: SynthesisInfo } | undefined;
     getMemoryExtractor?: () => MemoryExtractor | undefined;
     /** Live app: require a configured LLM for generation; never fall back to deterministic output. */
@@ -289,7 +292,8 @@ export function createSqliteFrontendApi(
         weakCount: review.filter((item) => item.trustState === "weak" || item.trustState === "needs_review").length,
         conflictCount: review.filter((item) => item.trustState === "conflicting").length,
         brokenCount: review.filter((item) => item.trustState === "broken").length,
-        health: options.health,
+        // Live read (getHealth) so the dashboard reflects current status; static `health` is the fallback.
+        health: options.getHealth?.() ?? options.health,
         llmRequired: !!options.llmRequired,
         llmReady: options.getLlmReady ? options.getLlmReady() : !options.llmRequired,
         generatedSync: generatedSyncStatus(db),

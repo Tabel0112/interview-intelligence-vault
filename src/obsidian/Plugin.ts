@@ -32,7 +32,9 @@ export default class TranscriptMemoryVaultPlugin extends Plugin {
   // Built once; reused. The transport makes no call until the synthesis adapter actually runs.
   private readonly llmTransport = createObsidianLlmTransport();
   // Tracks open plugin views so a mutating action in one refreshes the others (cross-view invalidation).
-  private readonly viewRegistry = new ViewRefreshRegistry();
+  // Before refreshing views on any mutation (upload/extraction/review/…), recompute live reindex/health so
+  // the dashboard/settings never show startup-frozen status (e.g. a just-imported, not-yet-embedded index).
+  private readonly viewRegistry = new ViewRefreshRegistry(() => this.refreshReindexStatus());
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -112,6 +114,9 @@ export default class TranscriptMemoryVaultPlugin extends Plugin {
           getEmbeddingProvider: () => productionEmbeddingProvider(this.pluginSettings, { transport: createObsidianEmbeddingTransport() }),
           // Non-secret, display-only setup summary for the Claude/MCP dashboard card (no API keys).
           getSetupSummary: () => buildSetupSummary(this.db!, this.pluginSettings, this.health.databasePath ?? undefined),
+          // Live health so the dashboard reflects current status (LLM/embedding/migration/reindex/firstRun),
+          // not the snapshot captured when this api was constructed. Settings already reads this.health live.
+          getHealth: () => this.health,
         });
       this.refreshReindexStatus();
       if (firstRun) new Notice("Transcript Memory Vault is ready. Upload a transcript to begin.");
@@ -196,7 +201,9 @@ export default class TranscriptMemoryVaultPlugin extends Plugin {
       const { summary, result } = await runEmbeddingReindex(this.db, this.pluginSettings, { transport: createObsidianEmbeddingTransport() });
       if (summary.usedFallback && summary.reason) new Notice(summary.reason);
       new Notice(`Embedding index rebuilt: ${result.indexed} indexed, ${result.embedded} embedded, ${result.errors} error(s).`);
-      this.refreshReindexStatus();
+      // Re-render open views so dashboard/settings show up-to-date status without a restart. notifyMutation's
+      // beforeNotify hook recomputes reindex status first, so the refreshed views read the new health.
+      await this.viewRegistry.notifyMutation();
     } catch (error) {
       new Notice(`Embedding index rebuild failed: ${readableStartupError(error)}`);
       console.error("Transcript Memory Vault embedding reindex failed", error);

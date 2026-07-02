@@ -20,10 +20,12 @@ export function createObsidianAppApi(
     llmRequired?: boolean; getLlmReady?: () => boolean; syncGeneratedViews?: () => Promise<GeneratedSyncResult>;
     embeddingsRequired?: boolean; getEmbeddingHealth?: () => EmbeddingHealth; getEmbeddingProvider?: () => EmbeddingProvider | undefined;
     getSetupSummary?: () => SetupSummary;
+    /** Live health getter so the dashboard reflects current (not startup-frozen) status. */
+    getHealth?: () => PluginHealth | undefined;
   },
 ): ObsidianAppApi {
   const api = createSqliteFrontendApi(db, {
-    health, getSynthesis, getMemoryExtractor, llmRequired: options?.llmRequired, getLlmReady: options?.getLlmReady, syncGeneratedViews: options?.syncGeneratedViews,
+    health, getHealth: options?.getHealth, getSynthesis, getMemoryExtractor, llmRequired: options?.llmRequired, getLlmReady: options?.getLlmReady, syncGeneratedViews: options?.syncGeneratedViews,
     embeddingsRequired: options?.embeddingsRequired, getEmbeddingHealth: options?.getEmbeddingHealth, getEmbeddingProvider: options?.getEmbeddingProvider,
     getSetupSummary: options?.getSetupSummary,
   });

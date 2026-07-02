@@ -5573,7 +5573,8 @@ function createSqliteFrontendApi(db, options = {}) {
         weakCount: review.filter((item) => item.trustState === "weak" || item.trustState === "needs_review").length,
         conflictCount: review.filter((item) => item.trustState === "conflicting").length,
         brokenCount: review.filter((item) => item.trustState === "broken").length,
-        health: options.health,
+        // Live read (getHealth) so the dashboard reflects current status; static `health` is the fallback.
+        health: options.getHealth?.() ?? options.health,
         llmRequired: !!options.llmRequired,
         llmReady: options.getLlmReady ? options.getLlmReady() : !options.llmRequired,
         generatedSync: generatedSyncStatus(db),
@@ -7348,6 +7349,7 @@ var TranscriptMemoryItemView = class extends import_obsidian2.ItemView {
 function createObsidianAppApi(db, vault, health, getSynthesis, getMemoryExtractor, options) {
   const api = createSqliteFrontendApi(db, {
     health,
+    getHealth: options?.getHealth,
     getSynthesis,
     getMemoryExtractor,
     llmRequired: options?.llmRequired,
@@ -7778,6 +7780,16 @@ function createObsidianLlmTransport() {
 
 // src/obsidian/viewRefreshRegistry.ts
 var ViewRefreshRegistry = class {
+  /**
+   * @param beforeNotify Optional hook run ONCE before views are refreshed on each mutation. The plugin
+   * uses it to recompute live health (e.g. embedding reindex status) so a mutation like upload/extraction
+   * leaves the dashboard/settings showing current — not startup-frozen — status. Best-effort: a failure
+   * here must never block view refresh, so it is caught and logged.
+   */
+  constructor(beforeNotify) {
+    this.beforeNotify = beforeNotify;
+  }
+  beforeNotify;
   views = /* @__PURE__ */ new Set();
   register(view) {
     this.views.add(view);
@@ -7790,6 +7802,13 @@ var ViewRefreshRegistry = class {
   }
   /** Refresh every registered view except `origin`. Never throws; logs and continues per view. */
   async notifyMutation(origin) {
+    if (this.beforeNotify) {
+      try {
+        await this.beforeNotify();
+      } catch (error) {
+        console.error("Transcript Memory Vault pre-refresh hook failed", error);
+      }
+    }
     for (const view of [...this.views]) {
       if (view === origin) continue;
       try {
@@ -7812,7 +7831,9 @@ var TranscriptMemoryVaultPlugin = class extends import_obsidian5.Plugin {
   // Built once; reused. The transport makes no call until the synthesis adapter actually runs.
   llmTransport = createObsidianLlmTransport();
   // Tracks open plugin views so a mutating action in one refreshes the others (cross-view invalidation).
-  viewRegistry = new ViewRefreshRegistry();
+  // Before refreshing views on any mutation (upload/extraction/review/…), recompute live reindex/health so
+  // the dashboard/settings never show startup-frozen status (e.g. a just-imported, not-yet-embedded index).
+  viewRegistry = new ViewRefreshRegistry(() => this.refreshReindexStatus());
   async onload() {
     await this.loadSettings();
     const navigation = createObsidianNavigation(this.app);
@@ -7896,7 +7917,10 @@ var TranscriptMemoryVaultPlugin = class extends import_obsidian5.Plugin {
           getEmbeddingHealth: () => askAiEmbeddingHealth(this.db, this.pluginSettings),
           getEmbeddingProvider: () => productionEmbeddingProvider(this.pluginSettings, { transport: createObsidianEmbeddingTransport() }),
           // Non-secret, display-only setup summary for the Claude/MCP dashboard card (no API keys).
-          getSetupSummary: () => buildSetupSummary(this.db, this.pluginSettings, this.health.databasePath ?? void 0)
+          getSetupSummary: () => buildSetupSummary(this.db, this.pluginSettings, this.health.databasePath ?? void 0),
+          // Live health so the dashboard reflects current status (LLM/embedding/migration/reindex/firstRun),
+          // not the snapshot captured when this api was constructed. Settings already reads this.health live.
+          getHealth: () => this.health
         }
       );
       this.refreshReindexStatus();
@@ -7979,7 +8003,7 @@ var TranscriptMemoryVaultPlugin = class extends import_obsidian5.Plugin {
       const { summary, result } = await runEmbeddingReindex(this.db, this.pluginSettings, { transport: createObsidianEmbeddingTransport() });
       if (summary.usedFallback && summary.reason) new import_obsidian5.Notice(summary.reason);
       new import_obsidian5.Notice(`Embedding index rebuilt: ${result.indexed} indexed, ${result.embedded} embedded, ${result.errors} error(s).`);
-      this.refreshReindexStatus();
+      await this.viewRegistry.notifyMutation();
     } catch (error) {
       new import_obsidian5.Notice(`Embedding index rebuild failed: ${readableStartupError(error)}`);
       console.error("Transcript Memory Vault embedding reindex failed", error);
