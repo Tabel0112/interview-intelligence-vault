@@ -35,7 +35,7 @@ describe("Obsidian plugin registration contract", () => {
   it("declares all required views, commands, and dashboard ribbon action", () => {
     expect(Object.values(OBSIDIAN_VIEW_TYPES)).toEqual([
       "transcript-memory-dashboard", "transcript-memory-upload", "transcript-memory-transcripts", "transcript-memory-transcript", "transcript-memory-ask",
-      "transcript-memory-answer", "transcript-memory-evidence", "transcript-memory-memory-object", "transcript-memory-graph",
+      "transcript-memory-answer", "transcript-memory-answer-trace", "transcript-memory-evidence", "transcript-memory-memory-object", "transcript-memory-graph",
       "transcript-memory-search", "transcript-memory-review",
     ]);
     expect(OBSIDIAN_COMMANDS.map((command) => command.name)).toEqual([
@@ -53,6 +53,21 @@ describe("Obsidian plugin registration contract", () => {
     await navigation.openEvidence("evp_1");
     expect(setViewState).toHaveBeenCalledWith({
       type: OBSIDIAN_VIEW_TYPES.evidence, active: true, state: { target: "mv://evidence/evp_1" },
+    });
+    expect(revealLeaf).toHaveBeenCalledWith(leaf);
+  });
+
+  // Regression: the "View trace" button was rendered and matchRoute recognized the route, but the
+  // delegated navigation path (navigateInternal) had no answer_trace case and hit `default: throw`,
+  // which the click handler's `void navigateInternal(...)` silently swallowed — so nothing opened.
+  it("opens the Ask AI trace view via its own view type and target", async () => {
+    const setViewState = vi.fn(async () => undefined);
+    const leaf = { setViewState } as unknown as WorkspaceLeaf;
+    const revealLeaf = vi.fn();
+    const navigation = createObsidianNavigation({ workspace: { getLeaf: () => leaf, revealLeaf } } as never);
+    await navigation.openAnswerTrace("ask_1");
+    expect(setViewState).toHaveBeenCalledWith({
+      type: OBSIDIAN_VIEW_TYPES.answerTrace, active: true, state: { target: "mv://answers/ask_1/trace" },
     });
     expect(revealLeaf).toHaveBeenCalledWith(leaf);
   });
@@ -88,6 +103,7 @@ describe("Obsidian internal provenance navigation", () => {
       openTranscript: vi.fn(async () => undefined),
       openAskAI: vi.fn(async () => undefined),
       openAnswer: vi.fn(async () => undefined),
+      openAnswerTrace: vi.fn(async () => undefined),
       openEvidence: vi.fn(async () => undefined),
       openMemoryObject: vi.fn(async () => undefined),
       openGraph: vi.fn(async () => undefined),
@@ -101,6 +117,10 @@ describe("Obsidian internal provenance navigation", () => {
     await navigateInternal(navigation, routeHref.search());
     await navigateInternal(navigation, routeHref.graph());
     await navigateInternal(navigation, routeHref.reviewQueue());
+    // The trace route MUST route through navigateInternal without throwing (the bug: it hit default:throw).
+    await navigateInternal(navigation, routeHref.answerTrace("ask_1"));
+    // The answer-detail route stays distinct and unaffected.
+    await navigateInternal(navigation, routeHref.answer("ask_2"));
     expect(navigation.openDashboard).toHaveBeenCalledOnce();
     expect(navigation.openUpload).toHaveBeenCalledOnce();
     expect(navigation.openTranscripts).toHaveBeenCalledOnce();
@@ -108,6 +128,8 @@ describe("Obsidian internal provenance navigation", () => {
     expect(navigation.openSearch).toHaveBeenCalledOnce();
     expect(navigation.openGraph).toHaveBeenCalledOnce();
     expect(navigation.openReviewQueue).toHaveBeenCalledOnce();
+    expect(navigation.openAnswerTrace).toHaveBeenCalledExactlyOnceWith("ask_1");
+    expect(navigation.openAnswer).toHaveBeenCalledExactlyOnceWith("ask_2");
   });
 
   it("preserves answer to citation to evidence to exact highlighted transcript span", async () => {
@@ -125,7 +147,7 @@ describe("Obsidian internal provenance navigation", () => {
     const openTranscript = vi.fn(async () => undefined);
     await navigateInternal({
       openDashboard: async () => undefined, openUpload: async () => undefined, openTranscripts: async () => undefined, openTranscript,
-      openAskAI: async () => undefined, openAnswer: async () => undefined, openEvidence: async () => undefined,
+      openAskAI: async () => undefined, openAnswer: async () => undefined, openAnswerTrace: async () => undefined, openEvidence: async () => undefined,
       openMemoryObject: async () => undefined, openGraph: async () => undefined, openSearch: async () => undefined,
       openReviewQueue: async () => undefined,
     }, transcriptTarget);
@@ -161,7 +183,7 @@ describe("Obsidian UI mount does not stack duplicate listeners", () => {
     const navigation = {
       openDashboard: vi.fn(async () => undefined), openUpload: vi.fn(async () => undefined),
       openTranscripts: vi.fn(async () => undefined), openTranscript: vi.fn(async () => undefined), openAskAI: vi.fn(async () => undefined),
-      openAnswer: vi.fn(async () => undefined), openEvidence: vi.fn(async () => undefined),
+      openAnswer: vi.fn(async () => undefined), openAnswerTrace: vi.fn(async () => undefined), openEvidence: vi.fn(async () => undefined),
       openMemoryObject: vi.fn(async () => undefined), openGraph: vi.fn(async () => undefined),
       openSearch: vi.fn(async () => undefined), openReviewQueue: vi.fn(async () => undefined),
     } satisfies ObsidianNavigation;
@@ -184,6 +206,13 @@ describe("Obsidian UI mount does not stack duplicate listeners", () => {
     host.dispatchEvent(new Event("click"));
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(navigation.openMemoryObject).toHaveBeenCalledTimes(2);
+
+    // Regression: a "View trace" click flows through the SAME delegated handler -> navigateInternal ->
+    // openAnswerTrace. Before the fix this path threw inside a void-ed promise and opened nothing.
+    host.routeControl = { dataset: { route: "mv://answers/ask_1/trace" }, getAttribute: () => null };
+    host.dispatchEvent(new Event("click"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(navigation.openAnswerTrace).toHaveBeenCalledExactlyOnceWith("ask_1");
   });
 
   it("refreshes the current route after an action, resolving review-detail pages to the queue", () => {

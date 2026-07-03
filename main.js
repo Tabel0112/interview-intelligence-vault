@@ -1541,6 +1541,8 @@ async function navigateInternal(navigation, target) {
       return navigation.openAskAI();
     case "answer":
       return navigation.openAnswer(route.params.id);
+    case "answer_trace":
+      return navigation.openAnswerTrace(route.params.id);
     case "evidence":
       return navigation.openEvidence(route.params.id);
     case "memory":
@@ -6997,6 +6999,7 @@ var OBSIDIAN_VIEW_TYPES = {
   transcript: "transcript-memory-transcript",
   ask: "transcript-memory-ask",
   answer: "transcript-memory-answer",
+  answerTrace: "transcript-memory-answer-trace",
   evidence: "transcript-memory-evidence",
   memory: "transcript-memory-memory-object",
   graph: "transcript-memory-graph",
@@ -7023,6 +7026,7 @@ var viewTitle = (type) => ({
   [OBSIDIAN_VIEW_TYPES.transcript]: "Transcript Source",
   [OBSIDIAN_VIEW_TYPES.ask]: "Ask AI",
   [OBSIDIAN_VIEW_TYPES.answer]: "AI Answer",
+  [OBSIDIAN_VIEW_TYPES.answerTrace]: "Ask AI Trace",
   [OBSIDIAN_VIEW_TYPES.evidence]: "Evidence",
   [OBSIDIAN_VIEW_TYPES.memory]: "Memory Object",
   [OBSIDIAN_VIEW_TYPES.graph]: "Memory Graph",
@@ -7036,6 +7040,7 @@ var defaultTarget = (type) => ({
   [OBSIDIAN_VIEW_TYPES.transcript]: "mv://transcripts/missing",
   [OBSIDIAN_VIEW_TYPES.ask]: "mv://ask",
   [OBSIDIAN_VIEW_TYPES.answer]: "mv://answers/missing",
+  [OBSIDIAN_VIEW_TYPES.answerTrace]: "mv://answers/missing/trace",
   [OBSIDIAN_VIEW_TYPES.evidence]: "mv://evidence/missing",
   [OBSIDIAN_VIEW_TYPES.memory]: "mv://memory/missing",
   [OBSIDIAN_VIEW_TYPES.graph]: "mv://graph",
@@ -7057,6 +7062,7 @@ function createObsidianNavigation(app) {
     openTranscript: (id, options) => open(OBSIDIAN_VIEW_TYPES.transcript, `mv://transcripts/${encodeURIComponent(id)}${options?.spanId ? `?span=${encodeURIComponent(options.spanId)}` : ""}`),
     openAskAI: (options) => open(OBSIDIAN_VIEW_TYPES.ask, `mv://ask${options?.transcriptIds?.length ? `?transcriptIds=${options.transcriptIds.map(encodeURIComponent).join(",")}` : ""}`),
     openAnswer: (id) => open(OBSIDIAN_VIEW_TYPES.answer, `mv://answers/${encodeURIComponent(id)}`),
+    openAnswerTrace: (id) => open(OBSIDIAN_VIEW_TYPES.answerTrace, `mv://answers/${encodeURIComponent(id)}/trace`),
     openEvidence: (id) => open(OBSIDIAN_VIEW_TYPES.evidence, `mv://evidence/${encodeURIComponent(id)}`),
     openMemoryObject: (id) => open(OBSIDIAN_VIEW_TYPES.memory, `mv://memory/${encodeURIComponent(id)}`),
     openGraph: (options) => {

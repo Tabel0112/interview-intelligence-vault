@@ -114,6 +114,7 @@ describe("obsidian:// protocol handler contract (navigation-only)", () => {
     openTranscript: vi.fn(async () => undefined),
     openAskAI: vi.fn(async () => undefined),
     openAnswer: vi.fn(async () => undefined),
+    openAnswerTrace: vi.fn(async () => undefined),
     openEvidence: vi.fn(async () => undefined),
     openMemoryObject: vi.fn(async () => undefined),
     openGraph: vi.fn(async () => undefined),
