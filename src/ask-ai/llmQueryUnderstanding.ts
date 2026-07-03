@@ -17,7 +17,7 @@
 // synthesis, and the llmRequired / embedding gates run before Ask AI regardless of this seam.
 
 import type { LlmProvider, LlmRequestOptions } from "../llm/index.js";
-import { contractForIntent, understandQuestion } from "./queryUnderstanding.js";
+import { contractForIntent, intentPrefersEvidenceSynthesis, preferredClaimKindsForIntent, understandQuestion } from "./queryUnderstanding.js";
 import type { AskAIQueryIntent, AskAIQueryUnderstandingModel, AskAIRequest, ClaimKind, QueryUnderstanding, QueryUnderstandingProposal } from "./types.js";
 
 export class QueryUnderstandingError extends Error {
@@ -27,11 +27,15 @@ export class QueryUnderstandingError extends Error {
   }
 }
 
-export const QUERY_UNDERSTANDING_PROMPT_VERSION = "mvp-query-understanding-llm-v1";
+// v2: adds the Phase 2 evidence-synthesis intents (synthesis_conclusion / why_explanation) with
+// classification hints, including Chinese examples. The contract for a proposed intent label is still
+// computed deterministically (contractForIntent) — the prompt/parser change only widens the label set.
+export const QUERY_UNDERSTANDING_PROMPT_VERSION = "mvp-query-understanding-llm-v2";
 
 const QUERY_INTENTS: readonly AskAIQueryIntent[] = [
   "factual_lookup", "decision_lookup", "evidence_check", "advice_strategy",
   "planning_draft", "conflict_risk", "comparison", "summary", "mixed",
+  "synthesis_conclusion", "why_explanation",
 ];
 const CLAIM_KINDS: readonly ClaimKind[] = ["fact", "pattern", "inference", "recommendation"];
 
@@ -56,6 +60,7 @@ export function buildQueryUnderstandingPrompt(question: string): string {
     "",
     "Classify the question and extract retrieval hints for searching the user's own transcripts.",
     `Return JSON of the form: {"intent":"${QUERY_INTENTS.join("|")}","claimKinds":["${CLAIM_KINDS.join("|")}"],"entities":["..."],"topics":["..."],"timeHints":["..."]}`,
+    'Takeaway/conclusion/pattern questions (e.g. "what is the takeaway", "what does all this tell us", "得出什么结论", "这说明了什么") are synthesis_conclusion. Why/reason/explanation questions (e.g. "why is this happening", "what explains this", "为什么", "原因是什么") are why_explanation. Both still answer ONLY from the user\'s transcript evidence — they are not advice.',
     "Every field is optional — omit anything uncertain. entities are people/organizations/products named in the question; topics are its subject phrases; timeHints are time expressions.",
   ].join("\n");
 }
@@ -117,13 +122,21 @@ const mergeHints = (base: string[], proposed: string[] | undefined): string[] =>
  */
 export function applyQueryUnderstandingProposal(base: QueryUnderstanding, proposal: QueryUnderstandingProposal): QueryUnderstanding {
   const intent = proposal.intent ?? base.intent;
+  const synthesisIntent = intentPrefersEvidenceSynthesis(intent);
   return {
     ...base,
     intent,
     // Contract ownership stays deterministic: the proposal cannot carry contract flags (type + parser
     // both strip them), and even its intent label only selects among the fixed deterministic contracts.
     answerContract: contractForIntent(intent),
-    requestedClaimKinds: proposal.requestedClaimKinds?.length ? proposal.requestedClaimKinds : base.requestedClaimKinds,
+    // Claim kinds: explicit proposal wins; otherwise a rerouted intent gets its deterministic
+    // preference (evidence-synthesis intents prefer pattern/inference), else the base kinds stand.
+    requestedClaimKinds: proposal.requestedClaimKinds?.length ? proposal.requestedClaimKinds : preferredClaimKindsForIntent(intent) ?? base.requestedClaimKinds,
+    // Evidence-synthesis intents get the SAME deterministic derivations the regex path produces:
+    // exploratory (multi-evidence) mode — only ever upgrading a default "direct", never overriding an
+    // explicit/summary/recommendation mode — and memory-object retrieval preference.
+    answerMode: synthesisIntent && base.answerMode === "direct" ? "exploratory" : base.answerMode,
+    shouldUseMemoryObjects: base.shouldUseMemoryObjects || synthesisIntent,
     detectedEntities: mergeHints(base.detectedEntities, proposal.detectedEntities),
     detectedTopics: mergeHints(base.detectedTopics, proposal.detectedTopics),
     timeHints: mergeHints(base.timeHints, proposal.timeHints),

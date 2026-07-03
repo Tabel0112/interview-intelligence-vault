@@ -1633,6 +1633,10 @@ var SUMMARY = /\b(summar\w*|overview|recap\w*|tl;?dr|gist|high[- ]level)\b/i;
 var PLANNING_DRAFT = /\b(draft\w*|outlin\w*|compos\w*)\b|\bmake me\b|\bplan for\b|\b(make|create|build|prepare|writ\w*|put together|generat\w*)\b[\s\w]{0,20}\b(plan\w*|email\w*|roadmap\w*|proposal\w*|agenda|checklist\w*|memo\w*|message\w*|doc\w*|document\w*|report\w*|letter\w*)\b/i;
 var ADVICE_STRATEGY = /\bhow (do|can|should|might|would) (i|we|you)\b|\bhow to\b|\bwhat should (i|we)\b|\bshould (i|we)\b|\b(recommend\w*|advice|advis\w*|strateg\w*|best way|improv\w*|grow\w*|optimi[sz]\w*|increas\w*|scale up|next steps?)\b/i;
 var DECISION_LOOKUP = /\b(decid\w*|decision\w*|agree\w*|chose|choos\w*|chosen|settled on|conclud\w*|opted? for)\b/i;
+var SYNTHESIS_CONCLUSION = /\btakeaways?\b|\bdraw\w*\s+(a\s+|any\s+)?conclusions?\b|\bwhat\s+conclusions?\b|\bconclusions?\s+(can|could|do|does|should|would|might)\b|\bwhat\s+(does|do)\s+(all\s+)?(this|these|that|those|it)\b[\w\s]{0,30}\b(tell|mean|say|suggest|show|imply)\w*|\bwhat\s+patterns?\b|\bkey\s+insights?\b/i;
+var SYNTHESIS_CONCLUSION_CJK = /结论|说明了什么|说明什么|总结出|什么规律/u;
+var WHY_EXPLANATION = /\bwhy\b|\bwhat\s+explains?\b|\bwhat\s+(is|was)\s+the\s+(likely\s+|main\s+|root\s+)?(reason|cause)s?\b|\breasons?\s+(for|behind|why)\b|\broot\s+causes?\b/i;
+var WHY_EXPLANATION_CJK = /为什么|原因是什么|什么原因/u;
 function classifyIntent(lower) {
   const analysis = PLANNING_DRAFT.test(lower) ? "planning_draft" : ADVICE_STRATEGY.test(lower) ? "advice_strategy" : null;
   const lookup = EVIDENCE_CHECK.test(lower) ? "evidence_check" : DECISION_LOOKUP.test(lower) ? "decision_lookup" : null;
@@ -1643,7 +1647,17 @@ function classifyIntent(lower) {
   if (SUMMARY.test(lower)) return "summary";
   if (analysis) return analysis;
   if (DECISION_LOOKUP.test(lower)) return "decision_lookup";
+  if (SYNTHESIS_CONCLUSION.test(lower) || SYNTHESIS_CONCLUSION_CJK.test(lower)) return "synthesis_conclusion";
+  if (WHY_EXPLANATION.test(lower) || WHY_EXPLANATION_CJK.test(lower)) return "why_explanation";
   return "factual_lookup";
+}
+function intentPrefersEvidenceSynthesis(intent) {
+  return intent === "synthesis_conclusion" || intent === "why_explanation";
+}
+function preferredClaimKindsForIntent(intent) {
+  if (intent === "synthesis_conclusion") return ["pattern", "inference"];
+  if (intent === "why_explanation") return ["inference", "fact"];
+  return void 0;
 }
 function contractForIntent(intent) {
   const base = {
@@ -1670,6 +1684,13 @@ function contractForIntent(intent) {
       return { ...base, allowGeneralReasoning: true, allowRecommendations: true, refuseIfNoEvidence: false, includeReviewOnlyItems: true, includeConflicts: true, allowDrafting: true };
     case "mixed":
       return { ...base, allowGeneralReasoning: true, allowRecommendations: true, refuseIfNoEvidence: false, includeReviewOnlyItems: true, includeConflicts: true };
+    // Phase 2 evidence-synthesis intents: strictly evidence-bounded (refuse with no evidence, no uncited
+    // general reasoning/recommendations/drafting — the AI-analysis branch never runs), with conflicts
+    // surfaced so a conclusion/explanation never hides opposing evidence. NOT the advice path.
+    case "synthesis_conclusion":
+      return { ...base, includeConflicts: true };
+    case "why_explanation":
+      return { ...base, includeConflicts: true };
     case "summary":
       return base;
     case "factual_lookup":
@@ -1687,8 +1708,10 @@ function understandQuestion(question, options = {}) {
   const isSummary = options.mode === "summary" || /\b(summarize|summary|overview|recap)\b/.test(lower);
   const isPattern = /\b(pattern|often|usually|repeated|trend)\b/.test(lower);
   const isInference = /\b(why|infer|suggest|imply|likely)\b/.test(lower);
-  const answerMode = options.mode ?? (needsRecommendation ? "recommendation" : isSummary ? "summary" : needsComparison || needsChronology ? "exploratory" : "direct");
-  const requestedClaimKinds = unique([
+  const intent = classifyIntent(lower);
+  const synthesisIntent = intentPrefersEvidenceSynthesis(intent);
+  const answerMode = options.mode ?? (needsRecommendation ? "recommendation" : isSummary ? "summary" : synthesisIntent || needsComparison || needsChronology ? "exploratory" : "direct");
+  const requestedClaimKinds = preferredClaimKindsForIntent(intent) ?? unique([
     needsRecommendation ? "recommendation" : "",
     isPattern ? "pattern" : "",
     isInference ? "inference" : "",
@@ -1700,7 +1723,6 @@ function understandQuestion(question, options = {}) {
   ]);
   const quoted = [...normalizedQuestion.matchAll(/["']([^"']+)["']/g)].map((match) => match[1]);
   const timeHints = unique(normalizedQuestion.match(/\b(?:recently|today|yesterday|last week|last month|before|after|20\d{2}|january|february|march|april|may|june|july|august|september|october|november|december)\b/gi) ?? []);
-  const intent = classifyIntent(lower);
   return {
     originalQuestion: question,
     normalizedQuestion,
@@ -1714,7 +1736,7 @@ function understandQuestion(question, options = {}) {
     needsRecommendation,
     needsComparison,
     needsChronology,
-    shouldUseMemoryObjects: answerMode !== "direct" || isPattern,
+    shouldUseMemoryObjects: answerMode !== "direct" || isPattern || synthesisIntent,
     shouldUseRawTranscriptSpans: true,
     transcriptIds: [...options.transcriptIds ?? []],
     entityIds: [...options.entityIds ?? []],
@@ -1740,7 +1762,9 @@ var QUERY_INTENTS = [
   "conflict_risk",
   "comparison",
   "summary",
-  "mixed"
+  "mixed",
+  "synthesis_conclusion",
+  "why_explanation"
 ];
 var CLAIM_KINDS = ["fact", "pattern", "inference", "recommendation"];
 var MAX_PROPOSED_ITEMS = 8;
@@ -1761,6 +1785,7 @@ function buildQueryUnderstandingPrompt(question) {
     "",
     "Classify the question and extract retrieval hints for searching the user's own transcripts.",
     `Return JSON of the form: {"intent":"${QUERY_INTENTS.join("|")}","claimKinds":["${CLAIM_KINDS.join("|")}"],"entities":["..."],"topics":["..."],"timeHints":["..."]}`,
+    `Takeaway/conclusion/pattern questions (e.g. "what is the takeaway", "what does all this tell us", "\u5F97\u51FA\u4EC0\u4E48\u7ED3\u8BBA", "\u8FD9\u8BF4\u660E\u4E86\u4EC0\u4E48") are synthesis_conclusion. Why/reason/explanation questions (e.g. "why is this happening", "what explains this", "\u4E3A\u4EC0\u4E48", "\u539F\u56E0\u662F\u4EC0\u4E48") are why_explanation. Both still answer ONLY from the user's transcript evidence \u2014 they are not advice.`,
     "Every field is optional \u2014 omit anything uncertain. entities are people/organizations/products named in the question; topics are its subject phrases; timeHints are time expressions."
   ].join("\n");
 }
@@ -1804,13 +1829,21 @@ function parseQueryUnderstandingProposal(rawText) {
 var mergeHints = (base, proposed) => [.../* @__PURE__ */ new Set([...base, ...proposed ?? []])].slice(0, MAX_MERGED_ITEMS);
 function applyQueryUnderstandingProposal(base, proposal) {
   const intent = proposal.intent ?? base.intent;
+  const synthesisIntent = intentPrefersEvidenceSynthesis(intent);
   return {
     ...base,
     intent,
     // Contract ownership stays deterministic: the proposal cannot carry contract flags (type + parser
     // both strip them), and even its intent label only selects among the fixed deterministic contracts.
     answerContract: contractForIntent(intent),
-    requestedClaimKinds: proposal.requestedClaimKinds?.length ? proposal.requestedClaimKinds : base.requestedClaimKinds,
+    // Claim kinds: explicit proposal wins; otherwise a rerouted intent gets its deterministic
+    // preference (evidence-synthesis intents prefer pattern/inference), else the base kinds stand.
+    requestedClaimKinds: proposal.requestedClaimKinds?.length ? proposal.requestedClaimKinds : preferredClaimKindsForIntent(intent) ?? base.requestedClaimKinds,
+    // Evidence-synthesis intents get the SAME deterministic derivations the regex path produces:
+    // exploratory (multi-evidence) mode — only ever upgrading a default "direct", never overriding an
+    // explicit/summary/recommendation mode — and memory-object retrieval preference.
+    answerMode: synthesisIntent && base.answerMode === "direct" ? "exploratory" : base.answerMode,
+    shouldUseMemoryObjects: base.shouldUseMemoryObjects || synthesisIntent,
     detectedEntities: mergeHints(base.detectedEntities, proposal.detectedEntities),
     detectedTopics: mergeHints(base.detectedTopics, proposal.detectedTopics),
     timeHints: mergeHints(base.timeHints, proposal.timeHints),
@@ -1942,7 +1975,9 @@ async function generateClaimsFromEvidence(query, evidence, citations, options) {
       status = "weakly_supported";
       explanation = explanation ?? "Pattern is tentative because only one independent span supports it.";
     }
-    if (kind === "inference") explanation = explanation ?? "This is an inference derived from the cited transcript evidence.";
+    const constrained = intentPrefersEvidenceSynthesis(query.intent);
+    if (kind === "pattern" && constrained) explanation = explanation ?? "This takeaway is constrained to the cited transcript evidence; a broader conclusion would require additional evidence.";
+    if (kind === "inference") explanation = explanation ?? (constrained ? "This is an inference constrained to the cited transcript evidence; broader interpretation is not available." : "This is an inference derived from the cited transcript evidence.");
     if (kind === "recommendation") explanation = explanation ?? "This recommendation is based only on the cited goals, constraints, or preferences.";
     const citationIds = pointers.map((id) => citationByPointer.get(id)?.id).filter((id) => id != null);
     if (!citationIds.length) return [];

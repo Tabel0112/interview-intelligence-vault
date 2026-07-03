@@ -11,7 +11,10 @@ export type ClaimKind = "fact" | "pattern" | "inference" | "recommendation";
  */
 export type AskAIQueryIntent =
   | "factual_lookup" | "decision_lookup" | "evidence_check" | "advice_strategy"
-  | "planning_draft" | "conflict_risk" | "comparison" | "summary" | "mixed";
+  | "planning_draft" | "conflict_risk" | "comparison" | "summary" | "mixed"
+  // Phase 2 evidence-synthesis intents: conclusions/takeaways and why/reason questions. Both are
+  // EVIDENCE-BOUNDED (refuse with no evidence, no uncited general reasoning) — NOT the advice path.
+  | "synthesis_conclusion" | "why_explanation";
 
 /**
  * What the answer is allowed to do for a given intent. Computed ONLY by the deterministic

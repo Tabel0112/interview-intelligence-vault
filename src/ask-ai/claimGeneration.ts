@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { SynthesisFailedError, SynthesisSetupRequiredError } from "./errors.js";
+import { intentPrefersEvidenceSynthesis } from "./queryUnderstanding.js";
 import type { AskAILanguageModel, AskAIClaim, AskAICitation, AskAIEvidenceItem, ClaimKind, ClaimSupportStatus, EvidenceConfidence, QueryUnderstanding } from "./types.js";
 
 const stableId = (value: string) => `aiclaim_${createHash("sha256").update(value).digest("hex").slice(0, 24)}`;
@@ -77,7 +78,14 @@ export async function generateClaimsFromEvidence(
     if (kind === "pattern" && claimEvidence.length < 2 && !/\b(always|usually|often|repeatedly|consistently)\b/i.test(claimEvidence[0]?.quotePreview ?? "")) {
       status = "weakly_supported"; explanation = explanation ?? "Pattern is tentative because only one independent span supports it.";
     }
-    if (kind === "inference") explanation = explanation ?? "This is an inference derived from the cited transcript evidence.";
+    // Evidence-synthesis intents (Phase 2): default explanations state the current limitation honestly —
+    // conclusions/explanations are constrained to cited evidence (no entailment-level grounding yet).
+    // Copy only: support status, grounding, and citations are computed exactly as before.
+    const constrained = intentPrefersEvidenceSynthesis(query.intent);
+    if (kind === "pattern" && constrained) explanation = explanation ?? "This takeaway is constrained to the cited transcript evidence; a broader conclusion would require additional evidence.";
+    if (kind === "inference") explanation = explanation ?? (constrained
+      ? "This is an inference constrained to the cited transcript evidence; broader interpretation is not available."
+      : "This is an inference derived from the cited transcript evidence.");
     if (kind === "recommendation") explanation = explanation ?? "This recommendation is based only on the cited goals, constraints, or preferences.";
     const citationIds = pointers.map((id) => citationByPointer.get(id)?.id).filter((id): id is string => id != null);
     if (!citationIds.length) return [];

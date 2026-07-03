@@ -79,7 +79,7 @@ describe("parseQueryUnderstandingProposal: strict validation", () => {
 
   it("2. drops unknown intents and unknown claim kinds instead of guessing", () => {
     const proposal = parseQueryUnderstandingProposal(JSON.stringify({
-      intent: "synthesis_conclusion", // not a known intent yet (Phase 2) -> dropped, deterministic base decides
+      intent: "galaxy_brain_synthesis", // not a known intent -> dropped, deterministic base decides
       claimKinds: ["fact", "opinion", 42],
     }));
     expect(proposal.intent).toBeUndefined();
