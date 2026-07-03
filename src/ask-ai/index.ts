@@ -1,6 +1,7 @@
 export * from "./types.js";
 export * from "./errors.js";
 export * from "./queryUnderstanding.js";
+export * from "./llmQueryUnderstanding.js";
 export * from "./evidenceSelection.js";
 export * from "./claimGeneration.js";
 export * from "./analysisGeneration.js";

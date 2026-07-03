@@ -8,7 +8,7 @@
 // validates the key) — it never calls the network until synthesis/extraction actually runs. The API key
 // is never logged here, and only non-secret summaries are exposed to health/UI.
 
-import { createLlmAskAIAnalysisModel, createLlmAskAILanguageModel, type AskAIAnalysisModel, type AskAILanguageModel, type SynthesisInfo } from "../ask-ai/index.js";
+import { createLlmAskAIAnalysisModel, createLlmAskAILanguageModel, createLlmQueryUnderstandingModel, type AskAIAnalysisModel, type AskAILanguageModel, type AskAIQueryUnderstandingModel, type SynthesisInfo } from "../ask-ai/index.js";
 import { ExternalLlmProvider, type ExternalLlmProviderConfig, type LlmTransport } from "../llm/index.js";
 import { createLlmMemoryExtractor, type MemoryExtractor } from "../memory/index.js";
 import { isExternalLlmProvider, type TranscriptMemorySettings } from "./settings.js";
@@ -47,6 +47,12 @@ export interface AskAiSynthesis {
   llm: AskAILanguageModel;
   /** Live-only AI-analysis adapter (Step 2), from the same provider. Used for advice/strategy/planning. */
   analysis: AskAIAnalysisModel;
+  /**
+   * LLM query-understanding adapter (Phase 1), from the same provider (no extra key/config). Proposes
+   * intent + retrieval hints only; the answer contract stays deterministic and any failure falls back
+   * to the deterministic classifier inside the Ask AI pipeline.
+   */
+  queryUnderstanding: AskAIQueryUnderstandingModel;
   /** Non-secret configured-synthesis summary recorded with the answer. No keys/provider objects. */
   info: SynthesisInfo;
 }
@@ -62,6 +68,7 @@ export function askAiSynthesisFromSettings(settings: TranscriptMemorySettings, o
   return {
     llm: createLlmAskAILanguageModel(provider),
     analysis: createLlmAskAIAnalysisModel(provider),
+    queryUnderstanding: createLlmQueryUnderstandingModel(provider),
     info: { mode: "external_llm", provider: provider.id, model: provider.model, usedFallback: false },
   };
 }

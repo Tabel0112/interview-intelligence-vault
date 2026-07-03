@@ -8,7 +8,7 @@ import { selectEvidenceForAnswer } from "./evidenceSelection.js";
 import { suggestFollowups } from "./followups.js";
 import { persistAskAIResponse } from "./repository.js";
 import { renderAnswer } from "./answerRendering.js";
-import { understandQuestion } from "./queryUnderstanding.js";
+import { understandQuestionWithModel } from "./llmQueryUnderstanding.js";
 import type { AnswerSynthesis, AskAIAnalysisClaim, AskAIDependencies, AskAIRequest, AskAIResponse, AskAIUnconfirmedItem, ClaimKind, QueryUnderstanding } from "./types.js";
 
 const useType = (kind: ClaimKind): EvidenceUseType =>
@@ -30,7 +30,11 @@ function resolveAnswerSynthesis(deps: AskAIDependencies, actualMode: "llm" | "de
 }
 
 export async function askAI(request: AskAIRequest, deps: AskAIDependencies): Promise<AskAIResponse> {
-  const query = understandQuestion(request.question, request);
+  // Deterministic understanding first; when the optional LLM query-understanding seam is injected, its
+  // validated proposal refines intent/claim kinds/retrieval hints (contract stays deterministic). Any
+  // seam failure falls back to the deterministic base — this runs BEFORE retrieval and outside any
+  // SQLite transaction, and never weakens the llmRequired/embedding gates (enforced by the caller).
+  const query = await understandQuestionWithModel(request.question, request, deps.queryUnderstanding);
   const timestamp = deps.now?.() ?? new Date();
   const candidates = await deps.retrieveCandidates(query);
   const assessment: EvidenceBundleAssessment = deps.scoreEvidence

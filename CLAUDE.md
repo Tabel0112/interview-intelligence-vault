@@ -39,7 +39,7 @@ The live Obsidian app is **LLM-required**: Ask AI synthesis and AI memory extrac
 7. Tests must always run offline with mock/injected providers (mock external LLM transports, or deterministic/local providers passed in explicitly). No real network calls in tests, ever.
 8. Never make a network call inside a SQLite transaction.
 9. Hermes personalization is presentation/ranking only and is currently **not invoked in the live frontend Ask AI path** (it lives only in the orchestration `answerSynthesisAgent`). Do not rely on it running there, and never let it change evidence scores, truth status, conflict status, provenance, or warnings.
-10. Add real providers only behind the existing injection seams (`EmbeddingProvider`, `AskAILanguageModel`, `MemoryExtractor`) so a mock can be injected in tests. The live wiring passes `llmRequired: true`; deterministic providers are reachable only through explicit injection, never the live resolvers (`askAiSynthesisFromSettings` / `memoryExtractorFromSettings` return `undefined` when no LLM is configured).
+10. Add real providers only behind the existing injection seams (`EmbeddingProvider`, `AskAILanguageModel`, `MemoryExtractor`, `AskAIQueryUnderstandingModel`) so a mock can be injected in tests. The live wiring passes `llmRequired: true`; deterministic providers are reachable only through explicit injection, never the live resolvers (`askAiSynthesisFromSettings` / `memoryExtractorFromSettings` return `undefined` when no LLM is configured). LLM query understanding is refine-only: it proposes intent/claim-kind/retrieval hints, the answer contract stays deterministic (`contractForIntent`), and any failure falls back to the deterministic `understandQuestion` result.
 
 ## Existing Implemented Areas
 

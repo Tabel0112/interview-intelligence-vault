@@ -3,7 +3,7 @@ import { createConflictRepository } from "../conflicts/index.js";
 import { getEvidenceCandidatesForTarget, scoreEvidenceBundle, type EvidenceCandidate, type EvidenceUseType } from "../evidence/index.js";
 import { searchEvidencePointers, type EmbeddingProvider } from "../retrieval/index.js";
 import { retrieveUnconfirmedContext } from "./unconfirmedContext.js";
-import type { QueryUnderstanding, AskAIAnalysisModel, AskAIDependencies, AskAILanguageModel, ClaimKind, SynthesisInfo } from "./types.js";
+import type { QueryUnderstanding, AskAIAnalysisModel, AskAIDependencies, AskAILanguageModel, AskAIQueryUnderstandingModel, ClaimKind, SynthesisInfo } from "./types.js";
 
 const useType = (kind: ClaimKind): EvidenceUseType => kind === "fact" ? "direct_fact" : kind === "pattern" ? "pattern" : kind;
 
@@ -28,10 +28,10 @@ async function retrieve(db: SqliteDatabase, query: QueryUnderstanding, embedding
 
 export function createDatabaseAskAIDependencies(
   db: SqliteDatabase,
-  options: { now?: () => Date; llm?: AskAILanguageModel; analysis?: AskAIAnalysisModel; synthesisInfo?: SynthesisInfo; requireLlm?: boolean; embeddingProvider?: EmbeddingProvider } = {},
+  options: { now?: () => Date; llm?: AskAILanguageModel; analysis?: AskAIAnalysisModel; queryUnderstanding?: AskAIQueryUnderstandingModel; synthesisInfo?: SynthesisInfo; requireLlm?: boolean; embeddingProvider?: EmbeddingProvider } = {},
 ): AskAIDependencies {
   return {
-    db, now: options.now, llm: options.llm, analysis: options.analysis, synthesisInfo: options.synthesisInfo, requireLlm: options.requireLlm,
+    db, now: options.now, llm: options.llm, analysis: options.analysis, queryUnderstanding: options.queryUnderstanding, synthesisInfo: options.synthesisInfo, requireLlm: options.requireLlm,
     retrieveCandidates: (query) => retrieve(db, query, options.embeddingProvider),
     scoreEvidence: async (question, candidates, query) => scoreEvidenceBundle({
       claimText: question, candidates, useType: useType(query.requestedClaimKinds[0] ?? "fact"), now: options.now?.().toISOString(),

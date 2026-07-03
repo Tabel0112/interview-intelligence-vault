@@ -1719,7 +1719,126 @@ function understandQuestion(question, options = {}) {
     transcriptIds: [...options.transcriptIds ?? []],
     entityIds: [...options.entityIds ?? []],
     memoryObjectIds: [...options.memoryObjectIds ?? []],
-    timeRange: options.timeRange
+    timeRange: options.timeRange,
+    understandingSource: "deterministic"
+  };
+}
+
+// src/ask-ai/llmQueryUnderstanding.ts
+var QueryUnderstandingError = class extends Error {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "QueryUnderstandingError";
+  }
+};
+var QUERY_INTENTS = [
+  "factual_lookup",
+  "decision_lookup",
+  "evidence_check",
+  "advice_strategy",
+  "planning_draft",
+  "conflict_risk",
+  "comparison",
+  "summary",
+  "mixed"
+];
+var CLAIM_KINDS = ["fact", "pattern", "inference", "recommendation"];
+var MAX_PROPOSED_ITEMS = 8;
+var MAX_MERGED_ITEMS = 16;
+var MAX_ITEM_LENGTH = 200;
+var QUERY_UNDERSTANDING_SYSTEM = [
+  "You plan retrieval for a personal transcript-memory vault. You are NOT answering the user's question;",
+  "you only classify it and extract retrieval hints. Do not invent facts. Do not create claims or answers.",
+  "Do not cite, select, or evaluate evidence, and do not decide whether evidence is sufficient.",
+  "Do not set trust, scoring, citation, contract, or refusal fields \u2014 any such fields are ignored.",
+  "Preserve uncertainty: omit any field you are not confident about (a deterministic classifier fills the gaps).",
+  "The question may be in any language; keep entities and topics in the question's own language.",
+  "Respond with JSON only."
+].join(" ");
+function buildQueryUnderstandingPrompt(question) {
+  return [
+    `Question: ${question}`,
+    "",
+    "Classify the question and extract retrieval hints for searching the user's own transcripts.",
+    `Return JSON of the form: {"intent":"${QUERY_INTENTS.join("|")}","claimKinds":["${CLAIM_KINDS.join("|")}"],"entities":["..."],"topics":["..."],"timeHints":["..."]}`,
+    "Every field is optional \u2014 omit anything uncertain. entities are people/organizations/products named in the question; topics are its subject phrases; timeHints are time expressions."
+  ].join("\n");
+}
+var normalizeItem = (value) => {
+  if (typeof value !== "string") return null;
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized && normalized.length <= MAX_ITEM_LENGTH ? normalized : normalized ? normalized.slice(0, MAX_ITEM_LENGTH) : null;
+};
+var sanitizeStrings = (value) => {
+  if (!Array.isArray(value)) return void 0;
+  const items = [...new Set(value.map(normalizeItem).filter((item) => item != null))].slice(0, MAX_PROPOSED_ITEMS);
+  return items.length ? items : void 0;
+};
+function parseQueryUnderstandingProposal(rawText) {
+  let parsed;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch {
+    throw new QueryUnderstandingError("LLM query-understanding output was not valid JSON");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new QueryUnderstandingError("LLM query-understanding output was not a JSON object");
+  }
+  const candidate = parsed;
+  const proposal = {};
+  if (typeof candidate.intent === "string" && QUERY_INTENTS.includes(candidate.intent)) {
+    proposal.intent = candidate.intent;
+  }
+  if (Array.isArray(candidate.claimKinds)) {
+    const kinds = [...new Set(candidate.claimKinds.filter((kind) => typeof kind === "string" && CLAIM_KINDS.includes(kind)))];
+    if (kinds.length) proposal.requestedClaimKinds = kinds;
+  }
+  const entities = sanitizeStrings(candidate.entities);
+  if (entities) proposal.detectedEntities = entities;
+  const topics = sanitizeStrings(candidate.topics);
+  if (topics) proposal.detectedTopics = topics;
+  const timeHints = sanitizeStrings(candidate.timeHints);
+  if (timeHints) proposal.timeHints = timeHints;
+  return proposal;
+}
+var mergeHints = (base, proposed) => [.../* @__PURE__ */ new Set([...base, ...proposed ?? []])].slice(0, MAX_MERGED_ITEMS);
+function applyQueryUnderstandingProposal(base, proposal) {
+  const intent = proposal.intent ?? base.intent;
+  return {
+    ...base,
+    intent,
+    // Contract ownership stays deterministic: the proposal cannot carry contract flags (type + parser
+    // both strip them), and even its intent label only selects among the fixed deterministic contracts.
+    answerContract: contractForIntent(intent),
+    requestedClaimKinds: proposal.requestedClaimKinds?.length ? proposal.requestedClaimKinds : base.requestedClaimKinds,
+    detectedEntities: mergeHints(base.detectedEntities, proposal.detectedEntities),
+    detectedTopics: mergeHints(base.detectedTopics, proposal.detectedTopics),
+    timeHints: mergeHints(base.timeHints, proposal.timeHints),
+    understandingSource: "llm"
+  };
+}
+async function understandQuestionWithModel(question, options = {}, model) {
+  const base = understandQuestion(question, options);
+  if (!model) return base;
+  try {
+    return applyQueryUnderstandingProposal(base, await model.understand({ question: base.normalizedQuestion }));
+  } catch {
+    return base;
+  }
+}
+function createLlmQueryUnderstandingModel(provider, options = {}) {
+  return {
+    async understand({ question }) {
+      const requestOptions = {};
+      if (options.timeoutMs != null) requestOptions.timeoutMs = options.timeoutMs;
+      let text;
+      try {
+        text = (await provider.complete({ system: QUERY_UNDERSTANDING_SYSTEM, prompt: buildQueryUnderstandingPrompt(question), responseFormat: "json" }, requestOptions)).text;
+      } catch {
+        throw new QueryUnderstandingError("LLM query-understanding request failed");
+      }
+      return parseQueryUnderstandingProposal(text);
+    }
   };
 }
 
@@ -4436,7 +4555,7 @@ var LlmSynthesisError = class extends Error {
     this.name = "LlmSynthesisError";
   }
 };
-var CLAIM_KINDS = ["fact", "pattern", "inference", "recommendation"];
+var CLAIM_KINDS2 = ["fact", "pattern", "inference", "recommendation"];
 var normalizeForMatch2 = (value) => value.toLowerCase().replace(/\s+/g, " ").trim();
 function buildSynthesisPrompt(query, evidence) {
   const items = evidence.map((item, index) => `${index + 1}. pointerId: ${item.evidencePointerId}
@@ -4473,7 +4592,7 @@ function parseAndGroundClaims(rawText, evidence) {
     if (!raw || typeof raw !== "object") continue;
     const candidate = raw;
     const kind = candidate.kind;
-    if (typeof kind !== "string" || !CLAIM_KINDS.includes(kind)) continue;
+    if (typeof kind !== "string" || !CLAIM_KINDS2.includes(kind)) continue;
     const text = candidate.text;
     if (typeof text !== "string" || !text.trim()) continue;
     const ids = candidate.evidencePointerIds;
@@ -4876,6 +4995,7 @@ function createDatabaseAskAIDependencies(db, options = {}) {
     now: options.now,
     llm: options.llm,
     analysis: options.analysis,
+    queryUnderstanding: options.queryUnderstanding,
     synthesisInfo: options.synthesisInfo,
     requireLlm: options.requireLlm,
     retrieveCandidates: (query) => retrieve(db, query, options.embeddingProvider),
@@ -4901,7 +5021,7 @@ function resolveAnswerSynthesis(deps, actualMode) {
   return { mode, provider: configured.provider, model: configured.model, usedFallback, reason };
 }
 async function askAI(request, deps) {
-  const query = understandQuestion(request.question, request);
+  const query = await understandQuestionWithModel(request.question, request, deps.queryUnderstanding);
   const timestamp = deps.now?.() ?? /* @__PURE__ */ new Date();
   const candidates = await deps.retrieveCandidates(query);
   const assessment = deps.scoreEvidence ? await deps.scoreEvidence(query.normalizedQuestion, candidates, query) : scoreEvidenceBundle({
@@ -5764,7 +5884,7 @@ function createSqliteFrontendApi(db, options = {}) {
     const embeddingProvider = options.embeddingsRequired ? options.getEmbeddingProvider?.() : void 0;
     return askAI(
       { question, transcriptIds: askOptions?.transcriptIds, maxEvidenceItems: askOptions?.maxEvidence },
-      createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, analysis: synth?.analysis, synthesisInfo: synth?.info, requireLlm: options.llmRequired, embeddingProvider })
+      createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, analysis: synth?.analysis, queryUnderstanding: synth?.queryUnderstanding, synthesisInfo: synth?.info, requireLlm: options.llmRequired, embeddingProvider })
     );
   };
   return {
@@ -8121,6 +8241,7 @@ function askAiSynthesisFromSettings(settings, options = {}) {
   return {
     llm: createLlmAskAILanguageModel(provider),
     analysis: createLlmAskAIAnalysisModel(provider),
+    queryUnderstanding: createLlmQueryUnderstandingModel(provider),
     info: { mode: "external_llm", provider: provider.id, model: provider.model, usedFallback: false }
   };
 }

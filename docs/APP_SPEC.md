@@ -104,6 +104,7 @@ Raw immutability + triggers; evidence scoring weights/caps; provenance hash vali
 |---|---|---|---|
 | Embeddings | `EmbeddingProvider` + `resolveEmbeddingProvider` (`src/retrieval/`) | token-hash-v1, noop, **`ExternalEmbeddingProvider`** (configured-only) | wire external provider into **automatic** post-import indexing; reindex-status refresh |
 | Ask AI synthesis | `AskAILanguageModel` (optional `llm?`) | deterministic templated text, **`createLlmAskAILanguageModel`** (live when configured) | entailment check; evidence token-budget |
+| Ask AI query understanding | `AskAIQueryUnderstandingModel` (optional `queryUnderstanding?`) | deterministic regex `understandQuestion` (always the base + fallback), **`createLlmQueryUnderstandingModel`** (live when configured; proposes intent/claim kinds/retrieval hints only — the answer contract stays deterministic via `contractForIntent`, and any failure/malformed output falls back to the regex result) | `synthesis_conclusion` intent (Phase 2) |
 | Memory extraction | `MemoryExtractor` | `DeterministicRuleExtractor`, **`createLlmMemoryExtractor`** (auto after import, calibrated auto-active vs `needs_review`) | cross-span synthesis (future) |
 | Provider/model/key config | `*FromSettings` resolvers (`src/obsidian/`) | settings UI + key handling + DI resolution | OS-keychain storage (future) |
 

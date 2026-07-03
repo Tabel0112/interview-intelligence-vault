@@ -14,10 +14,11 @@ export type AskAIQueryIntent =
   | "planning_draft" | "conflict_risk" | "comparison" | "summary" | "mixed";
 
 /**
- * What the answer is allowed to do for a given intent. Step 1 ONLY computes and returns this metadata;
- * nothing downstream consumes it yet, so factual lookup, refusal, scoring, and MCP/UI output are unchanged.
- * `requireEvidenceForFactualClaims` is always true: a vault factual claim must trace to transcript evidence,
- * regardless of intent. The other flags gate behavior that later steps will implement.
+ * What the answer is allowed to do for a given intent. Computed ONLY by the deterministic
+ * `contractForIntent` (LLM query-understanding proposals cannot author these flags). The pipeline
+ * consumes it to gate the uncited analysis branch and unconfirmed-context surfacing.
+ * `requireEvidenceForFactualClaims` is always true: a vault factual claim must trace to transcript
+ * evidence, regardless of intent.
  */
 export interface AskAIAnswerContract {
   /** A claim about what the vault/transcripts say must be evidence-backed. Always true. */
@@ -53,9 +54,9 @@ export interface QueryUnderstanding {
   originalQuestion: string;
   normalizedQuestion: string;
   answerMode: AskAIAnswerMode;
-  /** Internally-detected task type (deterministic). Step 1 metadata; not yet consumed downstream. */
+  /** Internally-detected task type (deterministic regex, optionally refined by a clamped LLM proposal). */
   intent: AskAIQueryIntent;
-  /** Per-intent behavior contract. Step 1 metadata; not yet consumed downstream. */
+  /** Per-intent behavior contract. ALWAYS computed deterministically via contractForIntent — never by an LLM. */
   answerContract: AskAIAnswerContract;
   detectedEntities: string[];
   detectedTopics: string[];
@@ -70,6 +71,35 @@ export interface QueryUnderstanding {
   entityIds: string[];
   memoryObjectIds: string[];
   timeRange?: AskAIRequest["timeRange"];
+  /**
+   * How this understanding was produced: "llm" when a valid LLM proposal was applied on top of the
+   * deterministic base, "deterministic" (or absent, for rows persisted before this field) otherwise.
+   * Additive + non-secret; the answer contract is deterministic (contractForIntent) in BOTH cases.
+   */
+  understandingSource?: "deterministic" | "llm";
+}
+
+/**
+ * The ONLY fields an LLM may propose about a query. Deliberately excludes the answer contract, answer
+ * mode, evidence flags, and scoring/trust fields — those stay deterministic (contractForIntent et al.),
+ * so a model can never widen refusal/reasoning behavior beyond what its (clamped) intent label implies.
+ */
+export interface QueryUnderstandingProposal {
+  intent?: AskAIQueryIntent;
+  requestedClaimKinds?: ClaimKind[];
+  detectedEntities?: string[];
+  detectedTopics?: string[];
+  timeHints?: string[];
+}
+
+/**
+ * Live-only seam that proposes query understanding (intent + retrieval hints) via the configured external
+ * LLM. It is a retrieval/classification PLANNER, never an answerer: it sees only the question, returns
+ * only {@link QueryUnderstandingProposal} fields, and any failure/malformed output falls back to the
+ * deterministic `understandQuestion` result. It never creates claims, evidence, scores, or contracts.
+ */
+export interface AskAIQueryUnderstandingModel {
+  understand(input: { question: string }): Promise<QueryUnderstandingProposal>;
 }
 
 export interface AskAIEvidenceItem {
@@ -251,6 +281,12 @@ export interface AskAIDependencies {
   llm?: AskAILanguageModel;
   /** Live-only AI-analysis seam (Step 2). Injected only when an external LLM is configured. */
   analysis?: AskAIAnalysisModel;
+  /**
+   * Optional LLM query-understanding seam. When present, its (validated) proposal refines the
+   * deterministic understanding; when absent or failing, `understandQuestion` alone is used — so this
+   * seam can improve routing/retrieval hints but never becomes a new failure mode for Ask AI.
+   */
+  queryUnderstanding?: AskAIQueryUnderstandingModel;
   /** Live-only unconfirmed/tentative/conflict retrieval seam (sub-step A). DB-backed; no LLM required. */
   retrieveUnconfirmed?: AskAIUnconfirmedRetriever;
   /** Non-secret configured-synthesis summary, recorded with the answer. */

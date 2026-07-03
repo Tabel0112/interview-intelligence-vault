@@ -1,4 +1,4 @@
-import { askAI, createDatabaseAskAIDependencies, EmbeddingReindexRequiredError, EmbeddingSetupRequiredError, getAskAIResponse, SynthesisSetupRequiredError, type AskAIAnalysisModel, type AskAILanguageModel, type AskAIResponse, type SynthesisInfo } from "../ask-ai/index.js";
+import { askAI, createDatabaseAskAIDependencies, EmbeddingReindexRequiredError, EmbeddingSetupRequiredError, getAskAIResponse, SynthesisSetupRequiredError, type AskAIAnalysisModel, type AskAILanguageModel, type AskAIQueryUnderstandingModel, type AskAIResponse, type SynthesisInfo } from "../ask-ai/index.js";
 import type { EmbeddingProvider } from "../retrieval/index.js";
 
 /** Read-only production-readiness of Ask AI embeddings (resolved by the plugin from settings). */
@@ -282,7 +282,7 @@ export function createSqliteFrontendApi(
     health?: PluginHealth;
     /** Live health getter — the dashboard reads this so it never renders a startup-frozen snapshot. */
     getHealth?: () => PluginHealth | undefined;
-    getSynthesis?: () => { llm?: AskAILanguageModel; analysis?: AskAIAnalysisModel; info: SynthesisInfo } | undefined;
+    getSynthesis?: () => { llm?: AskAILanguageModel; analysis?: AskAIAnalysisModel; queryUnderstanding?: AskAIQueryUnderstandingModel; info: SynthesisInfo } | undefined;
     getMemoryExtractor?: () => MemoryExtractor | undefined;
     /** Live app: require a configured LLM for generation; never fall back to deterministic output. */
     llmRequired?: boolean;
@@ -325,7 +325,7 @@ export function createSqliteFrontendApi(
     // When healthy, pass the live external embedding provider so retrieval is semantic, not keyword-only.
     const embeddingProvider = options.embeddingsRequired ? options.getEmbeddingProvider?.() : undefined;
     return askAI({ question, transcriptIds: askOptions?.transcriptIds, maxEvidenceItems: askOptions?.maxEvidence },
-      createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, analysis: synth?.analysis, synthesisInfo: synth?.info, requireLlm: options.llmRequired, embeddingProvider }));
+      createDatabaseAskAIDependencies(db, { now: options.now, llm: synth?.llm, analysis: synth?.analysis, queryUnderstanding: synth?.queryUnderstanding, synthesisInfo: synth?.info, requireLlm: options.llmRequired, embeddingProvider }));
   };
   return {
     async getDashboard(): Promise<DashboardView> {

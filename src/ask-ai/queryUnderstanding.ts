@@ -30,11 +30,13 @@ function classifyIntent(lower: string): AskAIQueryIntent {
 }
 
 /**
- * Per-intent answer contract. Step 1 metadata only — NOT yet consumed by the pipeline, so refusal/scoring/
- * output are unchanged. `requireEvidenceForFactualClaims` is always true. Lookup-style intents keep
- * refuse-if-no-evidence; analysis-style intents flip it off for LATER steps to honor.
+ * Per-intent answer contract — the ONLY source of contract flags. The pipeline consumes it to gate the
+ * (uncited) analysis branch and unconfirmed context; factual refusal/scoring stay evidence-driven.
+ * `requireEvidenceForFactualClaims` is always true. Lookup-style intents keep refuse-if-no-evidence;
+ * analysis-style intents flip it off. Exported so LLM-proposed intents get the SAME deterministic
+ * contract — an LLM proposal can pick an intent label, never author contract flags.
  */
-function contractForIntent(intent: AskAIQueryIntent): AskAIAnswerContract {
+export function contractForIntent(intent: AskAIQueryIntent): AskAIAnswerContract {
   const base: AskAIAnswerContract = {
     requireEvidenceForFactualClaims: true, allowGeneralReasoning: false, allowRecommendations: false,
     refuseIfNoEvidence: true, includeReviewOnlyItems: false, includeConflicts: false, allowDrafting: false,
@@ -83,5 +85,6 @@ export function understandQuestion(question: string, options: Omit<AskAIRequest,
     shouldUseMemoryObjects: answerMode !== "direct" || isPattern, shouldUseRawTranscriptSpans: true,
     transcriptIds: [...(options.transcriptIds ?? [])], entityIds: [...(options.entityIds ?? [])],
     memoryObjectIds: [...(options.memoryObjectIds ?? [])], timeRange: options.timeRange,
+    understandingSource: "deterministic",
   };
 }
