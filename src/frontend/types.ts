@@ -11,7 +11,7 @@ export type { DeleteTranscriptSummary };
 export interface DeleteTranscriptResult { status: "deleted"; summary: DeleteTranscriptSummary; }
 
 export type TrustState = "strong" | "mixed" | "weak" | "conflicting" | "no_evidence" | "broken" | "needs_review" | "rejected" | "superseded";
-export type RouteId = "dashboard" | "upload" | "transcripts" | "transcript" | "ask" | "answer" | "evidence" | "memory" | "graph" | "search" | "review" | "review_detail" | "not_found";
+export type RouteId = "dashboard" | "upload" | "transcripts" | "transcript" | "ask" | "answer" | "answer_trace" | "evidence" | "memory" | "graph" | "search" | "review" | "review_detail" | "not_found";
 
 export interface RouteMatch {
   id: RouteId;
@@ -251,6 +251,86 @@ export interface SetupSummary {
   settingsPath?: string;
 }
 
+/** One selected-evidence row in an Ask AI trace, straight from the persisted run tables. */
+export interface AskAITraceEvidenceView {
+  rank: number;
+  evidencePointerId: string;
+  sourcePointerId?: string;
+  transcriptId: string;
+  spanId: string;
+  quote: string;
+  score: number;
+  confidence: string;
+  scoringExplanation: string;
+  /** True when the pointer no longer resolves (read-only resolution check; nothing is repaired/created). */
+  broken: boolean;
+}
+
+/** One accepted claim in an Ask AI trace, with its live support state and citation links. */
+export interface AskAITraceClaimView {
+  claimId: string;
+  text: string;
+  kind: string;
+  supportStatus: string;
+  citedPointerIds: string[];
+  citationLabels: string[];
+  explanation?: string;
+}
+
+/**
+ * READ-ONLY debugging view of one persisted Ask AI run: question → query understanding → contract →
+ * selected evidence → accepted claims/citations → warnings/refusal → non-secret persistence metadata.
+ * Built ONLY from SQLite (never from generated Markdown, never by calling LLM/embedding providers) and
+ * never mutates anything. Fields that are not persisted are represented honestly (see `limitations`)
+ * instead of being fabricated. Contains no API keys or provider secrets by construction.
+ */
+export interface AskAITraceView {
+  runId: string;
+  answerId?: string;
+  question: string;
+  createdAt: string;
+  /** Persisted answer status (`answered` / `refused_no_evidence` / `weak_evidence` / `conflicting_evidence`). */
+  answerStatus: string;
+  /** Persisted evidence confidence for the whole run (strong/mixed/weak/conflicting/no_evidence). */
+  confidence: string;
+  notEnoughEvidence: boolean;
+  /** Present only when the run refused; structured, not scraped from the answer Markdown. */
+  refusalReason?: string;
+  queryUnderstanding: {
+    intent: string;
+    understandingSource?: "deterministic" | "llm";
+    answerMode: string;
+    detectedEntities: string[];
+    detectedTopics: string[];
+    timeHints: string[];
+    requestedClaimKinds: string[];
+    shouldUseMemoryObjects: boolean;
+    shouldUseRawTranscriptSpans: boolean;
+  };
+  /** The deterministic per-intent contract as persisted. Undefined only for pre-contract legacy rows. */
+  answerContract?: {
+    requireEvidenceForFactualClaims: boolean;
+    refuseIfNoEvidence: boolean;
+    allowGeneralReasoning: boolean;
+    allowRecommendations: boolean;
+    allowDrafting: boolean;
+    includeConflicts: boolean;
+    includeReviewOnlyItems: boolean;
+  };
+  selectedEvidence: AskAITraceEvidenceView[];
+  claims: AskAITraceClaimView[];
+  conflictCount: number;
+  analysisCount: number;
+  unconfirmedCount: number;
+  /** Structured warnings derived from persisted trust fields (never parsed out of generated Markdown). */
+  warnings: string[];
+  /** Non-secret synthesis metadata as persisted (mode/provider id/model id/fallback) — never keys. */
+  synthesis?: { mode: string; provider?: string; model?: string; usedFallback: boolean; reason?: string };
+  /** Honest gaps in what this trace can show today (e.g. rejected-claim trace, entailment validation). */
+  limitations: string[];
+  scoreRunId?: string;
+}
+
 export interface FrontendApi {
   getDashboard(): Promise<DashboardView>;
   listTranscripts(): Promise<TranscriptListItem[]>;
@@ -259,6 +339,12 @@ export interface FrontendApi {
   ask(question: string, options?: { transcriptIds?: string[]; maxEvidence?: number }): Promise<AskAIResponse>;
   askAI(question: string, options?: { transcriptIds?: string[]; maxEvidence?: number }): Promise<AskAIResponse>;
   getAnswer(id: string): Promise<FrontendAnswerView | null>;
+  /**
+   * READ-ONLY Ask AI trace for one persisted run, looked up by run id OR answer id. Reads only SQLite;
+   * never calls LLM/embedding providers, never mutates or creates rows, never reads generated Markdown,
+   * never returns secrets. Null when the run does not exist.
+   */
+  getAskAITrace(runIdOrAnswerId: string): Promise<AskAITraceView | null>;
   getEvidence(id: string): Promise<EvidenceView>;
   getMemory(id: string): Promise<MemoryView | null>;
   getMemoryObject(id: string): Promise<MemoryView | null>;

@@ -9,6 +9,9 @@ const patterns: Array<{ id: RouteId; pattern: RegExp; names?: string[] }> = [
   { id: "transcripts", pattern: /^\/transcripts\/?$/ },
   { id: "transcript", pattern: /^\/transcripts\/([^/]+)\/?$/, names: ["id"] },
   { id: "ask", pattern: /^\/ask\/?$/ },
+  // The trace route must be matched before the answer detail route (a two-segment path would not match
+  // the detail pattern anyway, but explicit ordering keeps intent robust to future pattern edits).
+  { id: "answer_trace", pattern: /^\/answers\/([^/]+)\/trace\/?$/, names: ["id"] },
   { id: "answer", pattern: /^\/answers\/([^/]+)\/?$/, names: ["id"] },
   { id: "evidence", pattern: /^\/evidence\/([^/]+)\/?$/, names: ["id"] },
   { id: "memory", pattern: /^\/memory\/([^/]+)\/?$/, names: ["id"] },
@@ -78,6 +81,7 @@ export const routeHref = {
   reviewQueue: (query = "") => `mv://review${query}`,
   transcript: (id: string, spanId?: string) => `mv://transcripts/${encodeURIComponent(id)}${spanId ? `?span=${encodeURIComponent(spanId)}` : ""}`,
   answer: (id: string) => `mv://answers/${encodeURIComponent(id)}`,
+  answerTrace: (id: string) => `mv://answers/${encodeURIComponent(id)}/trace`,
   evidence: (id: string) => `mv://evidence/${encodeURIComponent(id)}`,
   memory: (id: string) => `mv://memory/${encodeURIComponent(id)}`,
   review: (id: string) => `mv://review/${encodeURIComponent(id)}`,

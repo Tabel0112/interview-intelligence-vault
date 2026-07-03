@@ -687,6 +687,7 @@ var routeHref = {
   reviewQueue: (query = "") => `mv://review${query}`,
   transcript: (id, spanId) => `mv://transcripts/${encodeURIComponent(id)}${spanId ? `?span=${encodeURIComponent(spanId)}` : ""}`,
   answer: (id) => `mv://answers/${encodeURIComponent(id)}`,
+  answerTrace: (id) => `mv://answers/${encodeURIComponent(id)}/trace`,
   evidence: (id) => `mv://evidence/${encodeURIComponent(id)}`,
   memory: (id) => `mv://memory/${encodeURIComponent(id)}`,
   review: (id) => `mv://review/${encodeURIComponent(id)}`
@@ -4987,6 +4988,100 @@ function createSqliteFrontendApi(db, options = {}) {
       } catch {
         return null;
       }
+    },
+    // READ-ONLY Ask AI trace. Reads only persisted SQLite rows (via getAskAIResponse + ai_answers status);
+    // never calls LLM/embedding providers, never mutates or creates rows, and derives every warning from
+    // STRUCTURED trust fields — the generated answer Markdown is never parsed as truth. Synthesis metadata
+    // is the already-persisted non-secret summary (mode/provider id/model id) — keys never enter these rows.
+    async getAskAITrace(runIdOrAnswerId) {
+      const run = db.prepare("SELECT id, answer_id FROM ask_ai_runs WHERE id=? OR answer_id=? LIMIT 1").get(runIdOrAnswerId, runIdOrAnswerId);
+      if (!run) return null;
+      let response;
+      try {
+        response = getAskAIResponse(db, run.id);
+      } catch {
+        return null;
+      }
+      const answerRow = run.answer_id ? db.prepare("SELECT answer_status FROM ai_answers WHERE id=?").get(run.answer_id) : void 0;
+      const understanding = response.queryUnderstanding ?? {};
+      const contract = understanding.answerContract;
+      const strings = (value) => Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
+      const selectedEvidence = response.evidence.map((item, index) => ({
+        rank: index + 1,
+        // persisted selection order (ask_ai_run_evidence.rank, reconstructed in rank order)
+        evidencePointerId: item.evidencePointerId,
+        sourcePointerId: item.sourcePointerId,
+        transcriptId: item.transcriptId,
+        spanId: item.spanId,
+        quote: item.quotePreview,
+        score: item.evidenceScore,
+        confidence: item.evidenceConfidence,
+        scoringExplanation: item.scoringExplanation,
+        broken: !resolveEvidencePointer(db, item.evidencePointerId).ok
+        // read-only resolution check
+      }));
+      const citationById = new Map(response.citations.map((citation) => [citation.id, citation]));
+      const claims = response.claims.map((claim) => ({
+        claimId: claim.id,
+        text: claim.text,
+        kind: claim.kind,
+        supportStatus: claim.supportStatus,
+        citedPointerIds: claim.evidencePointerIds,
+        citationLabels: claim.citationIds.map((citationId) => citationById.get(citationId)?.label).filter((label) => label != null),
+        explanation: claim.explanation
+      }));
+      const warnings = [];
+      if (response.evidenceConfidence === "weak") warnings.push("Evidence is weak \u2014 this answer must not be treated as strong truth.");
+      if (response.evidenceConfidence === "mixed") warnings.push("Mixed evidence \u2014 some selected evidence partially challenges the answer.");
+      if (response.evidenceConfidence === "conflicting") warnings.push("Conflicting evidence \u2014 supporting and opposing evidence are both preserved.");
+      const weakClaimCount = claims.filter((claim) => claim.supportStatus === "weakly_supported").length;
+      if (weakClaimCount) warnings.push(`${weakClaimCount} claim(s) are only weakly supported.`);
+      const brokenCount = selectedEvidence.filter((item) => item.broken).length;
+      if (brokenCount) warnings.push(`${brokenCount} selected evidence pointer(s) no longer resolve.`);
+      if (response.synthesis?.usedFallback) warnings.push(`Synthesis recorded a fallback: ${response.synthesis.reason ?? "see synthesis metadata."}`);
+      return {
+        runId: run.id,
+        answerId: run.answer_id ?? void 0,
+        question: response.question,
+        createdAt: response.createdAt,
+        answerStatus: answerRow?.answer_status ?? (response.notEnoughEvidence ? "refused_no_evidence" : "answered"),
+        confidence: response.evidenceConfidence,
+        notEnoughEvidence: response.notEnoughEvidence,
+        refusalReason: response.notEnoughEvidence ? "Not enough transcript-backed evidence \u2014 the run refused instead of inventing an answer." : void 0,
+        queryUnderstanding: {
+          intent: typeof understanding.intent === "string" ? understanding.intent : "unknown (legacy row)",
+          understandingSource: understanding.understandingSource === "llm" || understanding.understandingSource === "deterministic" ? understanding.understandingSource : void 0,
+          answerMode: typeof understanding.answerMode === "string" ? understanding.answerMode : "unknown",
+          detectedEntities: strings(understanding.detectedEntities),
+          detectedTopics: strings(understanding.detectedTopics),
+          timeHints: strings(understanding.timeHints),
+          requestedClaimKinds: strings(understanding.requestedClaimKinds),
+          shouldUseMemoryObjects: Boolean(understanding.shouldUseMemoryObjects),
+          shouldUseRawTranscriptSpans: understanding.shouldUseRawTranscriptSpans !== false
+        },
+        answerContract: contract && typeof contract === "object" ? {
+          requireEvidenceForFactualClaims: Boolean(contract.requireEvidenceForFactualClaims),
+          refuseIfNoEvidence: Boolean(contract.refuseIfNoEvidence),
+          allowGeneralReasoning: Boolean(contract.allowGeneralReasoning),
+          allowRecommendations: Boolean(contract.allowRecommendations),
+          allowDrafting: Boolean(contract.allowDrafting),
+          includeConflicts: Boolean(contract.includeConflicts),
+          includeReviewOnlyItems: Boolean(contract.includeReviewOnlyItems)
+        } : void 0,
+        selectedEvidence,
+        claims,
+        conflictCount: response.conflicts.length,
+        analysisCount: response.analysis?.length ?? 0,
+        unconfirmedCount: response.unconfirmed?.length ?? 0,
+        warnings,
+        synthesis: response.synthesis,
+        // Honest gaps: these are shown in the viewer instead of fabricating data that is not persisted.
+        limitations: [
+          "Rejected/discarded claim details are not persisted yet \u2014 only accepted claims can be traced.",
+          "Entailment validation: not implemented (Phase 3). Claims are constrained by the current quote-anchoring grounding gate."
+        ],
+        scoreRunId: response.scoreRunId
+      };
     },
     async getEvidence(id) {
       return evidenceView(db, id);

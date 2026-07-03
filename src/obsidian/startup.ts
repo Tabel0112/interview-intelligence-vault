@@ -71,6 +71,7 @@ export function createUnavailableFrontendApi(getHealth: () => PluginHealth): Fro
     async ask() { return unavailable(getHealth()); },
     async askAI() { return unavailable(getHealth()); },
     async getAnswer() { return unavailable(getHealth()); },
+    async getAskAITrace() { return unavailable(getHealth()); },
     async getEvidence() { return unavailable(getHealth()); },
     async getMemory() { return unavailable(getHealth()); },
     async getMemoryObject() { return unavailable(getHealth()); },

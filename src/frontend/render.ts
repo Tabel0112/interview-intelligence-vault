@@ -1,7 +1,7 @@
 import { appShell, emptyState, escapeHtml, routeButton, score, trustBadge } from "./html.js";
 import { routeHref } from "./router.js";
 import { DEGRADED_MEMORY_REASON } from "./types.js";
-import type { ConflictingSideView, EvidenceView, FrontendAnswerView, MemoryView, PageContext, RenderedPage, ReviewItemView, ReviewSupportSpanView, SearchResultView, SetupSummary, SupportSpanView, TranscriptView, TrustState } from "./types.js";
+import type { AskAITraceView, ConflictingSideView, EvidenceView, FrontendAnswerView, MemoryView, PageContext, RenderedPage, ReviewItemView, ReviewSupportSpanView, SearchResultView, SetupSummary, SupportSpanView, TranscriptView, TrustState } from "./types.js";
 
 const section = (title: string, body: string, className = "") => `<section class="vault-section${className ? ` ${escapeHtml(className)}` : ""}"><h2>${escapeHtml(title)}</h2>${body}</section>`;
 const links = (items: Array<{ href: string; label: string }>) => `<div class="route-actions">${items.map((item) => routeButton(item.href, item.label)).join("")}</div>`;
@@ -55,10 +55,123 @@ function answerView(answer: FrontendAnswerView): string {
     ${correctionForm("evidence", item.evidencePointerId)}
   </article>`).join("");
   const conflict = answer.conflicts.map((item) => `<article class="conflict-card">${trustBadge("conflicting")}<h3>${escapeHtml(item.summary)}</h3><p>${escapeHtml(item.explanation)}</p></article>`).join("");
-  return `${brokenWarning}${warning}<article class="answer"><h2>Generated answer</h2><pre>${escapeHtml(answer.answerMarkdown)}</pre></article>
+  return `${brokenWarning}${warning}${links([{ href: routeHref.answerTrace(answer.id), label: "View trace" }])}
+    <article class="answer"><h2>Generated answer</h2><pre>${escapeHtml(answer.answerMarkdown)}</pre></article>
     ${section("Claims and citations", claims || emptyState("No supported claims", "The answer correctly refused to invent claims."))}
     ${section("Evidence", evidence || emptyState("No evidence", "No transcript-backed evidence was available."))}
     ${conflict ? section("Conflicts", conflict) : ""}${section("Submit a correction", correctionForm("answer", answer.id))}`;
+}
+
+const claimSupportBadge = (supportStatus: string): string =>
+  trustBadge(supportStatus === "supported" ? "strong" : supportStatus === "conflicting" ? "conflicting" : supportStatus === "weakly_supported" ? "weak" : "no_evidence", supportStatus.replaceAll("_", " "));
+
+/** One "label: value" row for the trace's definition-list sections. */
+const traceRow = (label: string, value: string): string =>
+  `<div class="trace-row"><dt>${escapeHtml(label)}</dt><dd>${value}</dd></div>`;
+const traceFlag = (on: boolean, onLabel = "yes", offLabel = "no"): string =>
+  `<span class="trace-flag" data-on="${on}">${escapeHtml(on ? onLabel : offLabel)}</span>`;
+const traceList = (items: string[], empty: string): string =>
+  items.length ? escapeHtml(items.join(", ")) : `<em class="trace-empty">${escapeHtml(empty)}</em>`;
+
+/**
+ * READ-ONLY Ask AI trace page (developer/debug-oriented): how one persisted run went from question to
+ * answer/refusal. Renders only structured persisted fields (never parses the generated Markdown); raw
+ * ids/JSON live under an Advanced disclosure; nothing here mutates or re-runs anything.
+ */
+function traceView(trace: AskAITraceView): string {
+  const qu = trace.queryUnderstanding;
+  const contract = trace.answerContract;
+  const synthesisIntent = qu.intent === "synthesis_conclusion" || qu.intent === "why_explanation";
+
+  // A. Question and result
+  const refused = trace.notEnoughEvidence;
+  const result = `<dl class="trace-kv">
+      ${traceRow("Question", `<strong>${escapeHtml(trace.question)}</strong>`)}
+      ${traceRow("Status", `${statusChip(refused ? "warn" : "ok", trace.answerStatus.replaceAll("_", " "))}`)}
+      ${traceRow("Evidence confidence", trustBadge(trace.confidence as TrustState))}
+      ${traceRow("Created", escapeHtml(trace.createdAt))}
+    </dl>
+    ${trace.refusalReason ? `<aside class="trust-warning tmv-callout tmv-callout--warning">${trustBadge("no_evidence")} ${escapeHtml(trace.refusalReason)}</aside>` : ""}`;
+
+  // B. Query understanding
+  const understanding = `<dl class="trace-kv">
+      ${traceRow("Intent", `<code>${escapeHtml(qu.intent)}</code>`)}
+      ${traceRow("Understanding source", statusChip("ok", qu.understandingSource === "llm" ? "LLM-assisted (deterministic contract)" : qu.understandingSource === "deterministic" ? "deterministic (regex)" : "not recorded (legacy run)"))}
+      ${traceRow("Answer mode", escapeHtml(qu.answerMode))}
+      ${traceRow("Requested claim kinds", traceList(qu.requestedClaimKinds, "none recorded"))}
+      ${traceRow("Detected entities", traceList(qu.detectedEntities, "none detected"))}
+      ${traceRow("Detected topics", traceList(qu.detectedTopics, "none detected"))}
+      ${traceRow("Time hints", traceList(qu.timeHints, "none detected"))}
+    </dl>`;
+
+  // C. Answer contract — deterministic per-intent flags; the conclusion/why notice is informational.
+  const conclusionNotice = synthesisIntent
+    ? `<aside class="tmv-callout tmv-callout--info trace-conclusion-notice">This run uses evidence-backed conclusion routing, but full entailment validation is not implemented yet. Claims are still constrained by the current grounding gate.</aside>`
+    : "";
+  const contractBody = contract
+    ? `${synthesisIntent ? `<p>${statusChip("ok", "evidence-bounded synthesis")} This intent answers ONLY from selected transcript evidence — it is not the free-reasoning advice path.</p>` : ""}
+      <dl class="trace-kv">
+        ${traceRow("Evidence required for factual claims", traceFlag(contract.requireEvidenceForFactualClaims))}
+        ${traceRow("Refuse if no evidence", traceFlag(contract.refuseIfNoEvidence))}
+        ${traceRow("Include conflicts", traceFlag(contract.includeConflicts))}
+        ${traceRow("Use memory objects", traceFlag(qu.shouldUseMemoryObjects))}
+        ${traceRow("Use raw transcript spans", traceFlag(qu.shouldUseRawTranscriptSpans))}
+        ${traceRow("General reasoning (uncited analysis) allowed", traceFlag(contract.allowGeneralReasoning))}
+        ${traceRow("Recommendations allowed", traceFlag(contract.allowRecommendations))}
+        ${traceRow("Drafting allowed", traceFlag(contract.allowDrafting))}
+        ${traceRow("Review-only items allowed", traceFlag(contract.includeReviewOnlyItems))}
+      </dl>${conclusionNotice}`
+    : `<p><em class="trace-empty">Answer contract was not persisted for this run (legacy row) — behavior flags cannot be reconstructed and are not invented.</em></p>${conclusionNotice}`;
+
+  // D. Selected evidence
+  const evidenceCards = trace.selectedEvidence.map((item) => `<article class="evidence-card trace-evidence" data-pointer-id="${escapeHtml(item.evidencePointerId)}">
+      <header><span class="trace-rank">#${item.rank}</span> ${trustBadge(item.confidence as TrustState)} <span>${score(item.score)}</span> ${item.broken ? trustBadge("broken") : ""}</header>
+      <blockquote>${escapeHtml(item.quote)}</blockquote>
+      <p>${escapeHtml(item.scoringExplanation)}</p>
+      <p><code>${escapeHtml(item.evidencePointerId)}</code></p>
+      ${links([{ href: routeHref.evidence(item.evidencePointerId), label: "Evidence details" }, { href: routeHref.transcript(item.transcriptId, item.spanId), label: "Open source span" }])}
+    </article>`).join("");
+
+  // E. Claims and citations
+  const claimCards = trace.claims.map((claim) => `<article class="answer-claim trace-claim" data-support-status="${escapeHtml(claim.supportStatus)}">
+      <p>${escapeHtml(claim.text)}</p>
+      <footer><code>${escapeHtml(claim.kind)}</code> ${claimSupportBadge(claim.supportStatus)}
+        ${claim.citationLabels.map(escapeHtml).map((label) => `<span class="citation-preview">${label}</span>`).join(" ")}
+        ${claim.citedPointerIds.map((pointerId) => `<a class="citation-link" href="${escapeHtml(routeHref.evidence(pointerId))}"><code>${escapeHtml(pointerId)}</code></a>`).join(" ")}
+      </footer>
+      ${claim.explanation ? `<p class="trace-claim-explanation"><small>${escapeHtml(claim.explanation)}</small></p>` : ""}
+    </article>`).join("");
+
+  // F. Warnings and honest limitations (structured fields only — never scraped from answer Markdown).
+  const warningsBody = `${trace.warnings.length
+      ? `<ul class="trace-warnings">${trace.warnings.map((warning) => `<li>${trustBadge("weak", "warning")} ${escapeHtml(warning)}</li>`).join("")}</ul>`
+      : `<p><em class="trace-empty">No trust warnings were recorded for this run.</em></p>`}
+    <ul class="trace-limitations">${trace.limitations.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
+
+  // G. Advanced disclosure: raw ids + sanitized JSON. Synthesis metadata is the persisted NON-SECRET
+  // summary (mode/provider id/model id/fallback) — API keys never enter these tables.
+  const debugJson = JSON.stringify(
+    { runId: trace.runId, answerId: trace.answerId ?? null, scoreRunId: trace.scoreRunId ?? null, synthesis: trace.synthesis ?? null, counts: { evidence: trace.selectedEvidence.length, claims: trace.claims.length, conflicts: trace.conflictCount, analysis: trace.analysisCount, unconfirmed: trace.unconfirmedCount }, queryUnderstanding: qu, answerContract: contract ?? null },
+    null, 2);
+  const advanced = `<details class="tmv-advanced trace-debug"><summary>Advanced: raw ids and debug JSON</summary>
+      <dl class="trace-kv">
+        ${traceRow("Run id", `<code>${escapeHtml(trace.runId)}</code>`)}
+        ${traceRow("Answer id", trace.answerId ? `<code>${escapeHtml(trace.answerId)}</code>` : "<em>none persisted</em>")}
+        ${traceRow("Score run id", trace.scoreRunId ? `<code>${escapeHtml(trace.scoreRunId)}</code>` : "<em>none persisted</em>")}
+        ${traceRow("Synthesis", trace.synthesis ? escapeHtml(`${trace.synthesis.mode}${trace.synthesis.provider ? ` · ${trace.synthesis.provider}` : ""}${trace.synthesis.model ? ` · ${trace.synthesis.model}` : ""}${trace.synthesis.usedFallback ? " · fallback" : ""}`) : "not recorded")}
+      </dl>
+      <pre class="trace-debug-json">${escapeHtml(debugJson)}</pre>
+    </details>`;
+
+  return `<aside class="immutable-notice">Read-only trace of a persisted Ask AI run. Nothing on this page re-runs retrieval or generation, and nothing is modified.</aside>
+    ${links([...(trace.answerId ? [{ href: routeHref.answer(trace.runId), label: "Open answer" }] : []), { href: routeHref.dashboard(), label: "Dashboard" }])}
+    ${section("Question and result", result)}
+    ${section("Query understanding", understanding)}
+    ${section("Answer contract", contractBody)}
+    ${section("Selected evidence", evidenceCards || emptyState("No evidence was selected", "The run refused (or found nothing usable) — that is the safe behavior, not an error."))}
+    ${section("Claims and citations", claimCards || emptyState("No accepted claims", "No claims survived evidence selection and the grounding gate. The run refused rather than inventing an answer."))}
+    ${section("Warnings and limitations", warningsBody)}
+    ${section("Debug", advanced, "trace-debug-section")}`;
 }
 
 function transcriptView(transcript: TranscriptView, selectedSpanId?: string): string {
@@ -509,6 +622,14 @@ export async function renderPage(context: PageContext): Promise<RenderedPage> {
     case "answer": {
       const answer = await api.getAnswer(route.params.id);
       return { title: answer?.question ?? "Answer not found", html: appShell(answer?.question ?? "Answer not found", answer ? answerView(answer) : emptyState("Answer not found", "The requested Ask AI run is unavailable.")) };
+    }
+    case "answer_trace": {
+      const trace = await api.getAskAITrace(route.params.id);
+      return {
+        title: trace ? "Ask AI trace" : "Trace not found",
+        html: appShell(trace ? "Ask AI trace" : "Trace not found",
+          trace ? traceView(trace) : emptyState("Trace not found", "No Ask AI run or answer with this id exists.", { href: routeHref.dashboard(), label: "Open dashboard" })),
+      };
     }
     case "evidence": {
       const evidence = await api.getEvidence(route.params.id);
